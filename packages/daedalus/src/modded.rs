@@ -13,6 +13,7 @@ pub const CURRENT_FORGE_FORMAT_VERSION: usize = 0;
 pub const CURRENT_QUILT_FORMAT_VERSION: usize = 1;
 /// The latest version of the format the neoforge model structs deserialize to
 pub const CURRENT_NEOFORGE_FORMAT_VERSION: usize = 0;
+pub const CURRENT_CLEANROOM_FORMAT_VERSION: usize = 0;
 
 /// Metadata for locating and caching a loader manifest.
 #[derive(Debug, Clone)]
@@ -73,6 +74,7 @@ fn current_loader_manifest_format_version(loader: &str) -> usize {
         "forge" => CURRENT_FORGE_FORMAT_VERSION,
         "quilt" => CURRENT_QUILT_FORMAT_VERSION,
         "neo" => CURRENT_NEOFORGE_FORMAT_VERSION,
+        "cleanroom" => CURRENT_CLEANROOM_FORMAT_VERSION,
         _ => 0,
     }
 }
