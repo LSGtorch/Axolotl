@@ -1,3 +1,4 @@
+pub mod cleanroom;
 mod diagnostics;
 pub mod events;
 pub mod model;
