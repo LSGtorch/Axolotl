@@ -5,7 +5,7 @@ use super::model::{
     InstallPhaseDetails, InstallPhaseId, InstallPostInstallEdit,
     InstallRequest, InstallRollbackState, InstallTarget,
 };
-use super::{diagnostics, recovery, store};
+use super::{cleanroom, diagnostics, recovery, store};
 use crate::ErrorKind;
 use crate::api::pack::install_from::{
     CreatePackLocation, generate_pack_from_file,
@@ -653,7 +653,7 @@ async fn run_request(
                 })?;
             let reporter =
                 InstallProgressReporter::new(job_id, job_state.clone());
-            crate::launcher::install_minecraft_with_reporter(
+            install_minecraft_with_reporter(
                 &context,
                 false,
                 Some(reporter.clone()),
@@ -784,7 +784,7 @@ async fn run_request(
                 .ok_or_else(|| {
                     crate::ErrorKind::InputError("Unknown instance".to_string())
                 })?;
-            crate::launcher::install_minecraft_with_reporter(
+            install_minecraft_with_reporter(
                 &context,
                 false,
                 Some(InstallProgressReporter::new(job_id, job_state.clone())),
@@ -812,7 +812,7 @@ async fn run_request(
                 .ok_or_else(|| {
                     crate::ErrorKind::InputError("Unknown instance".to_string())
                 })?;
-            crate::launcher::install_minecraft_with_reporter(
+            install_minecraft_with_reporter(
                 &context,
                 force,
                 Some(InstallProgressReporter::new(job_id, job_state.clone())),
@@ -851,6 +851,21 @@ async fn run_request(
             Ok(Some(instance_id))
         }
     }
+}
+
+async fn install_minecraft_with_reporter(
+    context: &crate::state::InstanceLaunchContext,
+    repairing: bool,
+    reporter: Option<InstallProgressReporter>,
+) -> crate::Result<()> {
+    if context.applied_content_set.loader == ModLoader::Cleanroom {
+        cleanroom::install(context).await?;
+    }
+
+    crate::launcher::install_minecraft_with_reporter(context, repairing, reporter)
+        .await?;
+
+    Ok(())
 }
 
 async fn apply_post_install_edit(
