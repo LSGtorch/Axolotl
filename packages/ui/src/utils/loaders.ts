@@ -8,6 +8,7 @@ export const loaderDisplayNames: Record<string, string> = {
 	neo_forge: 'NeoForge',
 	forge: 'Forge',
 	quilt: 'Quilt',
+	cleanroom: 'Cleanroom',
 	paper: 'Paper',
 	spigot: 'Spigot',
 	purpur: 'Purpur',
