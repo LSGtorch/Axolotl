@@ -79,6 +79,7 @@ pub enum ModLoader {
     Quilt,
     NeoForge,
     OptiFine,
+    Cleanroom,
 }
 
 impl ModLoader {
@@ -90,6 +91,7 @@ impl ModLoader {
             Self::Quilt => "quilt",
             Self::NeoForge => "neoforge",
             Self::OptiFine => "optifine",
+            Self::Cleanroom => "cleanroom",
         }
     }
 
@@ -103,6 +105,7 @@ impl ModLoader {
             // OptiFine has no Daedalus metadata; versions resolve through
             // launcher::optifine instead of the meta server.
             Self::OptiFine => "optifine",
+            Self::Cleanroom => "cleanroom",
         }
     }
 
@@ -114,6 +117,7 @@ impl ModLoader {
             "quilt" => Self::Quilt,
             "neoforge" => Self::NeoForge,
             "optifine" => Self::OptiFine,
+            "cleanroom" => Self::Cleanroom,
             _ => Self::Vanilla,
         }
     }
