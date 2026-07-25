@@ -10,7 +10,7 @@ use serde::Deserialize;
 use std::io::{Cursor, Read};
 
 const FUGUE_URL: &str = "https://github.com/CleanroomMC/Fugue/releases/download/0.23.8/%2BFugue-0.23.8-dev.jar";
-const SCALAR_LEGACY_URL: &str = "https://repo.cleanroommc.com/releases/com/cleanroommc/scalar/1.0.0/scalar-1.0.0-dev.jar";
+const SCALAR_URL: &str = "https://github.com/CleanroomMC/Scalar/releases/download/2.11.1/scalar-1.12.2-2.11.1.jar";
 const CLEANROOM_GITHUB_API: &str = "https://api.github.com/repos/CleanroomMC/Cleanroom/releases/latest";
 const CLEANROOM_GITHUB_MIRROR: &str = "https://ghfast.top/";
 
@@ -87,7 +87,7 @@ pub async fn install(context: &InstanceLaunchContext) -> crate::Result<()> {
     io::create_dir_all(&mods_dir).await?;
 	for (url, file_name) in [
 		(FUGUE_URL, "+Fugue-0.23.8-dev.jar"),
-		(SCALAR_LEGACY_URL, "scalar-1.0.0-dev.jar"),
+		(SCALAR_URL, "scalar-1.12.2-2.11.1.jar"),
 	] {
 		download_to_path(
 			cleanroom_download_request(url),
@@ -131,8 +131,9 @@ fn read_installer(installer: &[u8]) -> crate::Result<InstallerContents> {
         let Some(path) = entry.enclosed_name().map(|path| path.to_owned()) else {
             continue;
         };
-        let Some(path) = path.strip_prefix("maven/") else {
-            continue;
+        let path = match path.strip_prefix("maven/") {
+            Ok(p) => p,
+            Err(_) => continue,
         };
         if entry.is_dir() {
             continue;
