@@ -39,6 +39,7 @@ pub async fn install(context: &InstanceLaunchContext) -> crate::Result<()> {
 		&release_path,
 		&state.download_semaphore,
 		&state.pool,
+		None,
 	)
 	.await?;
 	let release: Release = serde_json::from_slice(&io::read(&release_path).await?)?;
@@ -57,6 +58,7 @@ pub async fn install(context: &InstanceLaunchContext) -> crate::Result<()> {
 		&installer_path,
 		&state.download_semaphore,
 		&state.pool,
+		None,
 	)
 	.await?;
 	let installer = read_installer(&io::read(&installer_path).await?)?;
@@ -92,6 +94,7 @@ pub async fn install(context: &InstanceLaunchContext) -> crate::Result<()> {
 			mods_dir.join(file_name),
 			&state.download_semaphore,
 			&state.pool,
+			None,
 		)
 		.await?;
 	}
