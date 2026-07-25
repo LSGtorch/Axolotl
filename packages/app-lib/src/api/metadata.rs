@@ -34,6 +34,22 @@ pub async fn get_loader_versions_with_cache(
     loader: &str,
     cache_behaviour: Option<CacheBehaviour>,
 ) -> crate::Result<Manifest> {
+    if loader == "cleanroom" {
+        return Ok(Manifest {
+            game_versions: vec![daedalus::modded::Version {
+                id: "1.12.2".to_string(),
+                stable: true,
+                version_group: None,
+                loaders: vec![daedalus::modded::LoaderVersion {
+                    id: "latest".to_string(),
+                    url: String::new(),
+                    stable: true,
+                }],
+            }],
+            version_groups: Vec::new(),
+        });
+    }
+
     let state = State::get().await?;
     let cache_key =
         daedalus::modded::loader_manifest_metadata(loader).cache_key;
