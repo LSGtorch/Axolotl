@@ -66,8 +66,8 @@ pub async fn install(context: &InstanceLaunchContext) -> crate::Result<()> {
     let version_dir = state.directories.version_dir(&installer.version.id);
     io::create_dir_all(&version_dir).await?;
     io::write(
-        version_dir.join(format!("{}.json", version.id)),
-        serde_json::to_vec(&version)?,
+        version_dir.join(format!("{}.json", installer.version.id)),
+        serde_json::to_vec(&installer.version)?,
     )
     .await?;
 
