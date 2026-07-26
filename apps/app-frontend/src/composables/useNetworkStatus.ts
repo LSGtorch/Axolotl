@@ -21,6 +21,9 @@ export function useNetworkStatus() {
 		setNetworkReachable(reachable: boolean) {
 			networkReachable.value = reachable
 		},
+		refreshBrowserOffline() {
+			browserOffline.value = typeof navigator !== 'undefined' && !navigator.onLine
+		},
 	}
 }
 

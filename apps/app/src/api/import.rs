@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use crate::api::Result;
-use theseus::pack::import::ImportLauncherType;
+use theseus::pack::import::{ImportLauncherType, ImportableInstance};
 
 use theseus::pack::import;
 
@@ -15,14 +15,13 @@ pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
         .build()
 }
 
-/// Gets a list of importable instances from a launcher type and base path
-/// eg: get_importable_instances(ImportLauncherType::MultiMC, PathBuf::from("C:/MultiMC"))
-/// returns ["Instance 1", "Instance 2"]
+/// Gets a list of importable instances from a launcher type and base path.
+/// Each entry includes the display name and the resolved filesystem path.
 #[tauri::command]
 pub async fn get_importable_instances(
     launcher_type: ImportLauncherType,
     base_path: PathBuf,
-) -> Result<Vec<String>> {
+) -> Result<Vec<ImportableInstance>> {
     Ok(import::get_importable_instances(launcher_type, base_path).await?)
 }
 

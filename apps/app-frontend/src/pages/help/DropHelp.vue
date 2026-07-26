@@ -1,30 +1,19 @@
 <template>
-	<div class="flex flex-col gap-3 p-4">
-		<h1 class="text-xl font-bold text-contrast">
+	<div class="flex flex-col gap-3 p-6">
+		<h1 class="text-lg font-bold text-contrast">
 			{{ formatMessage(messages.title) }}
 		</h1>
 
-		<div class="grid grid-cols-1 gap-2 md:grid-cols-2 lg:grid-cols-3">
-			<Card v-for="section in sections" :key="section.key">
-				<div class="flex items-center gap-3">
-					<div
-						class="flex size-10 shrink-0 items-center justify-center rounded-xl border border-surface-5 bg-surface-3"
-					>
-						<component :is="section.icon" class="size-5 text-brand" stroke-width="1.5" />
-					</div>
-					<div class="flex min-w-0 flex-col gap-0.5">
-						<h3 class="text-base font-semibold leading-tight text-contrast">
-							{{ formatMessage(section.titleMsg) }}
-						</h3>
-						<p class="text-sm leading-normal text-secondary">
-							{{ formatMessage(section.descMsg) }}
-						</p>
-						<span class="text-xs leading-normal text-tertiary">
-							{{ formatMessage(section.formatsMsg) }}
-						</span>
-					</div>
-				</div>
-			</Card>
+		<div class="flex flex-col gap-2">
+			<BigOptionButton
+				v-for="section in sections"
+				:key="section.key"
+				:icon="section.icon"
+				:title="formatMessage(section.titleMsg)"
+				:description="formatMessage(section.descMsg)"
+				:note="formatMessage(section.formatsMsg)"
+				no-icon-border
+			/>
 		</div>
 	</div>
 </template>
@@ -39,7 +28,7 @@ import {
 	PaletteIcon,
 	SparklesIcon,
 } from '@modrinth/assets'
-import { Card, defineMessages, useVIntl } from '@modrinth/ui'
+import { BigOptionButton, defineMessages, useVIntl } from '@modrinth/ui'
 import type { Component } from 'vue'
 
 const { formatMessage } = useVIntl()

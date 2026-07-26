@@ -34,24 +34,22 @@
 						{{ group.launcherName }}
 					</span>
 					<div class="flex flex-col gap-1">
-						<button
+						<InstanceRowCard
 							v-for="inst in group.instances"
 							:key="`${group.launcherType}:${inst.name}`"
-							class="flex items-center gap-3 rounded-lg border border-surface-4 bg-surface-2 p-2.5 transition-all duration-200 hover:border-brand hover:bg-brand-highlight cursor-pointer active:scale-[0.98] text-left"
-							@click="toggleInstance(group.launcherType, group.launcherName, inst)"
+							:name="inst.name"
+							:version="inst.version"
+							:loader="inst.loader"
+							@select="toggleInstance(group.launcherType, group.launcherName, inst)"
 						>
-							<Checkbox
-								:model-value="isSelected(group.launcherType, inst.name)"
-								@update:model-value="toggleInstance(group.launcherType, group.launcherName, inst)"
-								@click.stop
-							/>
-							<div class="flex flex-col min-w-0 flex-1">
-								<span class="text-sm font-medium text-contrast truncate">{{ inst.name }}</span>
-								<span v-if="inst.version || inst.loader" class="text-xs text-secondary truncate">
-									{{ inst.version || '' }}{{ inst.loader ? ` · ${inst.loader}` : '' }}
-								</span>
-							</div>
-						</button>
+							<template #prepend>
+								<Checkbox
+									:model-value="isSelected(group.launcherType, inst.name)"
+									@update:model-value="toggleInstance(group.launcherType, group.launcherName, inst)"
+									@click.stop
+								/>
+							</template>
+						</InstanceRowCard>
 					</div>
 				</div>
 			</div>
@@ -63,8 +61,10 @@
 
 		<template #actions>
 			<div class="flex w-full items-center justify-between">
-				<ButtonStyled type="transparent" @click="emit('cancel')">
-					{{ formatMessage(messages.cancel) }}
+				<ButtonStyled type="transparent">
+					<button @click="handleCancel">
+						{{ formatMessage(messages.cancel) }}
+					</button>
 				</ButtonStyled>
 				<ButtonStyled :disabled="selectedCount === 0">
 					<button class="flex items-center gap-2" @click="handleConfirm">
@@ -83,6 +83,7 @@ import { computed, ref } from 'vue'
 
 import ButtonStyled from '#ui/components/base/ButtonStyled.vue'
 import Checkbox from '#ui/components/base/Checkbox.vue'
+import InstanceRowCard from '#ui/components/base/InstanceRowCard.vue'
 import NewModal from '#ui/components/modal/NewModal.vue'
 import { defineMessages, useVIntl } from '#ui/composables/i18n'
 
@@ -194,6 +195,10 @@ function onHide() {
 		return
 	}
 	emit('cancel')
+}
+
+function handleCancel() {
+	modal.value?.hide()
 }
 
 function toggleInstance(launcherType: string, launcherName: string, inst: InstanceInfo) {

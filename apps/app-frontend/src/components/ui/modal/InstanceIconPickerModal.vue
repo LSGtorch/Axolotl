@@ -55,8 +55,11 @@ import {
 } from '@modrinth/ui'
 import { ref, useTemplateRef } from 'vue'
 
-import { cache_icon } from '@/helpers/instance'
-import { type BuiltInInstanceIcon, builtInInstanceIcons } from '@/helpers/instance-icons'
+import {
+	type BuiltInInstanceIcon,
+	builtInInstanceIcons,
+	cacheBuiltInInstanceIcon,
+} from '@/helpers/instance-icons'
 import { pickImage } from '@/providers/setup/file-picker'
 
 const { formatMessage } = useVIntl()
@@ -102,17 +105,9 @@ function handleHide() {
 async function selectBuiltInIcon(icon: BuiltInInstanceIcon) {
 	loadingIconId.value = icon.id
 	try {
-		const response = await fetch(icon.url)
-		if (!response.ok) throw new Error(formatMessage(messages.loadError))
-		const blob = await response.blob()
-		const file = new File([blob], `${icon.id}.png`, { type: blob.type || 'image/png' })
-		const path = await cache_icon(
-			icon.id + '.png',
-			Array.from(new Uint8Array(await blob.arrayBuffer())),
-		)
-		finish({ file, path, previewUrl: icon.url, frameless: true })
-	} catch (error) {
-		handleError(error)
+		finish(await cacheBuiltInInstanceIcon(icon))
+	} catch {
+		handleError(new Error(formatMessage(messages.loadError)))
 	} finally {
 		loadingIconId.value = null
 	}

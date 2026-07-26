@@ -67,6 +67,57 @@ fn show_window(app: tauri::AppHandle) {
 }
 
 #[tauri::command]
+fn set_transparent_window_frame(
+    enabled: bool,
+    window: tauri::Window,
+) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use windows::Win32::Graphics::Dwm::{
+            DWMWA_BORDER_COLOR, DWMWA_COLOR_DEFAULT, DWMWA_COLOR_NONE,
+            DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DEFAULT, DWMWCP_ROUND,
+            DwmSetWindowAttribute,
+        };
+
+        window.set_shadow(true).map_err(|error| error.to_string())?;
+
+        let hwnd = window.hwnd().map_err(|error| error.to_string())?;
+        let corner_preference = if enabled {
+            DWMWCP_ROUND
+        } else {
+            DWMWCP_DEFAULT
+        };
+        let border_color = if enabled {
+            DWMWA_COLOR_NONE
+        } else {
+            DWMWA_COLOR_DEFAULT
+        };
+
+        unsafe {
+            DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_WINDOW_CORNER_PREFERENCE,
+                std::ptr::from_ref(&corner_preference).cast(),
+                std::mem::size_of_val(&corner_preference) as u32,
+            )
+            .map_err(|error| error.to_string())?;
+            DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_BORDER_COLOR,
+                std::ptr::from_ref(&border_color).cast(),
+                std::mem::size_of_val(&border_color) as u32,
+            )
+            .map_err(|error| error.to_string())?;
+        }
+    }
+
+    #[cfg(not(windows))]
+    let _ = (enabled, window);
+
+    Ok(())
+}
+
+#[tauri::command]
 fn is_dev() -> bool {
     cfg!(debug_assertions)
 }
@@ -340,6 +391,7 @@ fn main() {
             remove_enqueued_update,
             set_restart_after_pending_update,
             toggle_decorations,
+            set_transparent_window_frame,
             show_window,
             restart_app,
             check_symlink_capability,

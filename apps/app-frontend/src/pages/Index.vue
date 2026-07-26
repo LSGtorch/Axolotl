@@ -1,16 +1,19 @@
 <script setup lang="ts">
-import { defineMessages, injectNotificationManager, useVIntl } from '@modrinth/ui'
+import { LanguagesIcon, SpinnerIcon } from '@modrinth/assets'
+import { ButtonStyled, defineMessages, injectNotificationManager, useVIntl } from '@modrinth/ui'
 import type { SearchResult } from '@modrinth/utils'
 import dayjs from 'dayjs'
-import { computed, onUnmounted, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, shallowRef, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
 import RowDisplay from '@/components/RowDisplay.vue'
 import RecentWorldsList from '@/components/ui/world/RecentWorldsList.vue'
 import { useNetworkStatus } from '@/composables/useNetworkStatus'
+import { useTranslationToggle } from '@/composables/useTranslationToggle'
 import { get_search_results } from '@/helpers/cache.js'
 import { instance_listener } from '@/helpers/events'
 import { list } from '@/helpers/instance'
+import { translateSearchHits } from '@/helpers/translation'
 import type { GameInstance } from '@/helpers/types'
 import { useBreadcrumbs } from '@/store/breadcrumbs'
 
@@ -31,6 +34,18 @@ const messages = defineMessages({
 		defaultMessage: 'Discover a modpack',
 	},
 	discoverMods: { id: 'app.home.discover-mods', defaultMessage: 'Discover mods' },
+	translateProject: {
+		id: 'app.project.translation.translate',
+		defaultMessage: 'Translate',
+	},
+	showOriginal: {
+		id: 'app.project.translation.show-original',
+		defaultMessage: 'Show original',
+	},
+	translating: {
+		id: 'app.project.translation.translating',
+		defaultMessage: 'Translating…',
+	},
 })
 
 breadcrumbs.setRootContext({ name: formatMessage(messages.home), link: route.path })
@@ -40,6 +55,17 @@ const instances = ref<GameInstance[]>([])
 const featuredModpacks = ref<SearchResult[]>([])
 const featuredMods = ref<SearchResult[]>([])
 const installedModpacksFilter = ref('')
+const originalFeaturedModpacks = shallowRef<SearchResult[]>([])
+const originalFeaturedMods = shallowRef<SearchResult[]>([])
+const {
+	translationActive,
+	translationLoading,
+	start: startTranslation,
+	isStale,
+	done: doneTranslation,
+	toggle,
+	cancel: cancelTranslation,
+} = useTranslationToggle()
 
 const recentInstances = computed(() =>
 	instances.value
@@ -89,7 +115,67 @@ async function fetchFeaturedMods() {
 }
 
 async function refreshFeaturedProjects() {
+	const version = cancelTranslation()
+
 	await Promise.all([fetchFeaturedModpacks(), fetchFeaturedMods()])
+
+	// Save pristine copies for the toggle-to-original flow.
+	originalFeaturedModpacks.value = featuredModpacks.value
+	originalFeaturedMods.value = featuredMods.value
+	void autoTranslateFeaturedProjects(version)
+}
+
+async function autoTranslateFeaturedProjects(version: number) {
+	try {
+		const modpacks = originalFeaturedModpacks.value
+		const mods = originalFeaturedMods.value
+		const [translatedModpacks, translatedMods] = await Promise.all([
+			translateSearchHits(modpacks),
+			translateSearchHits(mods),
+		])
+		if (isStale(version)) return
+
+		const hasTranslations = translatedModpacks !== modpacks || translatedMods !== mods
+		if (translatedModpacks !== modpacks) {
+			featuredModpacks.value = translatedModpacks
+		}
+		if (translatedMods !== mods) {
+			featuredMods.value = translatedMods
+		}
+		if (hasTranslations) translationActive.value = true
+	} catch {
+		// Translation errors are non-critical; keep original content.
+	}
+}
+
+async function translateFeaturedProjects() {
+	const version = startTranslation()
+	try {
+		const [translatedModpacks, translatedMods] = await Promise.all([
+			translateSearchHits(originalFeaturedModpacks.value, true),
+			translateSearchHits(originalFeaturedMods.value, true),
+		])
+		if (isStale(version)) return
+		if (translatedModpacks !== originalFeaturedModpacks.value) {
+			featuredModpacks.value = translatedModpacks
+		}
+		if (translatedMods !== originalFeaturedMods.value) {
+			featuredMods.value = translatedMods
+		}
+		translationActive.value = true
+	} finally {
+		doneTranslation(version)
+	}
+}
+
+function toggleTranslation() {
+	toggle(
+		() => {
+			featuredModpacks.value = originalFeaturedModpacks.value
+			featuredMods.value = originalFeaturedMods.value
+		},
+		() => void translateFeaturedProjects(),
+	)
 }
 
 await fetchInstances()
@@ -121,12 +207,29 @@ onUnmounted(() => {
 
 <template>
 	<div class="p-6 flex flex-col gap-2">
-		<h1 v-if="recentInstances?.length > 0" class="m-0 text-2xl font-extrabold">
-			{{ formatMessage(messages.welcomeBack) }}
-		</h1>
-		<h1 v-else class="m-0 text-2xl font-extrabold">
-			{{ formatMessage(messages.welcome) }}
-		</h1>
+		<div class="flex items-center justify-between">
+			<h1 v-if="recentInstances?.length > 0" class="m-0 text-2xl font-extrabold">
+				{{ formatMessage(messages.welcomeBack) }}
+			</h1>
+			<h1 v-else class="m-0 text-2xl font-extrabold">
+				{{ formatMessage(messages.welcome) }}
+			</h1>
+			<ButtonStyled size="large" type="transparent">
+				<button :disabled="translationLoading" @click="toggleTranslation">
+					<SpinnerIcon v-if="translationLoading" class="animate-spin" />
+					<LanguagesIcon v-else />
+					{{
+						formatMessage(
+							translationLoading
+								? messages.translating
+								: translationActive
+									? messages.showOriginal
+									: messages.translateProject,
+						)
+					}}
+				</button>
+			</ButtonStyled>
+		</div>
 		<div data-onboarding-id="home-recent">
 			<RecentWorldsList :recent-instances="recentInstances" />
 		</div>

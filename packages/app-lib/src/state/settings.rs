@@ -85,6 +85,9 @@ pub struct Settings {
     pub custom_background_path: Option<String>,
     pub custom_background_blur: u32,
     pub custom_background_opacity: u32,
+    pub transparent_background: bool,
+    pub transparent_background_opacity: u32,
+    pub transparent_background_blur: bool,
     pub sidebar_instance_count: u32,
 
     pub telemetry: bool,
@@ -160,6 +163,7 @@ impl Settings {
                 custom_dir, prev_custom_dir, migrated, json(feature_flags) feature_flags, toggle_sidebar,
                 skipped_update, pending_update_toast_for_version, auto_download_updates, accent_color,
                 custom_background_path, custom_background_blur, custom_background_opacity,
+                transparent_background, transparent_background_opacity, transparent_background_blur,
                 sidebar_instance_count,
                 version
             FROM settings
@@ -199,6 +203,10 @@ impl Settings {
             custom_background_path: res.custom_background_path,
             custom_background_blur: res.custom_background_blur as u32,
             custom_background_opacity: res.custom_background_opacity as u32,
+            transparent_background: res.transparent_background == 1,
+            transparent_background_opacity: res.transparent_background_opacity
+                as u32,
+            transparent_background_blur: res.transparent_background_blur == 1,
             sidebar_instance_count: res.sidebar_instance_count as u32,
             telemetry: res.telemetry == 1,
             discord_rpc: res.discord_rpc == 1,
@@ -269,6 +277,8 @@ impl Settings {
         let custom_background_blur = self.custom_background_blur.min(40) as i32;
         let custom_background_opacity =
             self.custom_background_opacity.clamp(10, 100) as i32;
+        let transparent_background_opacity =
+            self.transparent_background_opacity.min(100) as i32;
         let sidebar_instance_count = self.sidebar_instance_count.min(50) as i32;
         let version = self.version as i64;
         let onboarding_version = self.onboarding_version as i64;
@@ -347,7 +357,10 @@ impl Settings {
                 use_curseforge_mirror = $47,
                 onboarding_version = $48,
                 onboarding_instance_tour_completed = $49,
-                sidebar_instance_count = $50
+                sidebar_instance_count = $50,
+                transparent_background = $51,
+                transparent_background_opacity = $52,
+                transparent_background_blur = $53
             ",
             max_concurrent_writes,
             max_concurrent_downloads,
@@ -399,6 +412,9 @@ impl Settings {
             onboarding_version,
             self.onboarding_instance_tour_completed,
             sidebar_instance_count,
+            self.transparent_background,
+            transparent_background_opacity,
+            self.transparent_background_blur,
         )
         .execute(exec)
         .await?;

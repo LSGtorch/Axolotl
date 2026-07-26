@@ -71,6 +71,9 @@ export type AppSettings = {
 	custom_background_path: string | null
 	custom_background_blur: number
 	custom_background_opacity: number
+	transparent_background: boolean
+	transparent_background_opacity: number
+	transparent_background_blur: boolean
 	sidebar_instance_count: number
 
 	telemetry: boolean

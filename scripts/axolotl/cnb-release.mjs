@@ -152,8 +152,8 @@ async function waitForGithubManifest() {
 	throw new Error('Timed out waiting for the GitHub release manifest')
 }
 
-async function getGithubRelease() {
-	const response = await fetch(`${githubApiBaseUrl}/releases/tags/${encodeURIComponent(tag)}`, {
+async function loadGithubRelease(url) {
+	const response = await fetch(url, {
 		headers: {
 			Accept: 'application/vnd.github+json',
 			'User-Agent': 'Axolotl-CNB-Release',
@@ -163,6 +163,16 @@ async function getGithubRelease() {
 		throw new Error(`Loading GitHub release failed (${response.status}): ${await response.text()}`)
 	}
 	return await response.json()
+}
+
+async function getGithubRelease() {
+	return await loadGithubRelease(
+		`${githubApiBaseUrl}/releases/tags/${encodeURIComponent(tag)}`,
+	)
+}
+
+async function getLatestGithubRelease() {
+	return await loadGithubRelease(`${githubApiBaseUrl}/releases/latest`)
 }
 
 async function downloadFile(url, outputPath) {
@@ -250,7 +260,11 @@ function publishUpdateBranch(manifestPath) {
 async function finalizeRelease() {
 	fs.mkdirSync(outputDirectory, { recursive: true })
 	const githubManifest = await waitForGithubManifest()
-	const githubRelease = await getGithubRelease()
+	const [githubRelease, latestGithubRelease] = await Promise.all([
+		getGithubRelease(),
+		getLatestGithubRelease(),
+	])
+	const isLatestRelease = githubRelease.tag_name === latestGithubRelease.tag_name
 	const release = await ensureRelease()
 	const mirroredNames = await mirrorGithubAssets(release, githubRelease)
 	const manifest = createCnbManifest(githubManifest, mirroredNames)
@@ -265,10 +279,14 @@ async function finalizeRelease() {
 		body: JSON.stringify({
 			draft: false,
 			prerelease,
-			make_latest: prerelease ? 'false' : 'true',
+			make_latest: isLatestRelease ? 'true' : 'false',
 		}),
 	})
-	publishUpdateBranch(manifestPath)
+	if (isLatestRelease) {
+		publishUpdateBranch(manifestPath)
+	} else {
+		console.log(`Skipped update branch for non-latest GitHub release ${tag}`)
+	}
 	console.log(`Published CNB release ${tag}`)
 }
 

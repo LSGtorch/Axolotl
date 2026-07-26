@@ -1,7 +1,9 @@
 <template>
 	<NewModal ref="modal" max-width="560px" :closable="true" @hide="emit('cancel')">
 		<template #title>
-			<span class="text-contrast">{{ formatMessage(messages.title, { type: contentTypeLabel }) }}</span>
+			<span class="text-contrast">{{
+				formatMessage(messages.title, { type: contentTypeLabel })
+			}}</span>
 		</template>
 
 		<div class="flex flex-col gap-4">
@@ -21,50 +23,40 @@
 				<SpinnerIcon class="size-6 animate-spin text-secondary" />
 			</div>
 
-			<div v-else-if="filteredInstances.length === 0" class="flex flex-col items-center gap-2 py-8 text-secondary">
+			<div
+				v-else-if="filteredInstances.length === 0"
+				class="flex flex-col items-center gap-2 py-8 text-secondary"
+			>
 				<PackageOpenIcon class="size-8" />
 				<span class="text-sm">{{ formatMessage(messages.noInstances) }}</span>
 			</div>
 
-			<div v-else class="flex flex-col gap-2 max-h-[320px] overflow-y-auto">
-				<button
+			<div v-else class="flex flex-col gap-2">
+				<InstanceRowCard
 					v-for="inst in filteredInstances"
 					:key="inst.id"
-					class="group flex items-center gap-3 rounded-xl border border-surface-4 bg-surface-2 p-3 transition-all duration-200 hover:border-brand hover:bg-brand-highlight hover:cursor-pointer active:scale-[0.98]"
-					@click="emit('install', inst.id)"
+					:name="inst.name"
+					:version="inst.gameVersion"
+					:loader="inst.loader"
+					@select="emit('install', inst.id)"
 				>
-					<!-- Instance icon -->
-					<div
-						class="flex size-10 shrink-0 items-center justify-center rounded-lg border border-surface-5 bg-surface-3 overflow-hidden"
-					>
-						<img
-							v-if="inst.iconUrl"
-							:src="inst.iconUrl"
-							alt=""
-							class="size-full object-cover"
+					<template #prepend>
+						<FolderOpenIcon
+							v-if="!inst.iconUrl"
+							class="size-6 text-secondary shrink-0"
+							stroke-width="1.5"
 						/>
-						<FolderOpenIcon v-else class="size-5 text-secondary" stroke-width="1.5" />
-					</div>
-
-					<!-- Instance info -->
-					<div class="flex flex-col min-w-0 flex-1 text-left">
-						<span class="text-sm font-semibold text-contrast truncate">{{ inst.name }}</span>
-						<span class="text-xs text-secondary truncate">
-							{{ inst.gameVersion ?? '—' }}
-							<span v-if="inst.loader"> · {{ inst.loader }}</span>
-						</span>
-					</div>
-
-					<!-- Install button -->
-					<div class="shrink-0">
+						<img v-else :src="inst.iconUrl" alt="" class="size-6 shrink-0 rounded object-cover" />
+					</template>
+					<template #append>
 						<ButtonStyled type="standard" size="small" @click.stop="emit('install', inst.id)">
 							<template #prefix>
 								<DownloadIcon class="size-4" />
 							</template>
 							{{ formatMessage(messages.install) }}
 						</ButtonStyled>
-					</div>
-				</button>
+					</template>
+				</InstanceRowCard>
 			</div>
 
 			<!-- Create new instance link -->
@@ -99,6 +91,7 @@ import {
 import { computed, ref } from 'vue'
 
 import ButtonStyled from '#ui/components/base/ButtonStyled.vue'
+import InstanceRowCard from '#ui/components/base/InstanceRowCard.vue'
 import StyledInput from '#ui/components/base/StyledInput.vue'
 import NewModal from '#ui/components/modal/NewModal.vue'
 import { defineMessages, useVIntl } from '#ui/composables/i18n'
@@ -169,9 +162,7 @@ const contentTypeMap: Record<string, string> = {
 const filteredInstances = computed(() => {
 	const query = searchQuery.value.toLowerCase().trim()
 	if (!query) return internalInstances.value
-	return internalInstances.value.filter((inst) =>
-		inst.name.toLowerCase().includes(query),
-	)
+	return internalInstances.value.filter((inst) => inst.name.toLowerCase().includes(query))
 })
 
 async function show(options: {

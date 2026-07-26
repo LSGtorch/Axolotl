@@ -5,6 +5,7 @@ import {
 	ClipboardCopyIcon,
 	ExternalIcon,
 	GlobeIcon,
+	LanguagesIcon,
 	PlusIcon,
 	SpinnerIcon,
 } from '@modrinth/assets'
@@ -32,7 +33,7 @@ import {
 import { useQueryClient } from '@tanstack/vue-query'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import type { Ref } from 'vue'
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import type { LocationQuery } from 'vue-router'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 
@@ -55,6 +56,8 @@ import {
 	resolveChineseContentSearch,
 	translateSearchHitTitles,
 } from '@/helpers/content-search'
+import { translateSearchHits } from '@/helpers/translation'
+import { useTranslationToggle } from '@/composables/useTranslationToggle'
 import {
 	type CurseForgeCategory,
 	getCurseForgeCapability,
@@ -613,6 +616,18 @@ const messages = defineMessages({
 	curseForgeSource: {
 		id: 'app.browse.source.curseforge',
 		defaultMessage: 'CurseForge',
+	},
+	translateProject: {
+		id: 'app.project.translation.translate',
+		defaultMessage: 'Translate',
+	},
+	showOriginal: {
+		id: 'app.project.translation.show-original',
+		defaultMessage: 'Show original',
+	},
+	translating: {
+		id: 'app.project.translation.translating',
+		defaultMessage: 'Translating…',
 	},
 })
 
@@ -1624,6 +1639,104 @@ const searchState = useBrowseSearch({
 	}),
 })
 
+/** Translation state for search result titles and descriptions. */
+const originalProjectHits = shallowRef<any[]>([])
+const originalServerHits = shallowRef<any[]>([])
+let isUpdatingProjectHitsFromTranslation = false
+const {
+	translationActive,
+	translationLoading,
+	start: startTranslation,
+	isStale,
+	done: doneTranslation,
+	toggle,
+	cancel: cancelTranslation,
+} = useTranslationToggle()
+
+// Keep a pristine copy when genuine search results arrive (project hits).
+watch(
+	() => searchState.projectHits.value,
+	(hits) => {
+		if (isUpdatingProjectHitsFromTranslation) return
+		if (hits && hits.length > 0) {
+			originalProjectHits.value = hits
+			const version = cancelTranslation()
+			void autoTranslateNewSearchResults(version, false)
+		}
+	},
+	{ flush: 'sync' },
+)
+// Keep a pristine copy when genuine search results arrive (server hits).
+watch(
+	() => searchState.serverHits.value,
+	(hits) => {
+		if (isUpdatingProjectHitsFromTranslation) return
+		if (hits && hits.length > 0) {
+			originalServerHits.value = hits
+			const version = cancelTranslation()
+			// Always restart auto-translate since this bumps the version and
+			// cancels the one started by the projectHits watcher.
+			const useServer = originalServerHits.value.length > 0
+			void autoTranslateNewSearchResults(version, useServer)
+		}
+	},
+	{ flush: 'sync' },
+)
+
+async function autoTranslateNewSearchResults(version: number, useServer: boolean) {
+	try {
+		const hits = useServer ? originalServerHits.value : originalProjectHits.value
+		if (!hits?.length) return
+
+		const translated = await translateSearchHits(hits, false)
+		if (isStale(version)) return
+
+		if (translated !== hits) {
+			isUpdatingProjectHitsFromTranslation = true
+			if (useServer) searchState.serverHits.value = translated
+			else searchState.projectHits.value = translated
+			translationActive.value = true
+			isUpdatingProjectHitsFromTranslation = false
+		}
+	} catch {}
+}
+
+async function translateCurrentHits() {
+	const version = startTranslation()
+	try {
+		const serverHits = originalServerHits.value
+		const projectHits = originalProjectHits.value
+		const useServer = serverHits.length > 0
+		const hits = useServer ? serverHits : projectHits
+		if (!hits || hits.length === 0) return
+
+		const translated = await translateSearchHits(hits, true)
+		if (isStale(version)) return // superseded
+
+		if (translated !== hits) {
+			isUpdatingProjectHitsFromTranslation = true
+			if (useServer) searchState.serverHits.value = translated
+			else searchState.projectHits.value = translated
+			translationActive.value = true
+		}
+		isUpdatingProjectHitsFromTranslation = false
+	} finally {
+		doneTranslation(version)
+	}
+}
+
+function toggleTranslation() {
+	toggle(
+		() => {
+			isUpdatingProjectHitsFromTranslation = true
+			searchState.projectHits.value = originalProjectHits.value
+			searchState.serverHits.value = originalServerHits.value
+			isUpdatingProjectHitsFromTranslation = false
+		},
+		() => void translateCurrentHits(),
+	)
+}
+
 watch(contentSource, async (source) => {
 	searchState.projectHits.value = []
 	searchState.totalHits.value = 0
@@ -1818,6 +1931,23 @@ provideBrowseManager({
 			</ButtonStyled>
 		</div>
 		<BrowsePageLayout>
+			<template #nav-tabs-actions>
+				<ButtonStyled size="large" type="transparent">
+					<button :disabled="translationLoading" @click="toggleTranslation">
+						<SpinnerIcon v-if="translationLoading" class="animate-spin" />
+						<LanguagesIcon v-else />
+						{{
+							formatMessage(
+								translationLoading
+									? messages.translating
+									: translationActive
+										? messages.showOriginal
+										: messages.translateProject,
+							)
+						}}
+					</button>
+				</ButtonStyled>
+			</template>
 			<template #after>
 				<ContextMenu ref="contextMenuRef" @option-clicked="handleOptionsClick">
 					<template #open_link>

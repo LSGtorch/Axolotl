@@ -275,55 +275,19 @@ fn classify_zip(path: &Path) -> DroppedItemType {
     // continue to extraction so that classify_folder_content can also run the
     // root .jar + .json scan for modded instance detection.
 
-    // ── Extraction fallback: probe was inconclusive ──
-    let Ok(temp_dir) = tempfile::tempdir() else {
-        return DroppedItemType::Unknown {
-            reason: "Failed to create temp directory".to_string(),
-        };
-    };
-
+    // ── Force-analysis fallback ──
+    // Extraction + re-classification is a potentially long operation and should
+    // not happen silently during classification.  Files that can't be identified
+    // from entry names alone should be handled by the frontend (user prompt)
+    // via classify_zip_with_extraction().
     tracing::debug!(
-        "Extracting ZIP to temp dir for classification: {}",
+        "ZIP probe inconclusive — extraction required for: {}",
         path.display()
     );
-
-    // Re-open archive for extraction (archive was consumed by the scan above
-    // since `by_index_raw` returns owned entries).
-    let Ok(file) = std::fs::File::open(path) else {
-        return DroppedItemType::Unknown {
-            reason: "Cannot reopen ZIP file".to_string(),
-        };
+    return DroppedItemType::Unknown {
+        reason: "ZIP archive requires extraction to determine content type"
+            .to_string(),
     };
-
-    let Ok(mut archive) = zip::ZipArchive::new(file) else {
-        return DroppedItemType::Unknown {
-            reason: "Cannot reopen ZIP archive".to_string(),
-        };
-    };
-
-    extract_all(&mut archive, temp_dir.path());
-
-    // Determine what to classify:
-    // - 1 root file → classify that file
-    // - 1 sub-file (folder) → classify the folder within temp_dir
-    // - Multiple → classify temp_dir itself
-    match top_level.len() {
-        1 => {
-            let kind = &top_level[0];
-            let target = match kind {
-                ZipEntryKind::RootFile(name) => temp_dir.path().join(name),
-                ZipEntryKind::SubFile(folder) => temp_dir.path().join(folder),
-            };
-            let result = classify_dropped_item(&target);
-            drop(temp_dir);
-            result
-        }
-        _ => {
-            let result = classify_dropped_item(temp_dir.path());
-            drop(temp_dir);
-            result
-        }
-    }
 }
 
 enum ZipEntryKind {
@@ -337,6 +301,87 @@ impl ZipEntryKind {
             ZipEntryKind::RootFile(n) | ZipEntryKind::SubFile(n) => n,
         }
     }
+}
+
+/// Extracts a ZIP archive to a temporary directory and classifies its contents
+/// by examining the extracted files and folders.
+///
+/// This is a potentially **long-running** operation — the caller MUST first
+/// confirm with the user before calling this function.
+pub fn classify_zip_with_extraction(path: &Path) -> DroppedItemType {
+    let Ok(file) = std::fs::File::open(path) else {
+        return DroppedItemType::Unknown {
+            reason: "Cannot open ZIP file".to_string(),
+        };
+    };
+
+    let Ok(mut archive) = zip::ZipArchive::new(file) else {
+        return DroppedItemType::Unknown {
+            reason: "File is not a valid ZIP archive".to_string(),
+        };
+    };
+
+    // Collect top-level entry names (same probe as classify_zip).
+    let mut top_level: Vec<ZipEntryKind> = Vec::new();
+    for i in 0..archive.len() {
+        let Ok(entry) = archive.by_index_raw(i) else {
+            continue;
+        };
+        let name = entry.name().to_string();
+        if name.is_empty() || name.ends_with('/') {
+            continue;
+        }
+
+        let top = match name.split_once('/') {
+            Some((first, _)) => first,
+            None => &name,
+        };
+
+        if !top_level.iter().any(|k| k.name() == top) {
+            top_level.push(if name.contains('/') {
+                ZipEntryKind::SubFile(top.to_string())
+            } else {
+                ZipEntryKind::RootFile(top.to_string())
+            });
+        }
+
+        if top_level.len() > ZIP_TOP_LEVEL_LIMIT {
+            break;
+        }
+    }
+
+    // Create temporary directory for extraction.
+    let temp_dir = match tempfile::tempdir() {
+        Ok(d) => d,
+        Err(e) => {
+            return DroppedItemType::Unknown {
+                reason: format!("Failed to create temporary directory: {e}"),
+            };
+        }
+    };
+
+    // Extract everything.
+    extract_all(&mut archive, temp_dir.path());
+
+    tracing::debug!(
+        "classify_zip_with_extraction: extracted {} top-level items for {}",
+        top_level.len(),
+        path.display()
+    );
+
+    // Classify the extracted contents.
+    let result = if top_level.len() == 1 {
+        // Single top-level item — classify it directly.
+        let item_name = top_level[0].name().to_string();
+        let item_path = temp_dir.path().join(&item_name);
+        classify_dropped_item(&item_path)
+    } else {
+        // Multiple items — classify as a folder.
+        classify_folder_content(temp_dir.path())
+    };
+
+    // temp_dir is dropped here, cleaning up the extracted files automatically.
+    result
 }
 
 fn extract_all(archive: &mut zip::ZipArchive<std::fs::File>, base_dir: &Path) {
@@ -537,7 +582,7 @@ fn classify_file(path: &Path) -> DroppedItemType {
 
 // ─── Step 7: Content-type detection for folders/extracted ZIPs ─────────────
 
-fn classify_folder_content(path: &Path) -> DroppedItemType {
+pub(crate) fn classify_folder_content(path: &Path) -> DroppedItemType {
     // 1. World save: look for level.dat.
     if path.join("level.dat").exists() {
         return DroppedItemType::WorldSave {
@@ -562,6 +607,7 @@ fn classify_folder_content(path: &Path) -> DroppedItemType {
     // 4. Instance detection: check for launcher instance markers.
     //    a. versions/<id>/<id>.json pattern (vanilla launcher instance).
     //    b. Root directory has both .jar and .json files (modded instance).
+    //    c. mods/ directory contains .jar files (bare instance folder).
     let is_instance = {
         let versions_dir = path.join("versions");
         let has_version_json = if versions_dir.is_dir() {
@@ -613,32 +659,148 @@ fn classify_folder_content(path: &Path) -> DroppedItemType {
             false
         };
 
-        let has_root_jar = match std::fs::read_dir(path) {
-            Ok(mut dir) => dir.any(|e| {
-                e.ok().is_some_and(|entry| {
-                    let p = entry.path();
-                    p.is_file()
-                        && p.extension()
-                            .and_then(|ext| ext.to_str())
-                            .is_some_and(|ext| ext.eq_ignore_ascii_case("jar"))
-                })
-            }),
-            Err(_) => false,
+        let has_root_jar = {
+            let mut found = false;
+            let mut total = 0u32;
+            match std::fs::read_dir(path) {
+                Ok(dir) => {
+                    for entry in dir.flatten() {
+                        let p = entry.path();
+                        if !p.is_file() {
+                            continue;
+                        }
+                        total += 1;
+                        let ext = p
+                            .extension()
+                            .and_then(|e| e.to_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let is_jar = ext.eq_ignore_ascii_case("jar");
+                        tracing::debug!(
+                            "classify_folder_content: root_jar_check path={} file={} ext={} is_jar={}",
+                            path.display(),
+                            p.display(),
+                            ext,
+                            is_jar
+                        );
+                        if is_jar {
+                            found = true;
+                        }
+                    }
+                    tracing::debug!(
+                        "classify_folder_content: has_root_jar path={} total_root_files={} result={}",
+                        path.display(),
+                        total,
+                        found
+                    );
+                    found
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        "classify_folder_content: has_root_jar path={} read_dir_err={}",
+                        path.display(),
+                        e
+                    );
+                    false
+                }
+            }
         };
-        let has_root_json = match std::fs::read_dir(path) {
-            Ok(mut dir) => dir.any(|e| {
-                e.ok().is_some_and(|entry| {
-                    let p = entry.path();
-                    p.is_file()
-                        && p.extension()
-                            .and_then(|ext| ext.to_str())
-                            .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
-                })
-            }),
-            Err(_) => false,
+        let has_root_json = {
+            let mut found = false;
+            let mut total = 0u32;
+            match std::fs::read_dir(path) {
+                Ok(dir) => {
+                    for entry in dir.flatten() {
+                        let p = entry.path();
+                        if !p.is_file() {
+                            continue;
+                        }
+                        total += 1;
+                        let ext = p
+                            .extension()
+                            .and_then(|e| e.to_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let is_json = ext.eq_ignore_ascii_case("json");
+                        tracing::debug!(
+                            "classify_folder_content: root_json_check path={} file={} ext={} is_json={}",
+                            path.display(),
+                            p.display(),
+                            ext,
+                            is_json
+                        );
+                        if is_json {
+                            found = true;
+                        }
+                    }
+                    tracing::debug!(
+                        "classify_folder_content: has_root_json path={} total_root_files={} result={}",
+                        path.display(),
+                        total,
+                        found
+                    );
+                    found
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        "classify_folder_content: has_root_json path={} read_dir_err={}",
+                        path.display(),
+                        e
+                    );
+                    false
+                }
+            }
         };
 
-        has_version_json || (has_root_jar && has_root_json)
+        let has_mods_jar = {
+            let mods_dir = path.join("mods");
+            match std::fs::read_dir(&mods_dir) {
+                Ok(dir) => {
+                    let mut found = false;
+                    let mut total = 0u32;
+                    for entry in dir.flatten() {
+                        let p = entry.path();
+                        if !p.is_file() {
+                            continue;
+                        }
+                        total += 1;
+                        let ext = p
+                            .extension()
+                            .and_then(|e| e.to_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let is_jar = ext.eq_ignore_ascii_case("jar");
+                        tracing::debug!(
+                            "classify_folder_content: mods_jar_check path={} file={} ext={} is_jar={}",
+                            mods_dir.display(),
+                            p.display(),
+                            ext,
+                            is_jar
+                        );
+                        if is_jar {
+                            found = true;
+                        }
+                    }
+                    tracing::debug!(
+                        "classify_folder_content: has_mods_jar path={} mods_total_files={} result={}",
+                        mods_dir.display(),
+                        total,
+                        found
+                    );
+                    found
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        "classify_folder_content: has_mods_jar mods_dir={} read_dir_err={}",
+                        mods_dir.display(),
+                        e
+                    );
+                    false
+                }
+            }
+        };
+
+        has_version_json || (has_root_jar && has_root_json) || has_mods_jar
     };
 
     if is_instance {

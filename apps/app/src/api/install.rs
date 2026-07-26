@@ -113,17 +113,20 @@ pub async fn install_import_instance(
     launcher_type: ImportLauncherType,
     base_path: PathBuf,
     instance_folder: String,
+    instance_path: Option<String>,
     symlink: bool,
 ) -> Result<InstallJobSnapshot> {
     tracing::debug!(
-        "install_import_instance called: launcher_type={launcher_type:?} base_path={} instance_folder={} symlink={symlink}",
+        "install_import_instance called: launcher_type={launcher_type:?} base_path={} instance_folder={} instance_path={:?} symlink={symlink}",
         base_path.display(),
         instance_folder,
+        instance_path,
     );
-    Ok(theseus::install::import_instance(
+    Ok(theseus::install::import_instance_with_path(
         launcher_type,
         base_path,
         instance_folder,
+        instance_path,
         symlink,
     )
     .await?)

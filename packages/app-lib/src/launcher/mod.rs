@@ -185,6 +185,18 @@ pub async fn get_java_version_from_launch_context(
     let state = State::get().await?;
 
     let java_version = JavaVersion::get(key, &state.pool).await?;
+    if let Some(java) = java_version.as_ref()
+        && crate::util::jre::is_java_install_staging_path(std::path::Path::new(
+            &java.path,
+        ))
+    {
+        tracing::warn!(
+            java = %java.path,
+            "Removing incomplete Java installation from launcher settings"
+        );
+        JavaVersion::remove(key, &state.pool).await?;
+        return Ok(None);
+    }
 
     Ok(java_version)
 }
@@ -935,18 +947,37 @@ pub async fn launch_minecraft(
             .await?;
     }
 
-    let java_version =
-        get_java_version_from_launch_context(context, &version_info)
-            .await?
-            .ok_or_else(|| {
-                crate::ErrorKind::LauncherError(
-                    "Missing correct java installation".to_string(),
-                )
-            })?;
-
-    // Test jre version
-    let java_version =
-        crate::api::jre::check_jre(java_version.path.clone().into()).await?;
+    let expected_java_version = version_info
+        .java_version
+        .as_ref()
+        .map_or(8, |java| java.major_version);
+    let java_version = if let Some(java) =
+        get_java_version_from_launch_context(context, &version_info).await?
+    {
+        crate::api::jre::check_jre(java.path.into()).await?
+    } else if offline_mode {
+        return Err(crate::ErrorKind::LauncherError(
+            "Missing correct java installation".to_string(),
+        )
+        .into());
+    } else {
+        let path = if let Some(discovered) =
+            crate::api::jre::find_java_for_version(expected_java_version)
+                .await?
+        {
+            tracing::info!(
+                version = discovered.version,
+                java = discovered.path,
+                "Using discovered Java while recovering launch settings"
+            );
+            PathBuf::from(discovered.path)
+        } else {
+            crate::api::jre::auto_install_java(expected_java_version).await?
+        };
+        let java = crate::api::jre::check_jre(path).await?;
+        java.upsert(&state.pool).await?;
+        java
+    };
 
     #[cfg(target_os = "windows")]
     if crate::state::Settings::get(&state.pool)

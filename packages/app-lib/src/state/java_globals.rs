@@ -70,6 +70,16 @@ impl JavaVersion {
         &self,
         exec: impl sqlx::Executor<'_, Database = sqlx::Sqlite>,
     ) -> crate::Result<()> {
+        if crate::util::jre::is_java_install_staging_path(std::path::Path::new(
+            &self.path,
+        )) {
+            return Err(crate::ErrorKind::InputError(format!(
+                "Cannot save an incomplete Java installation: {}",
+                self.path
+            ))
+            .into());
+        }
+
         let major_version = self.parsed_version as i32;
 
         sqlx::query!(
@@ -89,6 +99,18 @@ impl JavaVersion {
             .execute(exec)
             .await?;
 
+        Ok(())
+    }
+
+    pub async fn remove(
+        major_version: u32,
+        exec: impl sqlx::Executor<'_, Database = sqlx::Sqlite>,
+    ) -> crate::Result<()> {
+        let version = major_version as i32;
+        sqlx::query("DELETE FROM java_versions WHERE major_version = $1")
+            .bind(version)
+            .execute(exec)
+            .await?;
         Ok(())
     }
 }

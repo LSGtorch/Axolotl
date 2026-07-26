@@ -2,6 +2,20 @@ import { renderHighlightedString } from '@modrinth/utils'
 import { configuredXss } from '@modrinth/utils/parse'
 import { invoke } from '@tauri-apps/api/core'
 
+import i18n from '@/i18n.config'
+
+/** Minimal shape of a search hit object that has a translatable title and description. */
+export interface TranslatableHit {
+	/** Unique identifier — `project_id` on search hits, `id` on SearchResult. */
+	project_id?: string
+	id?: string
+	title?: string
+	description?: string
+	/** Server search hits use `name` / `summary` instead of `title` / `description`. */
+	name?: string
+	summary?: string
+}
+
 export type TranslationProvider = 'microsoft' | 'google' | 'openai-compatible'
 export type TranslationMode = 'bilingual' | 'translation-only'
 export type TranslationStyle = 'default' | 'weakened' | 'brand' | 'border' | 'background'
@@ -264,4 +278,91 @@ export function renderTranslatedDescription(
 			return `${block.originalHtml}<div class="ax-translation-block ${translationStyleClass(style)}">${translated}</div>`
 		})
 		.join('')
+}
+
+const translationCache = new Map<string, { title: string; description: string } | undefined>()
+
+export async function translateSearchHits<T extends TranslatableHit>(
+	hits: T[],
+	force = false,
+): Promise<T[]> {
+	if (hits.length === 0) return hits
+
+	const settings = await getTranslationSettings()
+	if (!force && !settings.auto_translate) return hits
+
+	const targetLanguage = settings.target_language || i18n.global.locale.value || 'en-US'
+	if (!targetLanguage) return hits
+
+	const hitsToTranslate: T[] = []
+	const segments: TranslationSegment[] = []
+
+	for (const hit of hits) {
+		const key = hit.project_id ?? hit.id
+		if (!key) continue
+		const cached = translationCache.get(key)
+		if (cached) {
+			// Already cached — patch below.
+			hitsToTranslate.push(hit)
+			continue
+		}
+		const title = hit.title ?? hit.name ?? ''
+		const description = hit.description ?? hit.summary ?? ''
+		if (!title && !description) continue
+
+		hitsToTranslate.push(hit)
+		segments.push(
+			{ id: `title:${key}`, text: title, format: 'plain' },
+			{ id: `description:${key}`, text: description, format: 'plain' },
+		)
+	}
+
+	if (segments.length === 0 && hitsToTranslate.length > 0) {
+		// All hits are already in cache — still return a new array so callers
+		// can detect that translation is active (translated !== hits).
+		return hits.map(applyCachedTranslation)
+	}
+	if (segments.length === 0) return hits
+
+	const response = await translate({
+		source_language: 'auto',
+		target_language: targetLanguage,
+		context: { title: '', description: '' },
+		segments,
+	}).catch(() => null)
+
+	if (!response) return hits
+
+	const translatedMap = new Map<string, { title: string; description: string }>()
+	for (const seg of response.segments) {
+		const [, projectId] = seg.id.split(':', 2) as [string, string]
+		const field = seg.id.startsWith('title:') ? 'title' : 'description'
+		if (!translatedMap.has(projectId)) {
+			translatedMap.set(projectId, { title: '', description: '' })
+		}
+		const entry = translatedMap.get(projectId)!
+		entry[field] = seg.text
+	}
+
+	// Write cache
+	for (const [projectId, translated] of translatedMap) {
+		translationCache.set(projectId, translated)
+	}
+
+	return hits.map(applyCachedTranslation)
+
+	/** Apply cached translation to a single hit, falling back to original fields. */
+	function applyCachedTranslation<T extends TranslatableHit>(hit: T): T {
+		const key = hit.project_id ?? hit.id
+		if (!key) return hit
+		const translated = translationCache.get(key)
+		if (!translated) return hit
+		return {
+			...hit,
+			title: translated.title || hit.title,
+			description: translated.description || hit.description,
+			name: translated.title || hit.name || hit.title,
+			summary: translated.description || hit.summary || hit.description,
+		}
+	}
 }

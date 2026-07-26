@@ -23,6 +23,7 @@ const BFS_MAX_DEPTH: usize = 5;
 const BFS_MAX_DIRS_PER_ROOT: usize = 10_000;
 /// How many blocking collection jobs (registry, BFS roots, ...) run at once.
 const COLLECT_CONCURRENCY: usize = 4;
+const JAVA_INSTALL_STAGING_SUFFIX: &str = ".installing";
 
 /// Directory names (lowercase, substring match) that make the BFS descend
 /// into a top-level directory of a search root.
@@ -493,6 +494,9 @@ async fn get_all_autoinstalled_jre_path() -> Result<HashSet<PathBuf>, JREError>
             && let Ok(dir) = std::fs::read_dir(base_path)
         {
             for entry in dir.flatten() {
+                if is_java_install_staging_path(&entry.path()) {
+                    continue;
+                }
                 let file_path = entry.path().join("bin");
 
                 if let Ok(contents) = std::fs::read_to_string(file_path.clone())
@@ -549,9 +553,17 @@ pub async fn check_java_at_filepaths(
 // If no such path exists, or no such valid java at this path exists, returns None
 #[tracing::instrument]
 pub async fn check_java_at_filepath(path: &Path) -> crate::Result<JavaVersion> {
+    if is_java_install_staging_path(path) {
+        return Err(JREError::IncompleteInstallation(path.to_path_buf()).into());
+    }
+
     // Attempt to canonicalize the potential java filepath
     // If it fails, this path does not exist and None is returned (no Java here)
     let path = io::canonicalize(path)?;
+
+    if is_java_install_staging_path(&path) {
+        return Err(JREError::IncompleteInstallation(path).into());
+    }
 
     // Checks for existence of Java at this filepath
     // Adds JAVA_BIN to the end of the path if it is not already there
@@ -618,6 +630,16 @@ pub async fn check_java_at_filepath(path: &Path) -> crate::Result<JavaVersion> {
     }
 
     Err(JREError::FailedJavaCheck(java).into())
+}
+
+pub(crate) fn is_java_install_staging_path(path: &Path) -> bool {
+    path.components().any(|component| {
+        let std::path::Component::Normal(name) = component else {
+            return false;
+        };
+        let name = name.to_string_lossy().to_ascii_lowercase();
+        name.starts_with('.') && name.ends_with(JAVA_INSTALL_STAGING_SUFFIX)
+    })
 }
 
 /// Reads a Java installation's `release` file (present in Java 8+ distributions
@@ -690,6 +712,9 @@ pub enum JREError {
 
     #[error("No executable found at {0}")]
     NoExecutable(PathBuf),
+
+    #[error("Java installation is still incomplete at {0}")]
+    IncompleteInstallation(PathBuf),
 
     #[error("Could not check Java version at path {0}")]
     FailedJavaCheck(PathBuf),
@@ -807,5 +832,40 @@ mod tests {
         assert_eq!(extract_java_version("21-ea").unwrap(), 21);
         assert_eq!(extract_java_version("25").unwrap(), 25);
         assert!(extract_java_version("garbage").is_err());
+    }
+
+    #[test]
+    fn detects_launcher_java_staging_paths() {
+        assert!(is_java_install_staging_path(Path::new(
+            "java_versions/.mojang-java-runtime-epsilon-windows-x64.installing/bin/javaw.exe"
+        )));
+        assert!(is_java_install_staging_path(Path::new(
+            "java_versions/.azul-package.installing/bin/javaw.exe"
+        )));
+        assert!(!is_java_install_staging_path(Path::new(
+            "java_versions/mojang-java-runtime-epsilon-windows-x64/bin/javaw.exe"
+        )));
+        assert!(!is_java_install_staging_path(Path::new(
+            "java_versions/.installing-tools/jdk/bin/javaw.exe"
+        )));
+    }
+
+    #[tokio::test]
+    async fn rejects_incomplete_java_before_release_file_fast_path() {
+        let root = tempfile::tempdir().unwrap();
+        let java = root
+            .path()
+            .join(".mojang-java-runtime-epsilon.installing/bin")
+            .join(JAVA_BIN);
+        std::fs::create_dir_all(java.parent().unwrap()).unwrap();
+        std::fs::write(&java, b"").unwrap();
+        std::fs::write(
+            java.parent().unwrap().parent().unwrap().join("release"),
+            b"JAVA_VERSION=\"25\"\nOS_ARCH=\"x86_64\"\n",
+        )
+        .unwrap();
+
+        let error = check_java_at_filepath(&java).await.unwrap_err();
+        assert!(error.to_string().contains("still incomplete"));
     }
 }

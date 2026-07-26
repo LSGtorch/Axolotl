@@ -33,6 +33,104 @@ export const ANNOUNCEMENT_CHANGE_TYPES: readonly AnnouncementChangeType[] = [
 
 export const launcherAnnouncements: readonly LauncherAnnouncement[] = [
 	{
+		id: 'launcher-1.5.5',
+		version: '1.5.5',
+		publishedAt: '2026-07-26',
+		title: {
+			'en-US': 'Axolotl Launcher 1.5.5',
+			'zh-CN': 'Axolotl Launcher 1.5.5',
+		},
+		changes: {
+			added: [
+				{
+					'en-US':
+						'The offline mode notice now has a refresh button to re-check the session server connection without restarting the launcher.',
+					'zh-CN': '离线模式提示中新增刷新按钮，无需重启启动器即可重新检测会话服务器连接状态。',
+				},
+			],
+			fixed: [
+				{
+					'en-US':
+						'Fixed a freeze caused by an infinite loop when closing the import method dialog, and its Cancel action is now a real button.',
+					'zh-CN': '修复了关闭导入方式弹窗时因无限循环导致卡死的问题，同时「取消」现在是真正的按钮。',
+				},
+				{
+					'en-US':
+						'Importing an instance no longer shows a success notification before the import actually finishes — failures now report an error instead of a false success.',
+					'zh-CN': '导入实例不再在导入真正完成前提示成功——导入失败时现在会提示错误，而不是错误地提示成功。',
+				},
+				{
+					'en-US':
+						'Changing the app directory now moves shared instance links without moving or copying their original files.',
+					'zh-CN': '更改应用目录时，现在仅迁移共享实例链接，不再移动或复制其原始文件。',
+				},
+				{
+					'en-US':
+						'Creating a custom instance once again defaults its icon to the selected mod loader (Fabric, Forge, Quilt, NeoForge) instead of the generic placeholder.',
+					'zh-CN':
+						'创建自定义实例时，图标重新默认使用所选加载器的图标（Fabric、Forge、Quilt、NeoForge），不再是通用占位图。',
+				},
+				{
+					'en-US':
+						'Loader and other newer built-in instance icons now display without the avatar frame, matching the rest of the built-in icons.',
+					'zh-CN': '加载器及其他较新的内置实例图标现在与其余内置图标一致，不再带边框显示。',
+				},
+			],
+		},
+	},
+	{
+		id: 'launcher-1.5.4',
+		version: '1.5.4',
+		publishedAt: '2026-07-25',
+		title: {
+			'en-US': 'Axolotl Launcher 1.5.4',
+			'zh-CN': 'Axolotl Launcher 1.5.4',
+		},
+		changes: {
+			added: [
+				{
+					'en-US':
+						'Added a transparent background option in Settings > Appearance, with a slider to control how much of your desktop shows through the launcher window.',
+					'zh-CN': '设置 > 外观新增「透明背景」选项，可通过滑块调节桌面透过启动器窗口显示的程度。',
+				},
+				{
+					'en-US':
+						'Added a background blur toggle for the transparent background, frosting whatever shows through the window.',
+					'zh-CN': '透明背景新增「背景模糊」开关，可将透出的画面做磨砂玻璃处理。',
+				},
+				{
+					'en-US': 'Added powerful modpack parsing functionality.',
+					'zh-CN': '整合包强力解析功能',
+				},
+				{
+					'en-US': 'Automatically set instance icons to match their mod loader.',
+					'zh-CN': '自动设置实例图标为加载器图标。',
+				},
+			],
+			fixed: [
+				{
+					'en-US':
+						'Closing Minecraft normally no longer triggers a false crash report because of harmless errors found in the game log.',
+					'zh-CN': '正常关闭 Minecraft 时，不再因游戏日志中的非致命错误误弹崩溃报告。',
+				},
+				{
+					'en-US': 'Fixed frontend display errors during modpack import.',
+					'zh-CN': '修复整合包导入时的前端显示错误',
+				},
+				{
+					'en-US':
+						'Fixed incomplete Java downloads being detected and launched before installation finished.',
+					'zh-CN': '修复尚未安装完成的 Java 被误识别并用于启动游戏的问题。',
+				},
+				{
+					'en-US':
+						'The launcher now finishes opening without waiting for an unavailable automatic translation service to time out.',
+					'zh-CN': '自动翻译服务不可用时，启动器现在无需等待请求超时即可完成启动。',
+				},
+			],
+		},
+	},
+	{
 		id: 'launcher-1.5.3',
 		version: '1.5.3',
 		publishedAt: '2026-07-25',
@@ -41,7 +139,25 @@ export const launcherAnnouncements: readonly LauncherAnnouncement[] = [
 			'zh-CN': 'Axolotl Launcher 1.5.3',
 		},
 		changes: {
+			added: [
+				{
+					'en-US':
+						'Added translation for new entries, allowing the translation feature to be applied to titles and descriptions outside of entries.',
+					'zh-CN': '新增条目翻译功能，让翻译功能可以应用到条目外的标题和介绍。',
+				},
+			],
 			fixed: [
+				{
+					'en-US':
+						'Transparent launcher windows now keep rounded corners instead of showing a square frame.',
+					'zh-CN': '透明背景开启后，启动器窗口现在会保持圆角，不再显示为直角边框。',
+				},
+				{
+					'en-US':
+						'Fixed instance imports opened from the folder picker or drag and drop, including .minecraft folders, launcher shortcuts, instances stored outside launcher defaults, responsive cancellation, and faster local .mrpack confirmation.',
+					'zh-CN':
+						'修复通过文件夹选择器或拖拽导入实例无响应、选择弹窗无法取消及本地 .mrpack 确认弹窗出现过慢的问题，现支持 .minecraft 文件夹、启动器快捷方式及存放在非默认位置的实例。',
+				},
 				{
 					'en-US': 'Urgent fix for critical bugs in the previous version',
 					'zh-CN': '紧急修复上个版本严重bug',
@@ -50,19 +166,28 @@ export const launcherAnnouncements: readonly LauncherAnnouncement[] = [
 					'en-US':
 						'Transient Windows file locks are now retried during downloads, and persistent lock errors identify the process holding the file when Windows can report it.',
 					'zh-CN':
-						'下载时遇到短暂的 Windows 文件占用将自动重试；若持续失败，Windows 能识别时会在错误中显示占用文件的进程。',
+						'下载时遇到短暂的 Windows 文件占用将自动重试；若持续失败,Windows 能识别时会在错误中显示占用文件的进程。',
 				},
 			],
 			changed: [
 				{
 					'en-US':
 						'Changed the way the module loader is recognized when importing instances, using a more aggressive strategy',
-					'zh-CN': '更改导入实例时模组加载器的识别方式，采用更激进的策略',
+					'zh-CN': '更改导入实例时模组加载器的识别方式,采用更激进的策略。',
 				},
 				{
 					'en-US':
 						'Changed the way the import type is detected, using a more conservative strategy',
-					'zh-CN': '更改导入类型探测的方式，采用更保守的策略',
+					'zh-CN': '更改导入类型探测的方式,采用更保守的策略。',
+				},
+				{
+					'en-US': 'Changed some frontend code left by vibe and replaced it with native components',
+					'zh-CN': '修改了一些曾经vibe留下的前端代码,换为原生组件。',
+				},
+				{
+					'en-US':
+						'Changed the scanning logic to optimize some parts of the import scanning, improving compatibility.',
+					'zh-CN': '修改扫描逻辑，优化导入扫描的部分石山，提升兼容性。',
 				},
 			],
 		},

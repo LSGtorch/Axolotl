@@ -62,6 +62,60 @@ body {
 	overflow: hidden;
 }
 
+// `color-scheme: dark` makes the UA paint an opaque dark canvas, and
+// `defaults.scss` gives body an opaque `--color-bg`. Both would sit in front of
+// the transparent window, so they have to be cleared.
+html,
+html body {
+	background-color: transparent;
+}
+
+// Opaque snapshots of the surface palette. The transparent window mode derives
+// its translucent surfaces from these, since a token cannot reference itself.
+:root {
+	--surface-1-opaque: var(--surface-1);
+	--surface-1-5-opaque: var(--surface-1-5);
+	--surface-2-opaque: var(--surface-2);
+	--surface-2-5-opaque: var(--surface-2-5);
+	--surface-3-opaque: var(--surface-3);
+	--surface-4-opaque: var(--surface-4);
+	--surface-5-opaque: var(--surface-5);
+}
+
+// Declared on `body`, not on the root: the opaque snapshots above live on the
+// root, and redefining the same tokens on that same element would form a
+// reference cycle that resolves every background to `transparent`. Modals and
+// dropdowns teleport into `body`, so they still inherit these.
+html.transparent-window body {
+	// `--transparent-window-alpha` is the user-facing opacity. Deeper surfaces
+	// interpolate toward opaque so that stacked panels keep their contrast at
+	// low settings; at 100% every layer lands back on fully opaque.
+	--window-alpha: var(--transparent-window-alpha, 55%);
+	--window-alpha-1-5: calc(var(--window-alpha) + (100% - var(--window-alpha)) * 0.16);
+	--window-alpha-2: calc(var(--window-alpha) + (100% - var(--window-alpha)) * 0.3);
+	--window-alpha-chrome: calc(var(--window-alpha) + (100% - var(--window-alpha)) * 0.38);
+	--window-alpha-3: calc(var(--window-alpha) + (100% - var(--window-alpha)) * 0.55);
+	--window-alpha-4: calc(var(--window-alpha) + (100% - var(--window-alpha)) * 0.6);
+	--window-alpha-5: calc(var(--window-alpha) + (100% - var(--window-alpha)) * 0.78);
+
+	--surface-1: color-mix(in srgb, var(--surface-1-opaque) var(--window-alpha), transparent);
+	--surface-1-5: color-mix(in srgb, var(--surface-1-5-opaque) var(--window-alpha-1-5), transparent);
+	--surface-2: color-mix(in srgb, var(--surface-2-opaque) var(--window-alpha-2), transparent);
+	--surface-2-5: color-mix(in srgb, var(--surface-2-5-opaque) var(--window-alpha-chrome), transparent);
+	--surface-3: color-mix(in srgb, var(--surface-3-opaque) var(--window-alpha-3), transparent);
+	--surface-4: color-mix(in srgb, var(--surface-4-opaque) var(--window-alpha-4), transparent);
+	--surface-5: color-mix(in srgb, var(--surface-5-opaque) var(--window-alpha-5), transparent);
+
+	// The semantic aliases resolve against the root surfaces at declaration
+	// time, so overriding the primitives above does not reach them.
+	--color-bg: color-mix(in srgb, var(--surface-1-opaque) var(--window-alpha), transparent);
+	--color-raised-bg: color-mix(in srgb, var(--surface-3-opaque) var(--window-alpha-3), transparent);
+	--color-button-bg: color-mix(in srgb, var(--surface-4-opaque) var(--window-alpha-4), transparent);
+	--color-divider: color-mix(in srgb, var(--surface-5-opaque) var(--window-alpha-5), transparent);
+	--color-divider-dark: color-mix(in srgb, var(--surface-5-opaque) var(--window-alpha-5), transparent);
+	--color-tooltip-bg: var(--surface-3-opaque);
+}
+
 * {
 	box-sizing: border-box;
 }

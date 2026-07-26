@@ -253,6 +253,7 @@
 			<SymlinkInstanceWarning
 				v-if="instance?.symlink_target && !symlinkWarning.isHidden.value"
 				:symlink-target="instance.symlink_target"
+				class="mb-3"
 				dismissible
 			/>
 			<NavTabs :links="tabs" />

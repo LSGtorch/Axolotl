@@ -5,6 +5,13 @@
 	>
 		<span class="font-semibold text-contrast">{{ formatMessage(messages.offlineMode) }}</span>
 		<span class="text-sm text-secondary">{{ formatMessage(messages.offlineModeDescription) }}</span>
+		<ButtonStyled>
+			<button class="mt-1" :disabled="refreshingNetwork" @click="refreshNetworkStatus()">
+				<SpinnerIcon v-if="refreshingNetwork" class="animate-spin" />
+				<RefreshCwIcon v-else />
+				{{ formatMessage(messages.refreshNetworkStatus) }}
+			</button>
+		</ButtonStyled>
 	</div>
 	<div
 		v-if="accounts.length === 0"
@@ -267,6 +274,7 @@ import {
 	PlusIcon,
 	RadioButtonCheckedIcon,
 	RadioButtonIcon,
+	RefreshCwIcon,
 	SpinnerIcon,
 	TrashIcon,
 } from '@modrinth/assets'
@@ -281,8 +289,9 @@ import {
 	StyledInput,
 	useVIntl,
 } from '@modrinth/ui'
+import { useQueryClient } from '@tanstack/vue-query'
 import type { Ref } from 'vue'
-import { computed, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 
 import axolotlLogo from '@/assets/axolotl.png'
 import steveSkinTexture from '@/assets/skins/steve.png?inline'
@@ -311,7 +320,27 @@ import { handleSevereError } from '@/store/error.js'
 
 const { formatMessage } = useVIntl()
 const { handleError } = injectNotificationManager()
-const { offline } = useNetworkStatus()
+const { offline, refreshBrowserOffline } = useNetworkStatus()
+const queryClient = useQueryClient()
+const refreshingNetwork = ref(false)
+
+/**
+ * Re-checks session server reachability on demand so users can leave offline
+ * mode without restarting the launcher. Goes through the shared
+ * `authServerReachability` query so the reachability state and the auth
+ * warning banner stay consistent.
+ */
+async function refreshNetworkStatus() {
+	if (refreshingNetwork.value) return
+	refreshingNetwork.value = true
+	try {
+		refreshBrowserOffline()
+		await nextTick()
+		await queryClient.refetchQueries({ queryKey: ['authServerReachability'] })
+	} finally {
+		refreshingNetwork.value = false
+	}
+}
 
 const emit = defineEmits<{
 	change: []
@@ -821,6 +850,10 @@ const messages = defineMessages({
 		id: 'minecraft-account.offline-mode.description',
 		defaultMessage:
 			'Only offline accounts are available. You can launch fully downloaded instances.',
+	},
+	refreshNetworkStatus: {
+		id: 'minecraft-account.offline-mode.refresh',
+		defaultMessage: 'Refresh connection status',
 	},
 	notSignedIn: {
 		id: 'minecraft-account.not-signed-in',

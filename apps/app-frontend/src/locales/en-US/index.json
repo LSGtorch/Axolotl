@@ -281,6 +281,27 @@
 	"app.appearance-settings.toggle-sidebar.title": {
 		"message": "Toggle sidebar"
 	},
+	"app.appearance-settings.transparent-background.blur-description": {
+		"message": "Frost what shows through the window. Dragging or resizing may feel less smooth while this is on."
+	},
+	"app.appearance-settings.transparent-background.blur-title": {
+		"message": "Background blur"
+	},
+	"app.appearance-settings.transparent-background.conflict": {
+		"message": "Your custom background image is hidden while this is enabled."
+	},
+	"app.appearance-settings.transparent-background.description": {
+		"message": "Let your desktop show through the launcher window."
+	},
+	"app.appearance-settings.transparent-background.opacity": {
+		"message": "Interface opacity"
+	},
+	"app.appearance-settings.transparent-background.opacity-description": {
+		"message": "Lower values show more of your desktop. Panels stay more solid than the background to keep text readable."
+	},
+	"app.appearance-settings.transparent-background.title": {
+		"message": "Transparent background"
+	},
 	"app.appearance-settings.unknown-pack-warning.description": {
 		"message": "If you attempt to install a Modrinth Pack file (.mrpack) that isn't hosted on Modrinth, we'll make sure you understand the risks before installing it."
 	},
@@ -3035,6 +3056,9 @@
 	"minecraft-account.offline-mode.description": {
 		"message": "Only offline accounts are available. You can launch fully downloaded instances."
 	},
+	"minecraft-account.offline-mode.refresh": {
+		"message": "Refresh connection status"
+	},
 	"minecraft-account.remove-account": {
 		"message": "Remove account"
 	},
@@ -3208,6 +3232,36 @@
 	},
 	"app.drop.modpack-not-supported-text": {
 		"message": "Modpack import is not yet supported via drag & drop. Please use the Import button to install a modpack."
+	},
+	"app.drop.unknown-force-analysis-title": {
+		"message": "Unable to identify file type"
+	},
+	"app.drop.unknown-force-analysis-text": {
+		"message": "This archive needs to be extracted and deeply analyzed to determine its content type. This may take a while. Force analysis?"
+	},
+	"app.drop.unknown-force-analysis-button": {
+		"message": "Force analysis"
+	},
+	"app.drop.unknown-force-analyzing": {
+		"message": "Force analyzing archive..."
+	},
+	"app.drop.unknown-force-analysis-failed-title": {
+		"message": "Analysis failed"
+	},
+	"app.drop.unknown-force-analysis-failed-text": {
+		"message": "Could not identify the file type even after deep analysis."
+	},
+	"app.drop.processing": {
+		"message": "Processing {name}..."
+	},
+	"app.drop.modpack-installing": {
+		"message": "Installing modpack..."
+	},
+	"app.drop.modpack-installed-success": {
+		"message": "Modpack installed successfully"
+	},
+	"app.drop.modpack-install-failed": {
+		"message": "Failed to install modpack"
 	},
 	"app.drop.mod-compatibility-title": {
 		"message": "Version Mismatch"

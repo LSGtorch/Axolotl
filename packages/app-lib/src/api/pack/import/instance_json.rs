@@ -326,19 +326,39 @@ fn detect_loader(
     json: &Value,
 ) -> Option<(String, Option<String>)> {
     // Order per PCLCE: check Fabric/Quilt before Forge, neoforge before forge
-    let loader_type = if content.contains("net.fabricmc:fabric-loader") {
+    let check_fabric = content.contains("net.fabricmc");
+    debug!(
+        "detect_loader: check_fabric content_contains('net.fabricmc')={}",
+        check_fabric
+    );
+    let check_quilt = content.contains("org.quiltmc");
+    debug!(
+        "detect_loader: check_quilt content_contains('org.quiltmc')={}",
+        check_quilt
+    );
+    let neoforge_in_content = content.contains("net.neoforged");
+    let neoforge_in_id = json
+        .get("id")
+        .and_then(|v| v.as_str())
+        .map(|id| id.to_lowercase().contains("neoforge"))
+        .unwrap_or(false);
+    debug!(
+        "detect_loader: check_neoforge content_contains('net.neoforged')={} id_contains('neoforge')={}",
+        neoforge_in_content, neoforge_in_id
+    );
+    let check_forge = content.contains("net.minecraftforge");
+    debug!(
+        "detect_loader: check_forge content_contains('net.minecraftforge')={}",
+        check_forge
+    );
+
+    let loader_type = if check_fabric {
         "fabric"
-    } else if content.contains("org.quiltmc:quilt-loader") {
+    } else if check_quilt {
         "quilt"
-    } else if content.contains("net.neoforged")
-        || json
-            .get("id")
-            .and_then(|v| v.as_str())
-            .map(|id| id.to_lowercase().contains("neoforge"))
-            .unwrap_or(false)
-    {
+    } else if neoforge_in_content || neoforge_in_id {
         "neoforge"
-    } else if content.contains("minecraftforge:forge:") {
+    } else if check_forge {
         "forge"
     } else {
         debug!("detect_loader: no known loader library found in JSON content");

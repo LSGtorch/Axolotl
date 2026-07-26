@@ -1,4 +1,5 @@
 use crate::State;
+use crate::api::pack::detect::detect_local_pack_sync;
 use crate::data::ModLoader;
 use crate::install::{
     InstallErrorContext, InstallPhaseDetails, InstallPhaseId, InstallProgress,
@@ -20,6 +21,8 @@ use std::future::Future;
 
 use std::path::{Component, Path, PathBuf};
 use std::pin::Pin;
+
+use zip::ZipArchive;
 
 #[derive(Serialize, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -186,6 +189,22 @@ pub async fn get_instance_from_pack(
                 .unwrap_or_default()
                 .to_string_lossy()
                 .to_string();
+
+            // Validate ZIP structure before proceeding — fail fast on corrupt archives
+            // rather than discovering the error later during extraction.
+            let file = std::fs::File::open(&path)
+                .map_err(|e| crate::ErrorKind::StdIOError(e))?;
+            ZipArchive::new(file).map_err(|e| {
+                crate::ErrorKind::InputError(format!(
+                    "Invalid or corrupt modpack archive ({}): {e}",
+                    path.display()
+                ))
+            })?;
+
+            // Scan ZIP entry names to detect pack format (no extraction, just
+            // reads the central directory). This tells us what kind of content
+            // we're dealing with before any expensive operations.
+            let _has_known_manifest = detect_local_pack_sync(&path).is_ok();
 
             let is_known_file = if tokio::fs::metadata(&path).await?.len()
                 <= MAX_LOCAL_FILE_HASH_LOOKUP_SIZE

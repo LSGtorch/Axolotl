@@ -367,6 +367,8 @@ pub enum InstallRequest {
         base_path: PathBuf,
         instance_folder: String,
         #[serde(default)]
+        instance_path: Option<String>,
+        #[serde(default)]
         symlink: bool,
     },
     DuplicateInstance {

@@ -30,5 +30,5 @@ export const stageConfig: StageConfigInput<CreationFlowContextValue> = {
 		},
 	}),
 	rightButtonConfig: null,
-	maxWidth: '800px',
+	maxWidth: '520px',
 }

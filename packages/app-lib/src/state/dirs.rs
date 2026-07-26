@@ -14,6 +14,12 @@ pub const LAUNCHER_LOGS_FOLDER_NAME: &str = "launcher_logs";
 pub const INSTANCES_FOLDER_NAME: &str = "profiles";
 pub const METADATA_FOLDER_NAME: &str = "meta";
 
+fn is_excluded_migration_path(path: &Path, excluded_paths: &[PathBuf]) -> bool {
+    excluded_paths
+        .iter()
+        .any(|excluded| path.starts_with(excluded))
+}
+
 #[derive(Debug)]
 pub struct DirectoryInfo {
     pub settings_dir: PathBuf, // Base settings directory- app database
@@ -275,11 +281,13 @@ impl DirectoryInfo {
                     old: PathBuf,
                     new: PathBuf,
                     size: u64,
+                    symlink_target: Option<PathBuf>,
                 }
 
                 async fn add_paths(
                     source: &Path,
                     destination: &Path,
+                    excluded_paths: &[PathBuf],
                     paths: &mut Vec<MovePath>,
                     total_size: &mut u64,
                 ) -> crate::Result<()> {
@@ -291,10 +299,24 @@ impl DirectoryInfo {
                         crate::util::io::create_dir_all(destination).await?;
                     }
 
-                    for entry_path in
-                        crate::pack::import::get_all_subfiles(source, false)
-                            .await?
-                    {
+                    let mut pending = vec![source.to_path_buf()];
+                    while let Some(entry_path) = pending.pop() {
+                        if is_excluded_migration_path(
+                            &entry_path,
+                            excluded_paths,
+                        ) {
+                            continue;
+                        }
+
+                        if entry_path.is_dir() {
+                            let mut entries = fs::read_dir(&entry_path).await?;
+                            while let Some(entry) = entries.next_entry().await?
+                            {
+                                pending.push(entry.path());
+                            }
+                            continue;
+                        }
+
                         let relative_path = entry_path.strip_prefix(source)?;
                         let new_path = destination.join(relative_path);
                         let path_size =
@@ -306,6 +328,7 @@ impl DirectoryInfo {
                             old: entry_path,
                             new: new_path,
                             size: path_size,
+                            symlink_target: None,
                         });
                     }
 
@@ -315,10 +338,27 @@ impl DirectoryInfo {
                 let mut paths: Vec<MovePath> = vec![];
                 let mut total_size = 0;
 
+                let shared_instances: Vec<(String, String)> = sqlx::query_as(
+                    "
+                        SELECT path, symlink_target
+                        FROM instances
+                        WHERE symlink_target IS NOT NULL
+                        ",
+                )
+                .fetch_all(exec)
+                .await?;
+                let shared_instance_paths = shared_instances
+                    .iter()
+                    .map(|(path, _)| {
+                        prev_dir.join(INSTANCES_FOLDER_NAME).join(path)
+                    })
+                    .collect::<Vec<_>>();
+
                 for dir in MOVE_DIRS {
                     add_paths(
                         &prev_dir.join(dir),
                         &move_dir.join(dir),
+                        &shared_instance_paths,
                         &mut paths,
                         &mut total_size,
                     )
@@ -328,6 +368,21 @@ impl DirectoryInfo {
                         10.0 / (MOVE_DIRS.len() as f64),
                         None,
                     )?;
+                }
+
+                for (path, symlink_target) in shared_instances {
+                    let old = prev_dir.join(INSTANCES_FOLDER_NAME).join(&path);
+                    if fs::symlink_metadata(&old).await.is_err() {
+                        continue;
+                    }
+
+                    total_size += 1;
+                    paths.push(MovePath {
+                        old,
+                        new: move_dir.join(INSTANCES_FOLDER_NAME).join(path),
+                        size: 1,
+                        symlink_target: Some(PathBuf::from(symlink_target)),
+                    });
                 }
 
                 let paths_len = paths.len();
@@ -358,12 +413,20 @@ impl DirectoryInfo {
                                     })?;
                                 }
 
-                                crate::util::io::rename_or_move(
-                                    &x.old,
-                                    &x.new,
-                                )
-                                .await
-                                    .map_err(|e| {
+                                let move_result: eyre::Result<()> =
+                                    if x.symlink_target.is_some() {
+                                        tokio::fs::rename(&x.old, &x.new)
+                                            .await
+                                            .map_err(eyre::Report::from)
+                                    } else {
+                                        crate::util::io::rename_or_move(
+                                            &x.old,
+                                            &x.new,
+                                        )
+                                        .await
+                                    };
+
+                                move_result.map_err(|e| {
                                         crate::Error::from(crate::ErrorKind::DirectoryMoveError(
                                             format!(
                                                 "Failed to move directory from {} to {}: {e:?}",
@@ -416,14 +479,22 @@ impl DirectoryInfo {
                         let loader_bar_id = loader_bar_id.clone();
 
                         async move {
-                            crate::util::fetch::copy(
-                                &x.old,
-                                &x.new,
-                                io_semaphore,
-                            )
-                            .await.map_err(|e| { crate::Error::from(
-                                crate::ErrorKind::DirectoryMoveError(format!("Failed to move directory from {} to {}: {e:?}", x.old.display(), x.new.display())))
-                            })?;
+                            if let Some(target) = &x.symlink_target {
+                                crate::util::io::create_symlink(target, &x.new)
+                                    .await
+                                    .map_err(|e| { crate::Error::from(
+                                        crate::ErrorKind::DirectoryMoveError(format!("Failed to recreate shared instance link from {} to {}: {e:?}", x.new.display(), target.display())))
+                                    })?;
+                            } else {
+                                crate::util::fetch::copy(
+                                    &x.old,
+                                    &x.new,
+                                    io_semaphore,
+                                )
+                                .await.map_err(|e| { crate::Error::from(
+                                    crate::ErrorKind::DirectoryMoveError(format!("Failed to move directory from {} to {}: {e:?}", x.old.display(), x.new.display())))
+                                })?;
+                            }
 
                             let _ = emit_loading(
                                 &loader_bar_id,
@@ -442,7 +513,13 @@ impl DirectoryInfo {
                         async move {
                             let res = async {
                                 let _permit = io_semaphore.0.acquire().await?;
-                                crate::util::io::remove_file(&x.old).await?;
+                                if x.symlink_target.is_some() {
+                                    crate::util::io::remove_dir_all(&x.old)
+                                        .await?;
+                                } else {
+                                    crate::util::io::remove_file(&x.old)
+                                        .await?;
+                                }
 
                                 emit_loading(
                                     &loader_bar_id,
@@ -518,5 +595,30 @@ impl DirectoryInfo {
         settings.update(exec).await?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn excludes_shared_instance_contents_from_directory_migration() {
+        let shared = PathBuf::from("old/profiles/shared");
+
+        assert!(is_excluded_migration_path(
+            Path::new("old/profiles/shared/mods/example.jar"),
+            &[shared],
+        ));
+    }
+
+    #[test]
+    fn does_not_exclude_instances_with_similar_names() {
+        let shared = PathBuf::from("old/profiles/shared");
+
+        assert!(!is_excluded_migration_path(
+            Path::new("old/profiles/shared-copy/mods/example.jar"),
+            &[shared],
+        ));
     }
 }

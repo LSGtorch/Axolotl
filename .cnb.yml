@@ -2,16 +2,28 @@ main:
   'crontab: */15 * * * *':
     - name: Sync source from GitHub
       stages:
-        - name: Pull GitHub repository
-          image: tencentcom/git-sync
-          settings:
-            target_url: https://github.com/Mystic-Stars/Axolotl.git
-            auth_type: https
-            branch: main
-            sync_mode: pull
-            force: true
-            push_tags: true
-            fetch_options: --prune
+        - name: Mirror GitHub repository
+          script: |
+            set -eu
+            mirror_dir="$(mktemp -d)"
+            trap 'rm -rf "$mirror_dir"' EXIT
+            git clone --mirror https://github.com/Mystic-Stars/Axolotl.git "$mirror_dir/repository.git"
+            git -C "$mirror_dir/repository.git" remote add cnb "${CNB_REPO_URL_HTTPS:-https://cnb.cool/axlmc/Axolotl.git}"
+            printf '%s:%s' "${CNB_TOKEN_USER_NAME:-cnb}" "$CNB_TOKEN" > "$mirror_dir/auth"
+            auth="$(base64 "$mirror_dir/auth")"
+            git_cnb() {
+              git -C "$mirror_dir/repository.git" -c "http.extraHeader=Authorization: Basic $auth" "$@"
+            }
+            git_cnb push --force cnb refs/heads/main:refs/heads/main
+            git_cnb fetch cnb '+refs/tags/v*:refs/cnb/tags/v*'
+            git -C "$mirror_dir/repository.git" for-each-ref --format='%(refname:strip=2)' 'refs/tags/v*' > "$mirror_dir/github-tags"
+            while IFS= read -r tag; do
+              if ! git -C "$mirror_dir/repository.git" show-ref --verify --quiet "refs/cnb/tags/$tag"; then
+                git_cnb push cnb "refs/tags/$tag:refs/tags/$tag"
+              elif [ "$(git -C "$mirror_dir/repository.git" rev-parse "refs/tags/$tag")" != "$(git -C "$mirror_dir/repository.git" rev-parse "refs/cnb/tags/$tag")" ]; then
+                echo "CNB tag $tag differs from GitHub; leaving the existing release tag unchanged"
+              fi
+            done < "$mirror_dir/github-tags"
 
 'v*':
   tag_push:

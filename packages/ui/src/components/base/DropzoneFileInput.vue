@@ -10,8 +10,10 @@
 		@dragover.prevent="onDragOver"
 		@dragleave.prevent="onDragLeave"
 		@drop.prevent="handleDrop"
+		@click="handleBrowse"
 	>
 		<div
+			v-if="!noIconBox"
 			:class="[
 				'grid place-content-center  text-brand border-brand border-solid border bg-highlight-green',
 				size === 'small' ? 'w-10 h-10' : 'h-14 w-14',
@@ -21,6 +23,12 @@
 			<FolderUpIcon
 				aria-hidden="true"
 				:class="['text-brand', size === 'small' ? 'w-6 h-6' : 'w-8 h-8']"
+			/>
+		</div>
+		<div v-else class="grid place-content-center">
+			<FolderUpIcon
+				aria-hidden="true"
+				:class="['text-secondary', size === 'small' ? 'w-6 h-6' : 'w-8 h-8']"
 			/>
 		</div>
 
@@ -34,11 +42,13 @@
 		</div>
 
 		<input
+			v-if="!nativePicker"
 			ref="fileInput"
 			type="file"
-			:multiple="multiple"
-			:accept="accept"
+			:multiple="directory ? false : multiple"
+			:accept="directory ? undefined : accept"
 			:disabled="disabled"
+			:webkitdirectory="directory || undefined"
 			class="hidden"
 			@change="handleChange"
 		/>
@@ -59,6 +69,7 @@ const fileInput = ref<HTMLInputElement | null>(null)
 
 const emit = defineEmits<{
 	(e: 'change', files: File[]): void
+	(e: 'browse'): void
 }>()
 
 const props = withDefaults(
@@ -71,11 +82,17 @@ const props = withDefaults(
 		shouldAlwaysReset?: boolean
 		disabled?: boolean
 		size?: 'small' | 'medium' | 'large'
+		directory?: boolean
+		noIconBox?: boolean
+		nativePicker?: boolean
 	}>(),
 	{
 		primaryPrompt: 'Drop files here or click to upload',
 		secondaryPrompt: 'Only supported file types will be accepted',
 		size: 'large',
+		directory: false,
+		noIconBox: false,
+		nativePicker: false,
 	},
 )
 
@@ -142,6 +159,12 @@ function addFiles(incoming: FileList, shouldNotReset = false) {
 }
 
 const isDragOver = ref(false)
+
+function handleBrowse(event: MouseEvent) {
+	if (!props.nativePicker) return
+	event.preventDefault()
+	emit('browse')
+}
 
 function onDragOver() {
 	isDragOver.value = true

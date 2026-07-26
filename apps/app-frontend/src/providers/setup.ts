@@ -8,7 +8,7 @@ import { setupTagsProvider } from './setup/tags'
 
 export function setupProviders(
 	notificationManager: AbstractWebNotificationManager,
-	_popupNotificationManager: AbstractPopupNotificationManager,
+	popupNotificationManager: AbstractPopupNotificationManager,
 ) {
 	setupTagsProvider(notificationManager)
 	const fileDrop = setupFileDropProvider()
@@ -18,6 +18,6 @@ export function setupProviders(
 	return {
 		fileDrop,
 		...filePicker,
-		...setupCreationModal(notificationManager),
+		...setupCreationModal(notificationManager, popupNotificationManager),
 	}
 }

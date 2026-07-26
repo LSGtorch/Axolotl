@@ -141,6 +141,36 @@ const messages = defineMessages({
 		id: 'app.appearance-settings.custom-background.opacity-description',
 		defaultMessage: 'Control how strongly the image shows through the interface.',
 	},
+	transparentBackgroundTitle: {
+		id: 'app.appearance-settings.transparent-background.title',
+		defaultMessage: 'Transparent background',
+	},
+	transparentBackgroundDescription: {
+		id: 'app.appearance-settings.transparent-background.description',
+		defaultMessage: 'Let your desktop show through the launcher window.',
+	},
+	transparentBackgroundOpacity: {
+		id: 'app.appearance-settings.transparent-background.opacity',
+		defaultMessage: 'Interface opacity',
+	},
+	transparentBackgroundOpacityDescription: {
+		id: 'app.appearance-settings.transparent-background.opacity-description',
+		defaultMessage:
+			'Lower values show more of your desktop. Panels stay more solid than the background to keep text readable.',
+	},
+	transparentBackgroundBlurTitle: {
+		id: 'app.appearance-settings.transparent-background.blur-title',
+		defaultMessage: 'Background blur',
+	},
+	transparentBackgroundBlurDescription: {
+		id: 'app.appearance-settings.transparent-background.blur-description',
+		defaultMessage:
+			'Frost what shows through the window. Dragging or resizing may feel less smooth while this is on.',
+	},
+	transparentBackgroundConflict: {
+		id: 'app.appearance-settings.transparent-background.conflict',
+		defaultMessage: 'Your custom background image is hidden while this is enabled.',
+	},
 	advancedRenderingTitle: {
 		id: 'app.appearance-settings.advanced-rendering.title',
 		defaultMessage: 'Advanced rendering',
@@ -362,12 +392,27 @@ watch(
 			settings.value.custom_background_path,
 			settings.value.custom_background_blur,
 			settings.value.custom_background_opacity,
+			settings.value.transparent_background,
+			settings.value.transparent_background_opacity,
+			settings.value.transparent_background_blur,
 			settings.value.sidebar_instance_count,
 		] as const,
-	([path, blur, opacity, sidebarInstanceCount]) => {
+	([
+		path,
+		blur,
+		opacity,
+		transparent,
+		transparentOpacity,
+		transparentBlur,
+		sidebarInstanceCount,
+	]) => {
 		themeStore.customBackgroundPath = path
 		themeStore.customBackgroundBlur = blur
 		themeStore.customBackgroundOpacity = opacity
+		themeStore.transparentBackground = transparent
+		themeStore.transparentBackgroundOpacity = transparentOpacity
+		themeStore.transparentBackgroundBlur = transparentBlur
+		themeStore.setTransparentBackgroundClass()
 		themeStore.sidebarInstanceCount = sidebarInstanceCount
 	},
 	{ immediate: true },
@@ -622,6 +667,63 @@ watch(
 					{{ formatMessage(messages.customBackgroundOpacityDescription) }}
 				</p>
 			</div>
+		</div>
+	</div>
+
+	<div class="mt-6">
+		<div class="flex items-center justify-between gap-4">
+			<div>
+				<h2 class="m-0 text-lg font-semibold text-contrast">
+					{{ formatMessage(messages.transparentBackgroundTitle) }}
+				</h2>
+				<p class="m-0 mt-1">{{ formatMessage(messages.transparentBackgroundDescription) }}</p>
+			</div>
+
+			<Toggle
+				id="transparent-background"
+				:model-value="settings.transparent_background"
+				@update:model-value="(e) => (settings.transparent_background = !!e)"
+			/>
+		</div>
+
+		<div v-if="settings.transparent_background" class="mt-4 flex flex-col gap-2">
+			<h3 class="m-0 font-semibold text-contrast">
+				{{ formatMessage(messages.transparentBackgroundOpacity) }}
+			</h3>
+			<Slider
+				id="transparent-background-opacity"
+				v-model="settings.transparent_background_opacity"
+				:min="0"
+				:max="100"
+				:step="5"
+				unit="%"
+			/>
+			<p class="m-0 text-sm text-secondary">
+				{{ formatMessage(messages.transparentBackgroundOpacityDescription) }}
+			</p>
+			<p v-if="customBackgroundPreview" class="m-0 text-sm text-orange">
+				{{ formatMessage(messages.transparentBackgroundConflict) }}
+			</p>
+		</div>
+
+		<div
+			v-if="settings.transparent_background && os !== 'Linux'"
+			class="mt-4 flex items-center justify-between gap-4"
+		>
+			<div>
+				<h3 class="m-0 font-semibold text-contrast">
+					{{ formatMessage(messages.transparentBackgroundBlurTitle) }}
+				</h3>
+				<p class="m-0 mt-1 text-sm text-secondary">
+					{{ formatMessage(messages.transparentBackgroundBlurDescription) }}
+				</p>
+			</div>
+
+			<Toggle
+				id="transparent-background-blur"
+				:model-value="settings.transparent_background_blur"
+				@update:model-value="(e) => (settings.transparent_background_blur = !!e)"
+			/>
 		</div>
 	</div>
 

@@ -6,8 +6,8 @@
 	>
 		<div
 			v-if="!noIconBox"
-			class="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-solid"
-			:class="selected ? 'border-brand' : 'border-surface-5'"
+			class="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl"
+			:class="[noIconBorder ? '' : 'border border-solid', noIconBorder ? '' : selected ? 'border-brand' : 'border-surface-5']"
 		>
 			<component
 				:is="icon"
@@ -29,7 +29,8 @@
 		</div>
 		<div class="flex flex-1 flex-col gap-1">
 			<span class="text-base font-semibold text-contrast">{{ title }}</span>
-			<span class="text-sm font-medium text-primary">{{ description }}</span>
+			<span class="text-left text-sm font-medium text-primary">{{ description }}</span>
+			<span v-if="note" class="text-left text-xs text-tertiary">{{ note }}</span>
 		</div>
 		<ChevronRightIcon
 			class="size-5 shrink-0 text-secondary opacity-0 transition-opacity duration-100 group-hover:opacity-100"
@@ -45,8 +46,10 @@ defineProps<{
 	icon: Component
 	title: string
 	description: string
+	note?: string
 	selected?: boolean
 	noIconBox?: boolean
+	noIconBorder?: boolean
 }>()
 
 defineEmits<{

@@ -1235,6 +1235,30 @@
 	"creation-flow.modal.import-instance.selection.clear-all": {
 		"defaultMessage": "清除所有"
 	},
+	"creation-flow.modal.import-instance.find-modpack.prompt": {
+		"defaultMessage": "查找要安装的整合包"
+	},
+	"creation-flow.modal.import-instance.search-modpack.placeholder": {
+		"defaultMessage": "搜索整合包"
+	},
+	"creation-flow.modal.import-instance.search-modpack.no-results": {
+		"defaultMessage": "未找到结果"
+	},
+	"creation-flow.modal.import-instance.action.import-modpack": {
+		"defaultMessage": "导入文件"
+	},
+	"creation-flow.modal.import-instance.action.browse-modpacks": {
+		"defaultMessage": "浏览整合包"
+	},
+	"creation-flow.modal.import-instance.drop-zone.click": {
+		"defaultMessage": "选择文件夹，或拖拽任意文件/文件夹"
+	},
+	"creation-flow.modal.import-instance.drop-zone.primary": {
+		"defaultMessage": "拖到此处，或点击选择文件夹"
+	},
+	"creation-flow.modal.import-instance.import-prompt": {
+		"defaultMessage": "拖拽启动器文件夹、整合包文件或 .minecraft 文件夹即可一键导入实例"
+	},
 	"creation-flow.modal.modpack.action.browse": {
 		"defaultMessage": "浏览整合包"
 	},

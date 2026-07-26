@@ -21,7 +21,7 @@ const { addNotification } = injectNotificationManager()
 
 const props = withDefaults(
 	defineProps<{
-		accept: string
+		accept?: string
 	}>(),
 	{
 		accept: '*',

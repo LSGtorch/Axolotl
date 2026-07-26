@@ -104,7 +104,10 @@ const sortOptions = computed<ComboboxOption<SortType>[]>(() =>
 	</template>
 	<SelectedProjectsFloatingBar v-if="ctx.installContext?.value && ctx.variant !== 'web'" />
 
-	<NavTabs v-if="ctx.showProjectTypeTabs.value" :links="ctx.selectableProjectTypes.value" />
+	<div class="flex items-center justify-between">
+		<NavTabs v-if="ctx.showProjectTypeTabs.value" :links="ctx.selectableProjectTypes.value" />
+		<slot name="nav-tabs-actions" />
+	</div>
 
 	<StyledInput
 		v-model="ctx.query.value"

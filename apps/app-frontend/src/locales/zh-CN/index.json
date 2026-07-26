@@ -281,6 +281,27 @@
 	"app.appearance-settings.toggle-sidebar.title": {
 		"message": "切换侧边栏"
 	},
+	"app.appearance-settings.transparent-background.blur-description": {
+		"message": "将背景画面模糊处理。占用性能较高"
+	},
+	"app.appearance-settings.transparent-background.blur-title": {
+		"message": "背景模糊"
+	},
+	"app.appearance-settings.transparent-background.conflict": {
+		"message": "启用此项时，你设置的自定义背景图片将被隐藏。"
+	},
+	"app.appearance-settings.transparent-background.description": {
+		"message": "让桌面透过启动器窗口显示出来。"
+	},
+	"app.appearance-settings.transparent-background.opacity": {
+		"message": "界面不透明度"
+	},
+	"app.appearance-settings.transparent-background.opacity-description": {
+		"message": "数值越低，透出的桌面越多。面板会比背景更实一些，以保证文字清晰可读。"
+	},
+	"app.appearance-settings.transparent-background.title": {
+		"message": "透明背景"
+	},
 	"app.appearance-settings.unknown-pack-warning.description": {
 		"message": "如果你尝试安装一个未托管在 Modrinth 上的 Modrinth 整合包文件（.mrpack），我们会确保你在安装之前了解相关风险。"
 	},
@@ -2994,7 +3015,10 @@
 		"message": "离线模式"
 	},
 	"minecraft-account.offline-mode.description": {
-		"message": "仅可使用离线账号，并且只能启动已完整下载的实例。这通常是因为你的电脑无法连接到Mojang的认证服务器，请检查网络连接。如果你正在使用代理，请关闭代理后重启Axolotl。"
+		"message": "仅可使用离线账号，并且只能启动已完整下载的实例。这通常是因为你的电脑无法连接到Mojang的认证服务器，请检查网络连接。如果你正在使用代理，请关闭或开启代理后点击下方按钮刷新连接状态。"
+	},
+	"minecraft-account.offline-mode.refresh": {
+		"message": "刷新连接状态"
 	},
 	"minecraft-account.remove-account": {
 		"message": "移除账户"
@@ -3222,7 +3246,7 @@
 		"message": "全新创建"
 	},
 	"create.new.description": {
-		"message": "创建一个新的 Minecraft 实例。"
+		"message": "创建一个新的 Minecraft 实例，自选模组加载器。"
 	},
 	"create.import.title": {
 		"message": "导入已有"
@@ -3319,6 +3343,36 @@
 	},
 	"app.drop.modpack-not-supported-text": {
 		"message": "暂不支持通过拖放导入整合包。请使用「导入」按钮来安装整合包。"
+	},
+	"app.drop.unknown-force-analysis-title": {
+		"message": "无法识别文件类型"
+	},
+	"app.drop.unknown-force-analysis-text": {
+		"message": "该压缩包无法通过快速扫描识别，需要完整解压后进行深度分析。此操作可能需要一些时间，是否继续？"
+	},
+	"app.drop.unknown-force-analysis-button": {
+		"message": "强力解析"
+	},
+	"app.drop.unknown-force-analyzing": {
+		"message": "正在强力解析压缩包..."
+	},
+	"app.drop.unknown-force-analysis-failed-title": {
+		"message": "分析失败"
+	},
+	"app.drop.unknown-force-analysis-failed-text": {
+		"message": "深度分析后仍无法识别该文件类型。"
+	},
+	"app.drop.processing": {
+		"message": "正在处理 {name}..."
+	},
+	"app.drop.modpack-installing": {
+		"message": "正在安装整合包..."
+	},
+	"app.drop.modpack-installed-success": {
+		"message": "整合包安装完成"
+	},
+	"app.drop.modpack-install-failed": {
+		"message": "整合包安装失败"
 	},
 	"app.translation-settings.system-prompt": {
 		"message": "系统提示词"

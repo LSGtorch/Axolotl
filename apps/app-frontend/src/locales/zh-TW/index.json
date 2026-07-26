@@ -2669,6 +2669,36 @@
 	"app.drop.modpack-not-supported-text": {
 		"message": "暫不支援透過拖放匯入整合包。請使用「匯入」按鈕來安裝整合包。"
 	},
+	"app.drop.unknown-force-analysis-title": {
+		"message": "無法識別檔案類型"
+	},
+	"app.drop.unknown-force-analysis-text": {
+		"message": "該壓縮檔無法通過快速掃描識別，需要完整解壓後進行深度分析。此操作可能需要一些時間，是否繼續？"
+	},
+	"app.drop.unknown-force-analysis-button": {
+		"message": "強力解析"
+	},
+	"app.drop.unknown-force-analyzing": {
+		"message": "正在強力解析壓縮檔..."
+	},
+	"app.drop.unknown-force-analysis-failed-title": {
+		"message": "分析失敗"
+	},
+	"app.drop.unknown-force-analysis-failed-text": {
+		"message": "深度分析後仍無法識別該檔案類型。"
+	},
+	"app.drop.processing": {
+		"message": "正在處理 {name}..."
+	},
+	"app.drop.modpack-installing": {
+		"message": "正在安裝整合包..."
+	},
+	"app.drop.modpack-installed-success": {
+		"message": "整合包安裝完成"
+	},
+	"app.drop.modpack-install-failed": {
+		"message": "整合包安裝失敗"
+	},
 	"app.drop.mod-compatibility-title": {
 		"message": "版本不相符"
 	},

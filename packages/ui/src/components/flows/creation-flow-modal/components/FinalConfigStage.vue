@@ -76,7 +76,7 @@
 			<span class="text-sm text-secondary">{{ formatMessage(messages.worldSeedDescription) }}</span>
 		</div>
 
-		<div class="h-px w-full bg-surface-5" />
+		<HorizontalRule />
 
 		<Accordion overflow-visible button-class="w-full bg-transparent m-0 p-0 border-none">
 			<template #title>
@@ -144,6 +144,7 @@ import { injectTags } from '../../../../providers'
 import Accordion from '../../../base/Accordion.vue'
 import Chips from '../../../base/Chips.vue'
 import Combobox, { type ComboboxOption } from '../../../base/Combobox.vue'
+import HorizontalRule from '../../../base/HorizontalRule.vue'
 import StyledInput from '../../../base/StyledInput.vue'
 import Toggle from '../../../base/Toggle.vue'
 import type { Difficulty, Gamemode, GeneratorSettingsMode } from '../creation-flow-context'

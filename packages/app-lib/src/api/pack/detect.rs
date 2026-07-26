@@ -7,6 +7,8 @@
 use std::io::Read;
 use std::path::Path;
 
+use tracing::debug;
+
 pub const MRPACK_MANIFEST: &str = "modrinth.index.json";
 pub const CURSEFORGE_MANIFEST: &str = "manifest.json";
 pub const MCBBS_MANIFEST: &str = "mcbbs.packmeta";
@@ -96,6 +98,13 @@ pub fn detect_local_pack_sync(path: &Path) -> crate::Result<DetectedLocalPack> {
     let mut archive =
         zip::ZipArchive::new(file).map_err(|error| open_error(path, error))?;
 
+    let total_entries = archive.len();
+    debug!(
+        "detect_local_pack_sync: path={} total_zip_entries={}",
+        path.display(),
+        total_entries
+    );
+
     let mut names = Vec::with_capacity(archive.len());
     for index in 0..archive.len() {
         let entry = archive.by_index_raw(index).map_err(|error| {
@@ -109,24 +118,72 @@ pub fn detect_local_pack_sync(path: &Path) -> crate::Result<DetectedLocalPack> {
             )
             .into());
         }
-        names.push(decode_zip_entry_name(entry.name_raw()));
+        let name = decode_zip_entry_name(entry.name_raw());
+        debug!(
+            "detect_local_pack_sync: scanning entry[{}] name={}",
+            index, name
+        );
+        names.push(name);
     }
 
     let bases = candidate_bases(&names);
+    debug!(
+        "detect_local_pack_sync: path={} candidate_bases={:?}",
+        path.display(),
+        bases
+    );
+
     for base in &bases {
+        debug!(
+            "detect_local_pack_sync: path={} trying base={:?}",
+            path.display(),
+            base
+        );
         if let Some(detected) = detect_at_base(&mut archive, &names, base)? {
+            debug!(
+                "detect_local_pack_sync: path={} base={:?} matched format={:?}",
+                path.display(),
+                base,
+                detected.format
+            );
             return Ok(detected);
         }
+        debug!(
+            "detect_local_pack_sync: path={} base={:?} no format matched",
+            path.display(),
+            base
+        );
     }
 
+    debug!(
+        "detect_local_pack_sync: path={} trying detect_plain_archive",
+        path.display()
+    );
     if let Some(detected) = detect_plain_archive(&names) {
+        debug!(
+            "detect_local_pack_sync: path={} matched PlainArchive version_id={:?}",
+            path.display(),
+            detected.plain_version_id
+        );
         return Ok(detected);
     }
 
+    debug!(
+        "detect_local_pack_sync: path={} trying detect_instance_folder",
+        path.display()
+    );
     if let Some(detected) = detect_instance_folder(&names) {
+        debug!(
+            "detect_local_pack_sync: path={} matched InstanceFolder",
+            path.display()
+        );
         return Ok(detected);
     }
 
+    debug!(
+        "detect_local_pack_sync: path={} no format matched at all",
+        path.display()
+    );
     Err(crate::ErrorKind::InputError(
         "Unrecognized modpack format: no known pack manifest was found in the archive"
             .to_string(),
@@ -158,7 +215,12 @@ fn detect_at_base<R: std::io::Read + std::io::Seek>(
 ) -> crate::Result<Option<DetectedLocalPack>> {
     let has = |file: &str| -> bool {
         let target = format!("{base}{file}");
-        names.iter().any(|name| name == &target)
+        let found = names.iter().any(|name| name == &target);
+        debug!(
+            "detect_at_base: base={:?} has({}) target={} result={}",
+            base, file, target, found
+        );
+        found
     };
     let detected = |format: LocalPackFormat| DetectedLocalPack {
         format,
@@ -170,12 +232,24 @@ fn detect_at_base<R: std::io::Read + std::io::Seek>(
     // MCBBS and MultiMC packs may also contain a manifest.json, so both must
     // be checked before the CurseForge manifest.
     if has(MCBBS_MANIFEST) {
+        debug!(
+            "detect_at_base: matched MCBBS via mcbbs.packmeta at base={:?}",
+            base
+        );
         return Ok(Some(detected(LocalPackFormat::Mcbbs)));
     }
     if has(MMC_MANIFEST) {
+        debug!(
+            "detect_at_base: matched MmcExport via mmc-pack.json at base={:?}",
+            base
+        );
         return Ok(Some(detected(LocalPackFormat::MmcExport)));
     }
     if has(MRPACK_MANIFEST) {
+        debug!(
+            "detect_at_base: matched Mrpack via modrinth.index.json at base={:?}",
+            base
+        );
         return Ok(Some(detected(LocalPackFormat::Mrpack)));
     }
     if has(CURSEFORGE_MANIFEST) {
@@ -185,16 +259,18 @@ fn detect_at_base<R: std::io::Read + std::io::Seek>(
         match read_entry_json(archive, &format!("{base}{CURSEFORGE_MANIFEST}"))
         {
             Ok(manifest) => {
-                return Ok(Some(detected(
-                    if manifest
-                        .get("addons")
-                        .is_some_and(|value| !value.is_null())
-                    {
-                        LocalPackFormat::Mcbbs
-                    } else {
-                        LocalPackFormat::CurseForge
-                    },
-                )));
+                let has_addons = manifest
+                    .get("addons")
+                    .is_some_and(|value| !value.is_null());
+                debug!(
+                    "detect_at_base: matched CurseForge/MCBBS via manifest.json at base={:?} addons={}",
+                    base, has_addons
+                );
+                return Ok(Some(detected(if has_addons {
+                    LocalPackFormat::Mcbbs
+                } else {
+                    LocalPackFormat::CurseForge
+                })));
             }
             Err(error) => {
                 tracing::warn!(
@@ -204,10 +280,18 @@ fn detect_at_base<R: std::io::Read + std::io::Seek>(
         }
     }
     if has(HMCL_MANIFEST) {
+        debug!(
+            "detect_at_base: matched Hmcl via modpack.json at base={:?}",
+            base
+        );
         return Ok(Some(detected(LocalPackFormat::Hmcl)));
     }
     for inner in ["modpack.zip", "modpack.mrpack"] {
         if has(inner) {
+            debug!(
+                "detect_at_base: matched LauncherBundled via {} at base={:?}",
+                inner, base
+            );
             return Ok(Some(DetectedLocalPack {
                 format: LocalPackFormat::LauncherBundled,
                 base_folder: base.to_string(),
@@ -217,6 +301,7 @@ fn detect_at_base<R: std::io::Read + std::io::Seek>(
         }
     }
 
+    debug!("detect_at_base: no format matched at base={:?}", base);
     Ok(None)
 }
 
@@ -269,18 +354,26 @@ fn detect_plain_archive(names: &[String]) -> Option<DetectedLocalPack> {
         let json = segments[segments.len() - 1];
         let version = segments[segments.len() - 2];
         let marker = segments[segments.len() - 3];
-        if marker == "versions"
+        let is_match = marker == "versions"
             && !version.is_empty()
             && json
                 .strip_suffix(".json")
-                .is_some_and(|stem| stem == version)
-        {
+                .is_some_and(|stem| stem == version);
+        debug!(
+            "detect_plain_archive: checking entry={} marker={} version={} json={} is_match={}",
+            name, marker, version, json, is_match
+        );
+        if is_match {
             let base = segments[..segments.len() - 3].join("/");
             let base = if base.is_empty() {
                 base
             } else {
                 format!("{base}/")
             };
+            debug!(
+                "detect_plain_archive: matched version={} base={:?}",
+                version, base
+            );
             return Some(DetectedLocalPack {
                 format: LocalPackFormat::PlainArchive,
                 base_folder: base,
@@ -289,6 +382,7 @@ fn detect_plain_archive(names: &[String]) -> Option<DetectedLocalPack> {
             });
         }
     }
+    debug!("detect_plain_archive: no versions pattern matched");
     None
 }
 
@@ -307,30 +401,58 @@ fn detect_instance_folder(names: &[String]) -> Option<DetectedLocalPack> {
                 } else {
                     format!("{base}/")
                 };
+                debug!(
+                    "detect_instance_folder: found mods folder at entry={} base={:?}",
+                    name, base
+                );
                 mods_folders.insert(base);
             }
         }
     }
 
+    debug!(
+        "detect_instance_folder: found {} unique mods folder(s)",
+        mods_folders.len()
+    );
+
+    if mods_folders.is_empty() {
+        debug!("detect_instance_folder: no mods folder found");
+        return None;
+    }
+
     // Now check each mods folder to see if there's at least one .jar file in it
-    for base in mods_folders {
-        let has_jar = names.iter().any(|name| {
-            let name_without_base = name.strip_prefix(&base).unwrap_or(name);
+    for base in &mods_folders {
+        let mut jar_files: Vec<String> = Vec::new();
+        for name in names {
+            let name_without_base =
+                name.strip_prefix(base.as_str()).unwrap_or(name);
             let segments: Vec<&str> = name_without_base.split('/').collect();
-            segments.len() == 2
+            if segments.len() == 2
                 && segments[0] == "mods"
                 && segments[1].to_lowercase().ends_with(".jar")
-        });
-
+            {
+                jar_files.push(name.clone());
+            }
+        }
+        let has_jar = !jar_files.is_empty();
+        debug!(
+            "detect_instance_folder: base={:?} has_jar={} jar_files={:?}",
+            base, has_jar, jar_files
+        );
         if has_jar {
+            debug!(
+                "detect_instance_folder: matched InstanceFolder at base={:?}",
+                base
+            );
             return Some(DetectedLocalPack {
                 format: LocalPackFormat::InstanceFolder,
-                base_folder: base,
+                base_folder: base.clone(),
                 inner_pack_entry: None,
                 plain_version_id: None,
             });
         }
     }
 
+    debug!("detect_instance_folder: no mods folder with .jar files found");
     None
 }

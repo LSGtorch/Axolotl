@@ -8,26 +8,15 @@
 			<span class="text-secondary text-sm">{{ props.fileName }}</span>
 
 			<div class="grid grid-cols-2 gap-3">
-				<button
+				<BigOptionButton
 					v-for="option in visibleOptions"
 					:key="option.type"
-					class="flex flex-col items-start gap-1.5 rounded-xl border border-surface-4 bg-surface-2 px-3 py-2.5 transition-all duration-300 hover:border-brand hover:bg-brand-highlight hover:cursor-pointer active:scale-[0.98]"
+					:icon="option.icon"
+					:title="formatMessage(option.titleMsg)"
+					:description="formatMessage(option.descMsg)"
+					no-icon-border
 					@click="emit('confirm', option.type)"
-				>
-					<div class="flex items-center gap-3 w-full">
-						<div
-							class="flex size-10 shrink-0 items-center justify-center rounded-lg border border-surface-5 bg-surface-3"
-						>
-							<component :is="option.icon" class="size-5 text-secondary" stroke-width="1.5" />
-						</div>
-						<span class="text-sm font-semibold text-contrast">{{
-							formatMessage(option.titleMsg)
-						}}</span>
-					</div>
-					<span class="text-xs text-secondary">
-						{{ formatMessage(option.descMsg) }}
-					</span>
-				</button>
+				/>
 			</div>
 		</div>
 
@@ -75,6 +64,7 @@ import type { Component } from 'vue'
 import { computed, ref } from 'vue'
 
 import type { ClassificationResult } from '#ui/composables/use-global-drop'
+import BigOptionButton from '#ui/components/base/BigOptionButton.vue'
 import ButtonStyled from '#ui/components/base/ButtonStyled.vue'
 import NewModal from '#ui/components/modal/NewModal.vue'
 import { useDebugLogger } from '#ui/composables/debug-logger'

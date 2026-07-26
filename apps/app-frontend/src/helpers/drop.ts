@@ -28,6 +28,23 @@ export function classifyDroppedItem(path: string): Promise<ClassificationResult>
 }
 
 /**
+ * Classify a dropped ZIP file by extracting it to a temporary directory first.
+ *
+ * This is a potentially **long-running** operation — the UI MUST prompt the
+ * user before calling this, since extraction can take significant time for
+ * large archives.
+ *
+ * Only call this when [`classifyDroppedItem`] returned `Unknown` with a reason
+ * containing "extraction".
+ *
+ * @param path Absolute filesystem path to the ZIP file
+ * @returns Classification result after extraction and analysis
+ */
+export function classifyDroppedItemWithExtraction(path: string): Promise<ClassificationResult> {
+	return invoke('plugin:drop|drop_classify_extract', { path })
+}
+
+/**
  * Metadata about a single importable instance within a launcher.
  */
 export interface ScanInstance {
@@ -49,6 +66,11 @@ export interface ScanResult {
 	instances: ScanInstance[]
 }
 
+interface ScannedImportableInstance {
+	name: string
+	path: string
+}
+
 /**
  * Scan a launcher's data directory for importable Minecraft instances.
  *
@@ -60,18 +82,21 @@ export async function scanLauncherInstances(
 	launcherType: string,
 	basePath: string,
 ): Promise<ScanResult[]> {
-	const names: string[] = await invoke('plugin:drop|drop_scan_launcher_instances', {
-		launcherType,
-		basePath,
-	})
+	const instances: ScannedImportableInstance[] = await invoke(
+		'plugin:drop|drop_scan_launcher_instances',
+		{
+			launcherType,
+			basePath,
+		},
+	)
 
 	return [
 		{
 			launcherName: launcherType,
 			launcherType,
-			instances: names.map((name) => ({
-				name,
-				path: `${basePath}/${name}`,
+			instances: instances.map((instance) => ({
+				name: instance.name,
+				path: instance.path,
 				version: '',
 				loader: '',
 			})),

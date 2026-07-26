@@ -51,7 +51,7 @@ import { useInstanceContext } from '@modrinth/ui/src/composables/use-instance-co
 import { useQuery } from '@tanstack/vue-query'
 import { getVersion } from '@tauri-apps/api/app'
 import { convertFileSrc, invoke } from '@tauri-apps/api/core'
-import { getCurrentWindow } from '@tauri-apps/api/window'
+import { Effect, getCurrentWindow } from '@tauri-apps/api/window'
 import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { type as getOsType } from '@tauri-apps/plugin-os'
@@ -94,6 +94,7 @@ import { get_user, get_version } from '@/helpers/cache.js'
 import {
 	type ClassificationResult,
 	classifyDroppedItem,
+	classifyDroppedItemWithExtraction,
 	detectFileLock,
 	extractModMetadata,
 	lookupModHash,
@@ -102,9 +103,14 @@ import {
 	type ScanResult,
 } from '@/helpers/drop'
 import { isVersionInRange, areLoadersCompatible } from '@/helpers/version-compatibility'
-import { command_listener, warning_listener } from '@/helpers/events.js'
+import { command_listener, install_job_listener, warning_listener } from '@/helpers/events.js'
 import { import_instance } from '@/helpers/import.js'
-import { install_create_modpack_instance, install_get_modpack_preview } from '@/helpers/install'
+import {
+	type InstallJobSnapshot,
+	install_create_modpack_instance,
+	install_get_modpack_preview,
+	wait_for_install_job,
+} from '@/helpers/install'
 import {
 	add_project_from_path,
 	check_symlink_capability,
@@ -174,7 +180,9 @@ const forceSidebar = computed(
 )
 const sidebarVisible = computed(() => sidebarToggled.value || forceSidebar.value)
 const customBackgroundStyle = computed(() => {
-	if (!themeStore.customBackgroundPath) return undefined
+	// A custom image would sit between the desktop and the UI, defeating the
+	// transparent window entirely, so the two are mutually exclusive.
+	if (themeStore.transparentBackground || !themeStore.customBackgroundPath) return undefined
 
 	return {
 		backgroundImage: `url("${convertFileSrc(themeStore.customBackgroundPath)}")`,
@@ -241,7 +249,6 @@ const {
 	setModpackAlreadyInstalledModal,
 	handleModpackDuplicateCreateAnyway,
 	handleModpackDuplicateGoToInstance,
-	onImportFileReceived,
 	fileDrop,
 } = setupProviders(notificationManager, popupNotificationManager)
 
@@ -256,6 +263,55 @@ const nativeDecorations = ref(false)
 
 const os = ref('')
 const isDevEnvironment = ref(false)
+
+/**
+ * Acrylic is rendered by the Windows compositor behind the webview, so CSS
+ * cannot clip it. Keep the native rounded frame and hide its border while the
+ * CSS-drawn transparent-window border is active.
+ */
+async function applyWindowFrame() {
+	if (os.value !== 'Windows') return
+
+	try {
+		await invoke('set_transparent_window_frame', {
+			enabled: themeStore.transparentBackground,
+		})
+	} catch (error) {
+		console.warn('Failed to update transparent window frame', error)
+	}
+}
+
+watch(() => themeStore.transparentBackground, applyWindowFrame)
+
+/**
+ * The frosted glass has to come from the compositor: a webview cannot reach the
+ * pixels behind its own window, so `backdrop-filter` can never blur the desktop.
+ * Acrylic blurs whatever sits behind the window, matching what the transparency
+ * already reveals; Mica would only sample the wallpaper and ignore other
+ * windows. Linux exposes no window effects at all.
+ */
+async function applyWindowEffects() {
+	if (os.value === 'Linux') return
+
+	try {
+		const window = getCurrentWindow()
+		if (!themeStore.transparentBackground || !themeStore.transparentBackgroundBlur) {
+			await window.clearEffects()
+			return
+		}
+
+		await window.setEffects({
+			effects: [os.value === 'MacOS' ? Effect.UnderWindowBackground : Effect.Acrylic],
+		})
+	} catch (error) {
+		console.warn('Failed to update window effects', error)
+	}
+}
+
+watch(
+	() => [themeStore.transparentBackground, themeStore.transparentBackgroundBlur],
+	applyWindowEffects,
+)
 
 const stateInitialized = ref(false)
 const communityAnnouncementModal = ref()
@@ -389,7 +445,11 @@ const messages = defineMessages({
 	},
 	dropOverlaySubtitle: {
 		id: 'app.drop.overlay-subtitle',
-		defaultMessage: 'Release to classify and import',
+		defaultMessage: 'Release to analyze',
+	},
+	dropProcessing: {
+		id: 'app.drop.processing',
+		defaultMessage: 'Processing {name}...',
 	},
 	dropMultipleFilesTitle: {
 		id: 'app.drop.error.multiple-files-title',
@@ -460,14 +520,43 @@ const messages = defineMessages({
 		defaultMessage: 'No instances found',
 	},
 
-	dropModpackNotSupportedTitle: {
-		id: 'app.drop.modpack-not-supported-title',
-		defaultMessage: 'Modpack import',
+	dropModpackInstalling: {
+		id: 'app.drop.modpack-installing',
+		defaultMessage: 'Installing modpack...',
 	},
-	dropModpackNotSupportedText: {
-		id: 'app.drop.modpack-not-supported-text',
+	dropModpackInstalledSuccess: {
+		id: 'app.drop.modpack-installed-success',
+		defaultMessage: 'Modpack installed successfully',
+	},
+	dropModpackInstallFailed: {
+		id: 'app.drop.modpack-install-failed',
+		defaultMessage: 'Failed to install modpack',
+	},
+
+	dropUnknownForceAnalysisTitle: {
+		id: 'app.drop.unknown-force-analysis-title',
+		defaultMessage: 'Unable to identify file type',
+	},
+	dropUnknownForceAnalysisText: {
+		id: 'app.drop.unknown-force-analysis-text',
 		defaultMessage:
-			'Modpack import is not yet supported via drag & drop. Please use the Import button to install a modpack.',
+			'This archive needs to be extracted and deeply analyzed to determine its content type. This may take a while. Force analysis?',
+	},
+	dropUnknownForceAnalysisButton: {
+		id: 'app.drop.unknown-force-analysis-button',
+		defaultMessage: 'Force analysis',
+	},
+	dropUnknownForceAnalyzing: {
+		id: 'app.drop.unknown-force-analyzing',
+		defaultMessage: 'Force analyzing archive...',
+	},
+	dropUnknownForceAnalysisFailedTitle: {
+		id: 'app.drop.unknown-force-analysis-failed-title',
+		defaultMessage: 'Analysis failed',
+	},
+	dropUnknownForceAnalysisFailedText: {
+		id: 'app.drop.unknown-force-analysis-failed-text',
+		defaultMessage: 'Could not identify the file type even after deep analysis.',
 	},
 
 	dropInstallModTitle: {
@@ -515,6 +604,9 @@ async function setupApp() {
 		custom_background_path,
 		custom_background_blur,
 		custom_background_opacity,
+		transparent_background,
+		transparent_background_opacity,
+		transparent_background_blur,
 		sidebar_instance_count,
 		developer_mode,
 		feature_flags,
@@ -560,6 +652,12 @@ async function setupApp() {
 	themeStore.customBackgroundPath = custom_background_path
 	themeStore.customBackgroundBlur = custom_background_blur
 	themeStore.customBackgroundOpacity = custom_background_opacity
+	themeStore.transparentBackground = transparent_background
+	themeStore.transparentBackgroundOpacity = transparent_background_opacity
+	themeStore.transparentBackgroundBlur = transparent_background_blur
+	themeStore.setTransparentBackgroundClass()
+	await applyWindowFrame()
+	await applyWindowEffects()
 	themeStore.sidebarInstanceCount = sidebar_instance_count
 	themeStore.devMode = developer_mode
 	themeStore.featureFlags = feature_flags
@@ -964,18 +1062,70 @@ const currentImportContext = ref<{ launcherType: string; basePath: string } | nu
 
 const dropDebug = useDebugLogger('DropFlow')
 
+const dropProcessingNotificationId = ref<number | null>(null)
+
 const { isDragging, isProcessing } = useGlobalDrop(
 	{
 		classifyFile: classifyDroppedItem,
+		onClassifyStart: (fileName) => {
+			// Immediate feedback when a file is dropped — show a notification
+			// with the file name before classification even begins.
+			dropProcessingNotificationId.value = addNotification({
+				title: formatMessage(messages.dropProcessing, { name: fileName }),
+				type: 'info',
+				autoCloseMs: null,
+			}).id
+		},
 		onImportStart: (type, classification) => {
 			dropClassification.value = classification
 			dropFilePath.value = classification.file_path ?? classification.base_path ?? ''
-			dropFileName.value = classification.file_path?.split('/').pop()
-				?? classification.base_path?.split(/[/\\]/).pop()
-				?? 'file'
+			dropFileName.value =
+				classification.file_path?.split('/').pop() ??
+				classification.base_path?.split(/[/\\]/).pop() ??
+				'file'
+
+			if (type === 'unknown' && classification?.reason?.toLowerCase().includes('extraction')) {
+				clearDropProcessingNotification()
+				showForceAnalysisPrompt(classification)
+				return
+			}
+
+			if (type === 'unknown') {
+				clearDropProcessingNotification()
+				const unknownFile =
+					classification?.file_path?.split(/[/\\]/).pop() ??
+					classification?.base_path?.split(/[/\\]/).pop() ??
+					''
+
+				// .tmp files are OS-level temp copies from drag-and-drop (browser, archive, etc.)
+				const isTempFile = unknownFile.startsWith('.tmp') || unknownFile.startsWith('tmp')
+				if (isTempFile) {
+					addNotification({
+						title: 'Temporary file detected',
+						text:
+							`The file "${unknownFile}" appears to be a temporary copy. ` +
+							`Try dragging the file from its original folder instead of from a browser, ` +
+							`archive, or cloud storage.`,
+						type: 'warning',
+					})
+				} else {
+					addNotification({
+						title: formatMessage(messages.dropUnknownTitle),
+						text: classification?.reason
+							? classification.reason
+							: formatMessage(messages.dropUnknownText),
+						type: 'error',
+					})
+				}
+				return
+			}
+
 			confirmDropModal.value?.show()
 		},
+		onImportEnd: () => {},
 		onError: (reason) => {
+			clearDropProcessingNotification()
+
 			if (reason === 'multiple-files') {
 				addNotification({
 					title: formatMessage(messages.dropMultipleFilesTitle),
@@ -1006,6 +1156,72 @@ const { isDragging, isProcessing } = useGlobalDrop(
 	fileDrop,
 )
 
+function clearDropProcessingNotification() {
+	if (dropProcessingNotificationId.value !== null) {
+		notificationManager.removeNotification(dropProcessingNotificationId.value)
+		dropProcessingNotificationId.value = null
+	}
+}
+
+async function handleImportFileReceived(payload: {
+	file: File | null
+	filePath: string | null
+	source: 'file-picker' | 'drag-drop'
+}) {
+	if (!payload.filePath) return
+
+	installationModal.value?.hide()
+	await scanAndShowLauncherInstances('Unknown', payload.filePath)
+}
+
+async function scanAndShowLauncherInstances(launcherType: string, basePath: string) {
+	currentImportContext.value = { launcherType, basePath }
+	scanningInstances.value = true
+
+	let results: ScanResult[]
+	try {
+		results = await scanLauncherInstances(launcherType, basePath)
+	} catch (error) {
+		currentImportContext.value = null
+		handleError(error)
+		return
+	} finally {
+		scanningInstances.value = false
+	}
+
+	const totalInstances = results.reduce((sum, result) => sum + result.instances.length, 0)
+	if (totalInstances === 0) {
+		currentImportContext.value = null
+		addNotification({ title: formatMessage(messages.dropNoInstances), type: 'warning' })
+		return
+	}
+
+	if (totalInstances === 1 && results[0]?.instances[0]) {
+		const instance = results[0].instances[0]
+		selectedInstances.value = [
+			{
+				launcherType,
+				basePath,
+				name: instance.name,
+				path: instance.path,
+			},
+		]
+		const capability = await check_symlink_capability()
+		symlinkCardsModal.value?.show({
+			instanceNames: [instance.name],
+			symlinkCapable: capability,
+		})
+		return
+	}
+
+	launcherImportModal.value?.show(results)
+}
+
+function handleDropCancel() {
+	clearDropProcessingNotification()
+	dropClassification.value = null
+}
+
 async function handleDropConfirm(type: string) {
 	const classification = dropClassification.value
 	dropClassification.value = null
@@ -1020,15 +1236,16 @@ async function handleDropConfirm(type: string) {
 	const isLauncherImport =
 		classification?.item_type === 'launcher' || classification?.item_type === 'hmcl_launcher'
 
-	if (!isLauncherImport && !classification?.file_path) {
-		dropDebug('handleDropConfirm: no filePath and not a launcher import, aborting')
+	if (!isLauncherImport && !classification?.file_path && !dropFilePath.value) {
+		dropDebug(
+			'handleDropConfirm: no filePath available (classification and dropFilePath both empty), aborting',
+		)
 		return
 	}
 
-	const filePath = classification.file_path
-	const fileName = filePath?.split('/').pop()
-		?? classification.base_path?.split(/[/\\]/).pop()
-		?? 'file'
+	const filePath = classification?.file_path ?? dropFilePath.value
+	const fileName =
+		filePath?.split('/').pop() ?? classification.base_path?.split(/[/\\]/).pop() ?? 'file'
 	dropDebug('handleDropConfirm: routing decision', {
 		type,
 		isLauncherImport,
@@ -1066,7 +1283,14 @@ async function handleDropConfirm(type: string) {
 				name: single.name,
 				path: single.path,
 			})
-			selectedInstances.value = [{ launcherType: 'Generic', basePath: dropFilePath.value, name: single.name, path: single.path }]
+			selectedInstances.value = [
+				{
+					launcherType: 'Generic',
+					basePath: dropFilePath.value,
+					name: single.name,
+					path: single.path,
+				},
+			]
 			const cap = await check_symlink_capability()
 			symlinkCardsModal.value?.show({
 				instanceNames: [single.name],
@@ -1076,7 +1300,9 @@ async function handleDropConfirm(type: string) {
 		}
 
 		// Multiple instances → show selection modal
-		dropDebug('handleDropConfirm: multiple instances from .minecraft, showing launcher import modal')
+		dropDebug(
+			'handleDropConfirm: multiple instances from .minecraft, showing launcher import modal',
+		)
 		launcherImportModal.value?.show(results)
 		return
 	}
@@ -1128,12 +1354,82 @@ async function handleDropConfirm(type: string) {
 	}
 
 	if (type === 'modpack') {
-		dropDebug('handleDropConfirm: modpack branch — NOT IMPLEMENTED, showing notification')
-		addNotification({
-			title: formatMessage(messages.dropModpackNotSupportedTitle),
-			text: formatMessage(messages.dropModpackNotSupportedText),
+		dropDebug('handleDropConfirm: modpack branch', { filePath, fileName })
+
+		if (!filePath) {
+			dropDebug('handleDropConfirm: modpack — no filePath, aborting')
+			addNotification({ title: formatMessage(messages.dropModpackInstallFailed), type: 'error' })
+			return
+		}
+
+		// ── Replace "Processing..." with "Installing..." immediately (pure frontend) ──
+		clearDropProcessingNotification()
+		let installingNotify = addNotification({
+			title: formatMessage(messages.dropModpackInstalling),
 			type: 'info',
+			autoCloseMs: null,
 		})
+
+		const isMrpack = !!fileName?.toLowerCase().endsWith('.mrpack')
+		const location = { type: 'fromFile' as const, path: filePath }
+
+		const doInstall = async () => {
+			const job = await install_create_modpack_instance(location).catch(handleError)
+			if (!job) {
+				notificationManager.removeNotification(installingNotify.id)
+				return
+			}
+
+			// Single-use listener that auto-cleans up when the job reaches a terminal state
+			const unlisten = await install_job_listener((updatedJob: InstallJobSnapshot) => {
+				if (updatedJob.job_id !== job.job_id) return
+
+				if (updatedJob.status === 'succeeded') {
+					notificationManager.removeNotification(installingNotify.id)
+					addNotification({
+						title: formatMessage(messages.dropModpackInstalledSuccess),
+						type: 'success',
+					})
+
+					unlisten()
+				} else if (['failed', 'canceled', 'interrupted'].includes(updatedJob.status)) {
+					notificationManager.removeNotification(installingNotify.id)
+					unlisten()
+				}
+			})
+		}
+
+		// .mrpack is a well-defined standard — skip preview, install directly.
+		// .zip needs a preview pass to scan entry names and determine what we're dealing with.
+		if (!isMrpack) {
+			const preview = await install_get_modpack_preview(location).catch((e) => {
+				dropDebug('handleDropConfirm: modpack preview failed', { error: e })
+				notificationManager.removeNotification(installingNotify.id)
+				handleError(e)
+				return null
+			})
+			if (!preview) return
+
+			if (preview.unknownFile) {
+				// Clear "Installing..." — warning modal will handle re-showing on confirm
+				notificationManager.removeNotification(installingNotify.id)
+				unknownPackWarningModal.value?.show(async () => {
+					installingNotify = addNotification({
+						title: formatMessage(messages.dropModpackInstalling),
+						type: 'info',
+						autoCloseMs: null,
+					})
+					await doInstall()
+				}, fileName)
+				trackEvent('InstanceCreate', { source: 'DropConfirmModpack' })
+				await router.push('/library')
+				return
+			}
+		}
+
+		await doInstall()
+		trackEvent('InstanceCreate', { source: 'DropConfirmModpack' })
+		await router.push('/library')
 		return
 	}
 
@@ -1339,6 +1635,82 @@ async function installContentDirectly(type: string, filePath: string, instId: st
 	}
 }
 
+/**
+ * Show a popup notification asking the user to confirm force-analysis
+ * (extraction + classification) of a ZIP archive that couldn't be identified
+ * from entry names alone.
+ */
+function showForceAnalysisPrompt(classification: ClassificationResult) {
+	const filePath = dropFilePath.value
+	if (!filePath) return
+
+	dropDebug('showForceAnalysisPrompt: showing force-analysis prompt', {
+		reason: classification.reason,
+		filePath,
+	})
+
+	addPopupNotification({
+		title: formatMessage(messages.dropUnknownForceAnalysisTitle),
+		text: formatMessage(messages.dropUnknownForceAnalysisText),
+		type: 'info',
+		autoCloseMs: null,
+		buttons: [
+			{
+				label: formatMessage(messages.dropUnknownForceAnalysisButton),
+				action: async () => {
+					const analyzingNotification = addNotification({
+						title: formatMessage(messages.dropUnknownForceAnalyzing),
+						type: 'info',
+						autoCloseMs: null,
+					})
+
+					try {
+						const result = await classifyDroppedItemWithExtraction(filePath)
+						notificationManager.removeNotification(analyzingNotification.id)
+
+						if (result.item_type === 'unknown') {
+							addNotification({
+								title: formatMessage(messages.dropUnknownForceAnalysisFailedTitle),
+								text: formatMessage(messages.dropUnknownForceAnalysisFailedText),
+								type: 'error',
+							})
+							return
+						}
+
+						// Success
+						// user already confirmed
+						dropClassification.value = result
+						switch (result.item_type) {
+							case 'modpack':
+								await handleDropConfirm('modpack')
+								break
+							case 'world_save':
+								await handleDropConfirm('world_save')
+								break
+							case 'launcher':
+							case 'hmcl_launcher':
+								await handleDropConfirm('instance')
+								break
+							default:
+								// mod, resource_pack, shader_pack, litematic to content install
+								await handleDropConfirm(result.item_type)
+								break
+						}
+					} catch (e) {
+						notificationManager.removeNotification(analyzingNotification.id)
+						addNotification({
+							title: formatMessage(messages.dropUnknownForceAnalysisFailedTitle),
+							text: e instanceof Error ? e.message : String(e),
+							type: 'error',
+						})
+					}
+				},
+				color: 'brand',
+			},
+		],
+	})
+}
+
 async function handleGenericInstall(instanceId: string) {
 	genericInstallModal.value?.hide()
 	const pending = pendingInstall.value
@@ -1394,6 +1766,11 @@ async function onImportSelected(
 	})
 }
 
+function onLauncherImportCancelled() {
+	currentImportContext.value = null
+	selectedInstances.value = []
+}
+
 function onSymlinkMethodCancelled() {
 	if (symlinkChoiceResolve) {
 		symlinkChoiceResolve(false)
@@ -1419,12 +1796,14 @@ async function onSymlinkMethodConfirmed(symlink: boolean) {
 
 	for (const inst of instances) {
 		try {
-			await import_instance(
+			const job = await import_instance(
 				ctx?.launcherType ?? inst.launcherType,
 				ctx?.basePath ?? inst.path,
 				inst.name,
 				symlink,
+				inst.path,
 			)
+			await wait_for_install_job(job.job_id)
 			addNotification({
 				title: formatMessage(messages.dropInstanceImportedTitle),
 				text: formatMessage(messages.dropInstanceImportedText, { name: inst.name }),
@@ -1545,18 +1924,28 @@ async function handleCommand(e) {
 	if (e.event === 'RunMRPack') {
 		// RunMRPack should directly install a local modpack file given a path;
 		// non-mrpack archives (CurseForge/MCBBS/HMCL/MultiMC zips) are format-sniffed by the backend
-		if (e.path.endsWith('.mrpack') || e.path.endsWith('.zip')) {
+		const lowerPath = e.path.toLowerCase()
+		if (lowerPath.endsWith('.mrpack') || lowerPath.endsWith('.zip')) {
 			const location = { type: 'fromFile', path: e.path }
-			const preview = await install_get_modpack_preview(location).catch(handleError)
-			if (preview?.unknownFile) {
-				const splitPath = e.path.split(/[\\/]/)
-				const fileName = splitPath ? splitPath[splitPath.length - 1] : e.path
+			const splitPath = e.path.split(/[\\/]/)
+			const fileName = splitPath ? splitPath[splitPath.length - 1] : e.path
+
+			if (lowerPath.endsWith('.mrpack')) {
+				await nextTick()
 				unknownPackWarningModal.value?.show(
 					() => install_create_modpack_instance(location).then(() => undefined),
 					fileName,
 				)
 			} else {
-				await install_create_modpack_instance(location).catch(handleError)
+				const preview = await install_get_modpack_preview(location).catch(handleError)
+				if (preview?.unknownFile) {
+					unknownPackWarningModal.value?.show(
+						() => install_create_modpack_instance(location).then(() => undefined),
+						fileName,
+					)
+				} else if (preview) {
+					await install_create_modpack_instance(location).catch(handleError)
+				}
 			}
 			trackEvent('InstanceCreate', {
 				source: 'CreationModalFileDrop',
@@ -1981,7 +2370,7 @@ provideAppUpdateDownloadProgress(appUpdateDownload)
 	<SplashScreen v-if="!stateFailed" ref="splashScreen" data-tauri-drag-region />
 	<div id="teleports"></div>
 	<div
-		v-if="stateInitialized && themeStore.customBackgroundPath"
+		v-if="stateInitialized && themeStore.customBackgroundPath && !themeStore.transparentBackground"
 		class="launcher-background"
 		:style="customBackgroundStyle"
 	/>
@@ -1990,7 +2379,9 @@ provideAppUpdateDownloadProgress(appUpdateDownload)
 		class="app-grid-layout relative"
 		:class="{
 			'disable-advanced-rendering': !themeStore.advancedRendering,
-			'has-custom-background': themeStore.customBackgroundPath,
+			'has-custom-background': themeStore.customBackgroundPath && !themeStore.transparentBackground,
+			'has-transparent-background': themeStore.transparentBackground,
+			'is-maximized': isMaximized,
 		}"
 	>
 		<Transition name="fade">
@@ -2023,7 +2414,7 @@ provideAppUpdateDownloadProgress(appUpdateDownload)
 			:search-modpacks="searchModpacks"
 			:get-project-versions="getProjectVersions"
 			:get-loader-manifest="getLoaderManifest"
-			:on-import-file-received="onImportFileReceived"
+			:on-import-file-received="handleImportFileReceived"
 			@create="handleCreate"
 			@browse-modpacks="handleBrowseModpacks"
 		/>
@@ -2198,7 +2589,8 @@ provideAppUpdateDownloadProgress(appUpdateDownload)
 		:class="{
 			'sidebar-enabled': sidebarVisible,
 			'disable-advanced-rendering': !themeStore.advancedRendering,
-			'has-custom-background': themeStore.customBackgroundPath,
+			'has-custom-background': themeStore.customBackgroundPath && !themeStore.transparentBackground,
+			'has-transparent-background': themeStore.transparentBackground,
 		}"
 	>
 		<div class="app-viewport flex-grow router-view">
@@ -2365,7 +2757,7 @@ provideAppUpdateDownloadProgress(appUpdateDownload)
 		:classification="dropClassification"
 		:file-name="dropFileName"
 		@confirm="handleDropConfirm"
-		@cancel="dropClassification = null"
+		@cancel="handleDropCancel"
 		@help="handleDropHelp"
 	/>
 
@@ -2381,7 +2773,7 @@ provideAppUpdateDownloadProgress(appUpdateDownload)
 	<LauncherImportModal
 		ref="launcherImportModal"
 		@confirm="onImportSelected"
-		@cancel="launcherImportModal?.hide()"
+		@cancel="onLauncherImportCancelled"
 	/>
 
 	<!-- Symlink method selection modal -->
@@ -2432,7 +2824,8 @@ provideAppUpdateDownloadProgress(appUpdateDownload)
 		opacity 180ms ease;
 }
 
-.app-grid-layout.has-custom-background {
+.app-grid-layout.has-custom-background,
+.app-grid-layout.has-transparent-background {
 	background-color: transparent;
 
 	.app-grid-navbar,
@@ -2479,7 +2872,8 @@ provideAppUpdateDownloadProgress(appUpdateDownload)
 		grid-template-columns: 1fr 300px;
 	}
 
-	&.has-custom-background {
+	&.has-custom-background,
+	&.has-transparent-background {
 		background-color: color-mix(in srgb, var(--color-bg) 76%, transparent);
 		border-top-left-radius: 0;
 
@@ -2492,6 +2886,49 @@ provideAppUpdateDownloadProgress(appUpdateDownload)
 			border-top-left-radius: 0;
 		}
 	}
+}
+
+.app-grid-layout.has-transparent-background {
+	&:not(.is-maximized) {
+		border-radius: 8px;
+		clip-path: inset(0 round 8px);
+		overflow: hidden;
+	}
+
+	.app-grid-navbar,
+	.app-grid-statusbar {
+		background-color: color-mix(
+			in srgb,
+			var(--surface-3-opaque) var(--window-alpha-chrome),
+			transparent
+		) !important;
+	}
+
+	// Without native decorations or rounded corners the window edge dissolves
+	// into the desktop, so it needs drawing. Dark outside, light inside, to stay
+	// legible over any wallpaper.
+	&::after {
+		content: '';
+		position: fixed;
+		inset: 0;
+		border-radius: inherit;
+		z-index: 100;
+		pointer-events: none;
+		box-shadow:
+			inset 0 0 0 1px rgba(0, 0, 0, 0.5),
+			inset 0 0 0 2px rgba(255, 255, 255, 0.14);
+	}
+}
+
+.app-contents.has-transparent-background {
+	// Sourced from the opaque snapshot: `--color-bg` is itself translucent in
+	// this mode, so mixing it again would compound. Sits slightly below the
+	// chosen alpha because pages paint their own surface on top of it.
+	background-color: color-mix(
+		in srgb,
+		var(--surface-1-opaque) calc(var(--window-alpha) * 0.82),
+		transparent
+	);
 }
 
 .loading-indicator-container {

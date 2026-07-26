@@ -38,8 +38,8 @@ export interface UseGlobalDropOptions {
 	 */
 	classifyFile: (path: string) => Promise<ClassificationResult>
 
-	/** Called when classification begins (before the loading bar). */
-	onClassifyStart?: () => void
+	/** Called when classification begins (before the loading bar). Receives the file name. */
+	onClassifyStart?: (fileName: string) => void
 
 	/**
 	 * Called when a droppable item is successfully classified.
@@ -110,7 +110,7 @@ export function useGlobalDrop(options: UseGlobalDropOptions, fileDropOverride?: 
 
 		isProcessing.value = true
 		droppedFileName.value = paths[0].split(/[/\\]/).pop() ?? 'file'
-		options.onClassifyStart?.()
+		options.onClassifyStart?.(droppedFileName.value)
 
 		const loadToken = loadingState?.begin()
 
@@ -122,8 +122,8 @@ export function useGlobalDrop(options: UseGlobalDropOptions, fileDropOverride?: 
 			debug('resolveClassification final', { item_type: resolved.item_type, file_path: resolved.file_path, launcher_type: resolved.launcher_type })
 
 			if (resolved.item_type === 'unknown') {
-				debug('routing: unknown type', { reason: resolved.reason })
-				options.onError?.(resolved.reason ?? 'unknown')
+				debug('routing: unknown type — passing to onImportStart so the consumer can decide', { reason: resolved.reason })
+				options.onImportStart?.('unknown', resolved)
 				return
 			}
 
