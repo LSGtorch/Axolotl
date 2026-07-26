@@ -182,6 +182,13 @@ pub async fn get_java_version_from_launch_context(
         .as_ref()
         .map_or(8, |it| it.major_version);
 
+    // Cleanroom requires at least Java 25, regardless of the Minecraft version's requirement.
+    let key = if context.applied_content_set.loader == crate::data::ModLoader::Cleanroom {
+        25u32
+    } else {
+        key
+    };
+
     let state = State::get().await?;
 
     let java_version = JavaVersion::get(key, &state.pool).await?;
