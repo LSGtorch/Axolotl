@@ -231,7 +231,11 @@ pub async fn get_loader_version_from_profile_with_cache(
     }
 
     if loader == ModLoader::Cleanroom {
-        return Ok(None);
+        return Ok(Some(LoaderVersion {
+            id: "latest".to_string(),
+            url: String::new(),
+            stable: true,
+        }));
     }
 
     let version = loader_version.unwrap_or("latest");

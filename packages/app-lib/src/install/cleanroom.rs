@@ -63,11 +63,18 @@ pub async fn install(context: &InstanceLaunchContext) -> crate::Result<()> {
 	.await?;
 	let installer = read_installer(&io::read(&installer_path).await?)?;
 
-    let version_dir = state.directories.version_dir(&installer.version.id);
+    // Cleanroom requires Java 25+. Override the Minecraft version's Java requirement.
+    let mut version = installer.version;
+    version.java_version = Some(daedalus::minecraft::JavaVersion {
+        component: "java-runtime-epsilon".to_string(),
+        major_version: 25,
+    });
+
+    let version_dir = state.directories.version_dir(&version.id);
     io::create_dir_all(&version_dir).await?;
     io::write(
-        version_dir.join(format!("{}.json", installer.version.id)),
-        serde_json::to_vec(&installer.version)?,
+        version_dir.join(format!("{}.json", version.id)),
+        serde_json::to_vec(&version)?,
     )
     .await?;
 
