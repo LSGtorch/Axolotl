@@ -169,7 +169,8 @@ pub struct PartialVersionInfo {
     /// The version ID of the version
     pub id: String,
     /// The version ID this partial version inherits from
-    pub inherits_from: String,
+    #[serde(default)]
+    pub inherits_from: Option<String>,
     /// The time that the version was released
     #[serde(deserialize_with = "deserialize_date")]
     pub release_time: DateTime<Utc>,

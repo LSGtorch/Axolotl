@@ -483,9 +483,9 @@ fn patch_version_info(
 
     version_info.id =
         version_info.id.replace(game_version, DUMMY_REPLACE_STRING);
-    version_info.inherits_from = version_info
-        .inherits_from
-        .replace(game_version, DUMMY_REPLACE_STRING);
+    if let Some(ref mut inherits_from) = version_info.inherits_from {
+        *inherits_from = inherits_from.replace(game_version, DUMMY_REPLACE_STRING);
+    }
 
     Ok(())
 }
