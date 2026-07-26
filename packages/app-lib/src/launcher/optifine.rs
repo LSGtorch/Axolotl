@@ -293,7 +293,7 @@ pub(crate) async fn build_partial_version_info(
 
     Ok(PartialVersionInfo {
         id: format!("{game_version}-{loader_version_id}"),
-        inherits_from: game_version.to_string(),
+        inherits_from: Some(game_version.to_string()),
         release_time: vanilla.release_time,
         time: vanilla.time,
         main_class: Some(LAUNCH_WRAPPER_MAIN_CLASS.to_string()),
