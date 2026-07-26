@@ -230,6 +230,10 @@ pub async fn get_loader_version_from_profile_with_cache(
             .await;
     }
 
+    if loader == ModLoader::Cleanroom {
+        return Ok(None);
+    }
+
     let version = loader_version.unwrap_or("latest");
 
     let filter = |it: &LoaderVersion| match version {
