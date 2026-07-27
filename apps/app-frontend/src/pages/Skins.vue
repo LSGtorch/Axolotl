@@ -15,6 +15,7 @@ import {
 	injectAuth,
 	injectModrinthClient,
 	injectNotificationManager,
+	NavTabs,
 	SkinPreviewRenderer,
 	useVIntl,
 } from '@modrinth/ui'
@@ -197,6 +198,14 @@ const messages = defineMessages({
 		defaultMessage:
 			'Skins for this account are managed by its Yggdrasil provider. Open the provider website to change skins or capes.',
 	},
+	savedTab: {
+		id: 'app.skins.tabs.saved',
+		defaultMessage: 'Saved skins',
+	},
+	defaultTab: {
+		id: 'app.skins.tabs.default',
+		defaultMessage: 'Official skins',
+	},
 })
 
 const editSkinModal = useTemplateRef('editSkinModal')
@@ -337,6 +346,18 @@ const isAddSkinButtonDragActive = ref(false)
 
 const deleteSkinModal = ref()
 const skinToDelete = ref<Skin | null>(null)
+const skinListTab = ref<'saved' | 'default'>('saved')
+
+const skinListTabLinks = computed(() => [
+	{
+		href: 'saved',
+		label: formatMessage(messages.savedTab),
+	},
+	{
+		href: 'default',
+		label: formatMessage(messages.defaultTab),
+	},
+])
 
 function confirmDeleteSkin(skin: Skin) {
 	if (isSkinManagementReadOnly.value) return
@@ -1062,8 +1083,16 @@ await loadSkins()
 		</div>
 
 		<div class="pt-2">
+			<NavTabs
+				class="mb-4"
+				:active-index="skinListTab === 'saved' ? 0 : 1"
+				:links="skinListTabLinks"
+				mode="local"
+				@tab-click="(index: number) => { skinListTab = index === 0 ? 'saved' : 'default' }"
+			/>
 			<VirtualSkinSectionList
 				ref="skinSectionList"
+				:active-tab="skinListTab"
 				:saved-skins="savedSkins"
 				:default-skin-sections="defaultSkinSections"
 				:get-baked-skin-textures="getBakedSkinTextures"

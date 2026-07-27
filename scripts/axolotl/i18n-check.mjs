@@ -25,6 +25,7 @@ const allowedUntranslatedMessages = new Set([
 	'Fabric',
 	'NeoForge',
 	'Quilt',
+	'Java {version}',
 ])
 
 function messageText(value) {

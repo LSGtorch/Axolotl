@@ -1283,6 +1283,12 @@
 	"app.java.none-found": {
 		"message": "未找到 Java 安装！"
 	},
+	"app.java.deep-scan": {
+		"message": "强力扫描"
+	},
+	"app.java.scanning": {
+		"message": "扫描中……"
+	},
 	"app.java.select": {
 		"message": "选择"
 	},
@@ -1784,6 +1790,9 @@
 	"app.project.install-context.install-content-to-instance": {
 		"message": "将内容安装到实例中"
 	},
+	"app.project.open-in-mcmod": {
+		"message": "在 MC 百科中打开"
+	},
 	"app.project.translation.failed": {
 		"message": "翻译失败，已保留原文。请重试。"
 	},
@@ -2015,11 +2024,122 @@
 	"app.settings.java.location": {
 		"message": "Java {version} 位置"
 	},
+	"app.settings.java.quick-add": {
+		"message": "快速添加"
+	},
+	"app.settings.java.custom-version": {
+		"message": "自定义版本"
+	},
+	"app.settings.java.add": {
+		"message": "添加 Java 版本"
+	},
+	"app.settings.java.version-placeholder": {
+		"message": "版本号..."
+	},
 	"app.settings.java.auto-high-performance-mode": {
 		"message": "自动为 Java 使用高性能显卡"
 	},
 	"app.settings.java.auto-high-performance-mode-description": {
 		"message": "启动 Minecraft 时，自动在 Windows 图形设置中将启动器和 Java 设为使用高性能显卡。仅支持 Windows。"
+	},
+	"app.settings.java.cancel": {
+		"message": "取消"
+	},
+	"app.settings.java.deep-scan": {
+		"message": "强力查找"
+	},
+	"app.settings.java.deep-scan-confirm": {
+		"message": "将扫描全部磁盘的全部目录，可能需要数分钟。"
+	},
+	"app.settings.java.download-java": {
+		"message": "下载 Java"
+	},
+	"app.settings.java.find-java": {
+		"message": "寻找 Java"
+	},
+	"app.settings.java.manual-add": {
+		"message": "手动添加"
+	},
+	"app.settings.java.no-versions": {
+		"message": "未配置 Java 版本，请使用下方按钮查找或添加。"
+	},
+	"app.settings.java.scan-anyway": {
+		"message": "仍然扫描"
+	},
+	"app.settings.java.scanning": {
+		"message": "扫描中……"
+	},
+	"app.settings.java.table.version": {
+		"message": "版本"
+	},
+	"app.settings.java.table.distribution": {
+		"message": "发行版"
+	},
+	"app.settings.java.table.path": {
+		"message": "路径"
+	},
+	"app.settings.java.table.actions": {
+		"message": ""
+	},
+	"app.settings.java.download.downloading": {
+		"message": "正在下载 Java {version}..."
+	},
+	"app.settings.java.download.select-distribution": {
+		"message": "选择发行版："
+	},
+	"app.settings.java.download.select-version": {
+		"message": "选择 Java 版本："
+	},
+	"app.settings.java.download.select-vendor": {
+		"message": "选择发行版："
+	},
+	"app.settings.java.download.no-vendors": {
+		"message": "没有可用的发行版。"
+	},
+	"app.settings.java.download.select-version-feed": {
+		"message": "选择 {vendor} 的版本："
+	},
+	"app.settings.java.download.progress-title": {
+		"message": "正在下载 Java"
+	},
+	"app.settings.java.download.progress-info": {
+		"message": "正在从 {distribution} 下载 Java {version}"
+	},
+	"app.settings.java.download.preparing": {
+		"message": "准备下载……"
+	},
+	"app.settings.java.download.extracting": {
+		"message": "正在解压文件……"
+	},
+	"app.settings.java.download.extracting.status": {
+		"message": "正在解压文件……"
+	},
+	"app.settings.java.download.background": {
+		"message": "放在后台"
+	},
+	"app.settings.java.download.background-hint": {
+		"message": "下载在后台继续——可在下载页面查看进度。"
+	},
+	"app.settings.java.download.version-label": {
+		"message": "Java {version}"
+	},
+	"app.settings.java.download.cancelling": {
+		"message": "取消中……"
+	},
+	"app.settings.java.download.downloading-label": {
+		"message": "下载中……"
+	},
+	"app.settings.java.download.back": {
+		"message": "返回发行版列表"
+	},
+	"app.settings.java.download.loading": {
+		"message": "加载中……"
+	},
+	"app.settings.java.download.no-versions": {
+		"message": "没有可用的版本。"
+	},
+	"app.settings.java.download.title": {
+		"message": "下载 Java"
 	},
 	"app.settings.resources.app-cache": {
 		"message": "应用缓存"
@@ -2031,7 +2151,10 @@
 		"message": "应用目录"
 	},
 	"app.settings.resources.app-directory-description": {
-		"message": "启动器用于存储全部文件的目录。更改将在重启启动器后生效。"
+		"message": "启动器用于存储全部游戏文件的目录。更改将在重启启动器后生效。"
+	},
+	"app.settings.resources.app-directory-description-portable": {
+		"message": "正在以便携模式运行，所有数据已固定在程序目录下，无法修改。"
 	},
 	"app.settings.resources.database-backups": {
 		"message": "应用数据库备份"
@@ -2272,6 +2395,12 @@
 	},
 	"app.skins.third-party-account.title": {
 		"message": "第三方皮肤管理"
+	},
+	"app.skins.tabs.saved": {
+		"message": "已保存皮肤"
+	},
+	"app.skins.tabs.default": {
+		"message": "官方皮肤"
 	},
 	"app.skins.preview.edit-button": {
 		"message": "编辑皮肤"
@@ -2893,6 +3022,33 @@
 	},
 	"instance.settings.tabs.java.version": {
 		"message": "Java {version} 版"
+	},
+	"instance.settings.tabs.java.current-path": {
+		"message": "当前路径"
+	},
+	"instance.settings.tabs.java.custom-path-option": {
+		"message": "自定义路径……"
+	},
+	"instance.settings.tabs.java.optimal-label": {
+		"message": "（此实例推荐）"
+	},
+	"instance.settings.tabs.java.select-java": {
+		"message": "选择 Java 版本"
+	},
+	"instance.settings.tabs.java.table.version": {
+		"message": "版本"
+	},
+	"instance.settings.tabs.java.table.distribution": {
+		"message": "发行版"
+	},
+	"instance.settings.tabs.java.table.path": {
+		"message": "路径"
+	},
+	"instance.settings.tabs.java.auto-label": {
+		"message": "自动（推荐）"
+	},
+	"instance.settings.tabs.java.custom-label": {
+		"message": "自定义路径……"
 	},
 	"instance.settings.tabs.window": {
 		"message": "游戏窗口"

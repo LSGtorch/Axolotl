@@ -7,13 +7,7 @@
 		:on-hide="() => backupCreator?.cancelBackup()"
 	>
 		<div class="flex flex-col gap-6">
-			<Admonition
-				v-if="symlinkTarget"
-				type="warning"
-				:header="formatMessage(messages.symlinkWarningHeader)"
-			>
-				{{ formatMessage(messages.symlinkWarningBody, { path: symlinkTarget }) }}
-			</Admonition>
+			<SymlinkWarningAdmonition :symlink-target="symlinkTarget" />
 			<Admonition type="warning" :header="formatMessage(messages.admonitionHeader)">
 				{{ formatMessage(messages.admonitionBody, { count: visibleCount }) }}
 			</Admonition>
@@ -61,6 +55,7 @@ import { defineMessages, useVIntl } from '#ui/composables/i18n'
 import { commonMessages } from '#ui/utils/common-messages'
 
 import InlineBackupCreator from './InlineBackupCreator.vue'
+import SymlinkWarningAdmonition from './SymlinkWarningAdmonition.vue'
 
 const { formatMessage } = useVIntl()
 
@@ -86,15 +81,6 @@ const messages = defineMessages({
 		id: 'content.confirm-bulk-update.shift-click-hint',
 		defaultMessage:
 			'Hold Shift while clicking "Update all" to skip this confirmation in the future.',
-	},
-	symlinkWarningHeader: {
-		id: 'app.symlink-warning.write.header',
-		defaultMessage: 'Shared instance',
-	},
-	symlinkWarningBody: {
-		id: 'app.symlink-warning.write.body',
-		defaultMessage:
-			'This instance is linked to "{path}". Changes will also affect the original files.',
 	},
 })
 

@@ -165,6 +165,16 @@ impl Integrity {
             && self.md5.is_none()
             && self.content == ContentValidation::None
     }
+
+    /// Resuming a partial download is only safe when a content hash can
+    /// prove the stitched-together file is what the server intended.
+    fn supports_resume(&self) -> bool {
+        self.size.is_some()
+            && (self.sha1.is_some()
+                || self.sha512.is_some()
+                || self.sha256.is_some()
+                || self.md5.is_some())
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -477,7 +487,10 @@ fn order_auto_routes(routes: &mut [DownloadRoute]) {
     routes.sort_by_key(|route| route.is_mirror == prefer_official);
 }
 
-fn uses_mirror_only_loader_routes(url: &str, resource: ResourceClass) -> bool {
+/// Loader Maven repositories that are served mirror-first: their mirrors are
+/// tried before the official repository, which stays available as a final
+/// fallback for content the mirrors have not synced yet.
+fn uses_mirror_first_loader_routes(url: &str, resource: ResourceClass) -> bool {
     if !matches!(
         resource,
         ResourceClass::MinecraftLibrary | ResourceClass::Loader
@@ -518,9 +531,10 @@ pub fn resolve_download_routes_for(
     mode: crate::state::DownloadSourceMode,
 ) -> Vec<DownloadRoute> {
     let official = official_route(url, resource);
+    let mirror_first_loader = uses_mirror_first_loader_routes(url, resource);
     let mut routes = explicit_mirror_routes(url, resource);
-    if !uses_mirror_only_loader_routes(url, resource) {
-        routes.push(official);
+    if !mirror_first_loader {
+        routes.push(official.clone());
     }
     match mode {
         crate::state::DownloadSourceMode::Auto
@@ -538,6 +552,9 @@ pub fn resolve_download_routes_for(
         crate::state::DownloadSourceMode::MirrorPreferred => {
             routes.sort_by_key(|route| !route.is_mirror);
         }
+    }
+    if mirror_first_loader && !routes.contains(&official) {
+        routes.push(official);
     }
     routes
 }
@@ -789,13 +806,6 @@ pub static INSECURE_REQWEST_CLIENT: LazyLock<reqwest::Client> =
             .expect("client configuration should be valid")
     });
 
-pub static REQWEST_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
-    reqwest_client_builder()
-        .https_only(true)
-        .build()
-        .expect("client configuration should be valid")
-});
-
 const DOWNLOAD_PROGRESS_LOG_INTERVAL: u64 = 8 * 1024 * 1024;
 const MODRINTH_CDN_ATTEMPTS: usize = 3;
 const MODRINTH_CDN_ATTEMPT_TIMEOUT: time::Duration =
@@ -924,9 +934,24 @@ fn record_route_failure(route: &DownloadRoute) {
     }
 }
 
+const RANGE_SPLITTING_DISABLE_THRESHOLD: u32 = 2;
+
+static RANGE_SPLITTING_PROTOCOL_FAILURES: LazyLock<
+    Mutex<HashMap<String, u32>>,
+> = LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn range_splitting_authority(route: &DownloadRoute) -> Option<String> {
+    let url = Url::parse(&route.url).ok()?;
+    let host = url.host_str()?.to_ascii_lowercase();
+    Some(format!(
+        "{host}:{}",
+        url.port_or_known_default().unwrap_or(0)
+    ))
+}
+
 fn range_splitting_allowed(route: &DownloadRoute) -> bool {
     let host = route_host(route).unwrap_or_default();
-    ![
+    if [
         "bmclapi",
         "github.com",
         "optifine.net",
@@ -935,10 +960,37 @@ fn range_splitting_allowed(route: &DownloadRoute) -> bool {
     ]
     .iter()
     .any(|blocked| host.contains(blocked))
+    {
+        return false;
+    }
+
+    range_splitting_authority(route).is_none_or(|authority| {
+        RANGE_SPLITTING_PROTOCOL_FAILURES
+            .lock()
+            .get(&authority)
+            .copied()
+            .unwrap_or(0)
+            < RANGE_SPLITTING_DISABLE_THRESHOLD
+    })
 }
 
+/// Records a range protocol failure for the route's server. A single failure
+/// is treated as a transient blip, but once a server repeatedly mishandles
+/// range requests, range splitting is disabled for it for this session so
+/// later downloads skip the doomed segmented probe.
 fn disable_range_splitting(route: &DownloadRoute) {
-    let _ = route;
+    let Some(authority) = range_splitting_authority(route) else {
+        return;
+    };
+    let mut failures = RANGE_SPLITTING_PROTOCOL_FAILURES.lock();
+    let count = failures.entry(authority.clone()).or_insert(0);
+    *count += 1;
+    if *count == RANGE_SPLITTING_DISABLE_THRESHOLD {
+        tracing::info!(
+            authority,
+            "Disabling range splitting for a server after repeated range protocol failures"
+        );
+    }
 }
 
 pub type FetchProgressFn<'a> = dyn FnMut(
@@ -1758,6 +1810,129 @@ async fn create_download_file(path: &Path) -> Result<File, IOError> {
     .map_err(|error| io::io_error_with_lock_info(error, path))
 }
 
+async fn open_download_file_for_append(path: &Path) -> Result<File, IOError> {
+    io::retry_windows_sharing_violation(
+        path,
+        "opening download file",
+        || async {
+            tokio::fs::OpenOptions::new().append(true).open(path).await
+        },
+    )
+    .await
+    .map_err(|error| io::io_error_with_lock_info(error, path))
+}
+
+/// Keeps a partial `.part` file for a later resume when the download can be
+/// safely resumed, at least one route could actually serve a resume, and some
+/// data has already arrived; removes it otherwise so unusable partial data
+/// does not accumulate on disk.
+async fn preserve_or_remove_partial(
+    part_path: &Path,
+    integrity: &Integrity,
+    routes_can_resume: bool,
+) -> crate::Result<()> {
+    let resumable = routes_can_resume
+        && integrity.supports_resume()
+        && tokio::fs::metadata(part_path)
+            .await
+            .is_ok_and(|metadata| metadata.len() > 0);
+    if !resumable {
+        remove_if_exists(part_path).await?;
+    }
+    Ok(())
+}
+
+fn any_route_can_resume(routes: &[DownloadRoute]) -> bool {
+    routes
+        .iter()
+        .any(|route| route.supports_range && range_splitting_allowed(route))
+}
+
+const STALE_PARTIAL_DOWNLOAD_MAX_AGE: time::Duration =
+    time::Duration::from_secs(7 * 24 * 60 * 60);
+
+fn is_partial_download_file_name(name: &str) -> bool {
+    name.ends_with(".part")
+        || name
+            .rsplit_once(".segment-")
+            .is_some_and(|(prefix, index)| {
+                prefix.ends_with(".part")
+                    && !index.is_empty()
+                    && index.bytes().all(|byte| byte.is_ascii_digit())
+            })
+}
+
+/// Removes partial download files under launcher-managed directories that
+/// have not been written to for a week. Partial data is preserved between
+/// attempts so interrupted downloads can resume, but destinations that are
+/// never requested again (for example superseded modpack versions) would
+/// otherwise accumulate multi-gigabyte litter forever.
+pub fn cleanup_stale_partial_downloads(directories: Vec<PathBuf>) {
+    tokio::task::spawn_blocking(move || {
+        let Some(cutoff) = std::time::SystemTime::now()
+            .checked_sub(STALE_PARTIAL_DOWNLOAD_MAX_AGE)
+        else {
+            return;
+        };
+        let mut pending = directories;
+        let mut removed = 0_u64;
+        while let Some(directory) = pending.pop() {
+            let Ok(entries) = std::fs::read_dir(&directory) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let Ok(file_type) = entry.file_type() else {
+                    continue;
+                };
+                if file_type.is_dir() {
+                    pending.push(entry.path());
+                    continue;
+                }
+                if !file_type.is_file()
+                    || !is_partial_download_file_name(
+                        &entry.file_name().to_string_lossy(),
+                    )
+                {
+                    continue;
+                }
+                let stale = entry
+                    .metadata()
+                    .and_then(|metadata| metadata.modified())
+                    .is_ok_and(|modified| modified < cutoff);
+                if stale && std::fs::remove_file(entry.path()).is_ok() {
+                    removed += 1;
+                }
+            }
+        }
+        if removed > 0 {
+            tracing::info!(removed, "Removed stale partial download files");
+        }
+    });
+}
+
+/// Feeds an existing partial download into fresh integrity hashers so a
+/// resumed transfer can continue hashing where the file left off. Returns
+/// `None` when the file cannot be read back or its length changed.
+async fn hash_existing_part_prefix(
+    path: &Path,
+    integrity: &Integrity,
+    expected_len: u64,
+) -> Option<IntegrityHashers> {
+    let mut file = File::open(path).await.ok()?;
+    let mut hashers = IntegrityHashers::new(integrity);
+    let mut size = 0_u64;
+    let mut buffer = vec![0_u8; 256 * 1024];
+    loop {
+        let read = file.read(&mut buffer).await.ok()?;
+        if read == 0 {
+            break;
+        }
+        hashers.update(&buffer[..read]);
+        size += read as u64;
+    }
+    (size == expected_len).then_some(hashers)
+}
+
 async fn compute_file_integrity(
     path: &Path,
     integrity: &Integrity,
@@ -1855,27 +2030,18 @@ async fn verify_file(path: &Path, integrity: &Integrity) -> crate::Result<u64> {
     Ok(computed.size)
 }
 
-fn integrity_cache_key(integrity: &Integrity) -> Option<(&'static str, &str)> {
-    if let Some(hash) = &integrity.sha512 {
-        Some(("sha512", hash))
-    } else if let Some(hash) = &integrity.sha256 {
-        Some(("sha256", hash))
-    } else if let Some(hash) = &integrity.sha1 {
-        Some(("sha1", hash))
-    } else if let Some(hash) = &integrity.md5 {
-        Some(("md5", hash))
+/// Keys the in-flight download lock on the destination path, so concurrent
+/// downloads writing the same file (and thus the same sibling `.part` file)
+/// serialize even when they expect different content. Uppercasing mirrors
+/// NTFS `$UpCase` comparison semantics; unlike lowercasing it has no
+/// context-sensitive folds that could split one on-disk file into two keys.
+fn download_lock_key(destination: &Path) -> String {
+    let path = destination.display().to_string();
+    if cfg!(windows) {
+        path.to_uppercase()
     } else {
-        None
+        path
     }
-}
-
-fn download_lock_key(destination: &Path, integrity: &Integrity) -> String {
-    integrity_cache_key(integrity).map_or_else(
-        || format!("path:{}", destination.display()),
-        |(algorithm, hash)| {
-            format!("{algorithm}:{}", hash.to_ascii_lowercase())
-        },
-    )
 }
 
 fn in_flight_download_lock(key: String) -> Arc<AsyncMutex<()>> {
@@ -1906,7 +2072,9 @@ fn in_flight_download_lock(key: String) -> Arc<AsyncMutex<()>> {
 struct ParsedContentRange {
     start: u64,
     end: u64,
-    total: u64,
+    /// `None` when the server reports an unknown complete length (`*`),
+    /// which RFC 9110 permits on a 206 response.
+    total: Option<u64>,
 }
 
 fn parse_content_range(
@@ -1923,7 +2091,11 @@ fn parse_content_range(
     Some(ParsedContentRange {
         start: start.parse().ok()?,
         end: end.parse().ok()?,
-        total: total.parse().ok()?,
+        total: if total == "*" {
+            None
+        } else {
+            Some(total.parse().ok()?)
+        },
     })
 }
 
@@ -2298,6 +2470,7 @@ struct SegmentDownloadCompletion {
 struct SegmentCleanupGuard {
     part_path: PathBuf,
     armed: bool,
+    part_dirty: bool,
 }
 
 impl SegmentCleanupGuard {
@@ -2305,7 +2478,16 @@ impl SegmentCleanupGuard {
         Self {
             part_path: part_path.to_path_buf(),
             armed: true,
+            part_dirty: false,
         }
+    }
+
+    /// Marks the `.part` file as written to by the segment merge, so cleanup
+    /// removes it. Before the merge, segments only write their own sibling
+    /// files, and the `.part` file may hold preserved resume data that must
+    /// survive a failed or abandoned segmented attempt.
+    fn mark_part_dirty(&mut self) {
+        self.part_dirty = true;
     }
 
     fn disarm(&mut self) {
@@ -2318,7 +2500,9 @@ impl Drop for SegmentCleanupGuard {
         if !self.armed {
             return;
         }
-        let _ = std::fs::remove_file(&self.part_path);
+        if self.part_dirty {
+            let _ = std::fs::remove_file(&self.part_path);
+        }
         for index in 0..MAX_SEGMENT_CONCURRENCY {
             let _ = std::fs::remove_file(segment_path(&self.part_path, index));
         }
@@ -2529,13 +2713,12 @@ async fn download_segment(
             }
             return Err(SegmentDownloadError::Transport);
         }
-        if parsed_content_range
-            != Some(ParsedContentRange {
-                start: requested_start,
-                end: requested_end,
-                total: total_size,
-            })
-        {
+        let content_range_matches = parsed_content_range.is_some_and(|range| {
+            range.start == requested_start
+                && range.end == requested_end
+                && range.total.is_none_or(|total| total == total_size)
+        });
+        if !content_range_matches {
             return Err(SegmentDownloadError::Protocol(
                 "invalid Content-Range",
             ));
@@ -2853,6 +3036,7 @@ async fn try_segmented_download(
     }
 
     ranges.sort_unstable_by_key(|range| range.start);
+    cleanup_guard.mark_part_dirty();
     let mut output = match create_download_file(part_path).await {
         Ok(file) => file,
         Err(error) => {
@@ -2956,7 +3140,7 @@ pub async fn download_to_path(
     if let Some(parent) = destination.parent() {
         io::create_dir_all(parent).await?;
     }
-    let lock_key = download_lock_key(destination, &request.integrity);
+    let lock_key = download_lock_key(destination);
     let download_lock = in_flight_download_lock(lock_key);
     let _download_guard = download_lock.lock().await;
     let mode = source_mode_for_resource(request.resource);
@@ -3020,7 +3204,12 @@ pub async fn download_to_path(
             fallback_count: 0,
         });
     }
-    remove_if_exists(&part_path).await?;
+    preserve_or_remove_partial(
+        &part_path,
+        &request.integrity,
+        any_route_can_resume(&routes),
+    )
+    .await?;
 
     let mut attempts = 0;
     let mut last_error = None;
@@ -3031,7 +3220,6 @@ pub async fn download_to_path(
             let log_url = sanitize_url_for_log(&route.url);
             if route_index > 0 {
                 fallback_count += 1;
-                remove_if_exists(&part_path).await?;
             }
             while attempts < file_attempt_budget {
                 attempts += 1;
@@ -3045,11 +3233,27 @@ pub async fn download_to_path(
                     max_attempts = file_attempt_budget,
                     "Starting file download attempt"
                 );
+                let resumable_part_bytes = match (
+                    request.integrity.supports_resume(),
+                    request.integrity.size,
+                    tokio::fs::metadata(&part_path).await,
+                ) {
+                    (true, Some(expected), Ok(metadata))
+                        if metadata.is_file() && metadata.len() < expected =>
+                    {
+                        metadata.len()
+                    }
+                    _ => 0,
+                };
+                // Segmented downloads restart from scratch, so when a partial
+                // file already covers at least half of the expected data,
+                // resuming it over a single connection wastes less transfer.
                 if !retry_with_single_thread
                     && route.supports_range
                     && range_splitting_allowed(route)
                     && request.integrity.size.is_some_and(|size| {
                         size >= SEGMENTED_DOWNLOAD_THRESHOLD
+                            && resumable_part_bytes < size / 2
                     })
                 {
                     let size = request.integrity.size.unwrap();
@@ -3107,7 +3311,6 @@ pub async fn download_to_path(
                             if disable_range {
                                 disable_range_splitting(route);
                             }
-                            remove_if_exists(&part_path).await?;
                         }
                         SegmentedDownloadOutcome::SourceFailed => {
                             record_route_failure(route);
@@ -3125,7 +3328,6 @@ pub async fn download_to_path(
                                 max_attempts = file_attempt_budget,
                                 "Segmented file download failed; retrying or switching source"
                             );
-                            remove_if_exists(&part_path).await?;
                             break;
                         }
                         SegmentedDownloadOutcome::Fatal(error) => {
@@ -3134,6 +3336,25 @@ pub async fn download_to_path(
                     }
                 }
 
+                let expected_size = request.integrity.size;
+                let mut resume_offset = if route.supports_range
+                    && range_splitting_allowed(route)
+                    && request.integrity.supports_resume()
+                {
+                    match (expected_size, tokio::fs::metadata(&part_path).await)
+                    {
+                        (Some(expected), Ok(metadata))
+                            if metadata.is_file()
+                                && metadata.len() > 0
+                                && metadata.len() < expected =>
+                        {
+                            metadata.len()
+                        }
+                        _ => 0,
+                    }
+                } else {
+                    0
+                };
                 let permit = semaphore.0.acquire().await?;
                 let request_started = Instant::now();
                 let (response, final_url) = match tokio::time::timeout(
@@ -3143,7 +3364,7 @@ pub async fn download_to_path(
                         request.header.as_ref(),
                         credentials.as_ref(),
                         request.download_meta.as_ref(),
-                        None,
+                        (resume_offset > 0).then_some(resume_offset),
                         None,
                     ),
                 )
@@ -3208,13 +3429,99 @@ pub async fn download_to_path(
                     )
                     .await;
                     drop(permit);
+                    if resume_offset > 0
+                        && status == StatusCode::RANGE_NOT_SATISFIABLE
+                    {
+                        remove_if_exists(&part_path).await?;
+                    }
                     last_error = Some(error);
                     break;
                 }
 
-                let starting_size = 0_u64;
                 let mut hashers = IntegrityHashers::new(&request.integrity);
-                let mut file = create_download_file(&part_path).await?;
+                if resume_offset > 0 {
+                    if status == StatusCode::PARTIAL_CONTENT {
+                        let content_range = parse_content_range(&response);
+                        let content_range_valid =
+                            content_range.is_some_and(|range| {
+                                let total = range.total.or(expected_size);
+                                range.start == resume_offset
+                                    && total == expected_size
+                                    && Some(range.end.saturating_add(1))
+                                        == total
+                            });
+                        if !content_range_valid {
+                            drop(permit);
+                            record_route_failure(route);
+                            disable_range_splitting(route);
+                            preserve_or_remove_partial(
+                                &part_path,
+                                &request.integrity,
+                                any_route_can_resume(&routes),
+                            )
+                            .await?;
+                            last_error = Some(
+                                ErrorKind::OtherError(format!(
+                                    "Invalid Content-Range while resuming download from {log_url}"
+                                ))
+                                .into(),
+                            );
+                            break;
+                        }
+                        // Hashing the existing prefix is deferred until the
+                        // resume response is validated, so routes that fail
+                        // before sending data never pay a full re-read of a
+                        // potentially huge partial file.
+                        match hash_existing_part_prefix(
+                            &part_path,
+                            &request.integrity,
+                            resume_offset,
+                        )
+                        .await
+                        {
+                            Some(prefix_hashers) => {
+                                tracing::debug!(
+                                    path = %destination.display(),
+                                    url = %log_url,
+                                    resume_offset,
+                                    "Resuming file download from existing partial data"
+                                );
+                                hashers = prefix_hashers;
+                            }
+                            None => {
+                                drop(permit);
+                                remove_if_exists(&part_path).await?;
+                                last_error = Some(
+                                    ErrorKind::OtherError(format!(
+                                        "Partial download changed on disk while resuming {log_url}"
+                                    ))
+                                    .into(),
+                                );
+                                break;
+                            }
+                        }
+                    } else {
+                        // The server ignored the Range header and replied with
+                        // the full file; restart the transfer from scratch.
+                        disable_range_splitting(route);
+                        resume_offset = 0;
+                    }
+                }
+
+                let starting_size = resume_offset;
+                let mut file = if starting_size > 0 {
+                    match open_download_file_for_append(&part_path).await {
+                        Ok(file) => file,
+                        Err(error) => {
+                            drop(permit);
+                            remove_if_exists(&part_path).await?;
+                            last_error = Some(error.into());
+                            break;
+                        }
+                    }
+                } else {
+                    create_download_file(&part_path).await?
+                };
                 let response_length = response.content_length().unwrap_or(0);
                 let total_size = request
                     .integrity
@@ -3267,12 +3574,23 @@ pub async fn download_to_path(
                 file.flush()
                     .await
                     .map_err(|error| IOError::with_path(error, &part_path))?;
+                if transfer_error.is_some() {
+                    // Best-effort durability for data a later resume builds
+                    // on; a power loss could otherwise leave a zero-filled
+                    // tail that wastes the resumed transfer.
+                    let _ = file.sync_data().await;
+                }
                 drop(file);
                 drop(permit);
 
                 if let Some(error) = transfer_error {
                     record_route_failure(route);
-                    remove_if_exists(&part_path).await?;
+                    preserve_or_remove_partial(
+                        &part_path,
+                        &request.integrity,
+                        any_route_can_resume(&routes),
+                    )
+                    .await?;
                     tracing::warn!(
                         path = %destination.display(),
                         url = %log_url,
@@ -3287,6 +3605,27 @@ pub async fn download_to_path(
                 }
 
                 let computed = hashers.finish(downloaded);
+                if let Some(expected) = expected_size
+                    && downloaded < expected
+                {
+                    // A close-delimited body can end short without a stream
+                    // error; treat it as a transfer failure so the valid data
+                    // received so far stays available for a resume.
+                    record_route_failure(route);
+                    preserve_or_remove_partial(
+                        &part_path,
+                        &request.integrity,
+                        any_route_can_resume(&routes),
+                    )
+                    .await?;
+                    last_error = Some(
+                        ErrorKind::OtherError(format!(
+                            "Truncated response from {log_url}: received {downloaded} of {expected} bytes"
+                        ))
+                        .into(),
+                    );
+                    break;
+                }
                 if let Err(error) =
                     verify_computed_integrity(&request.integrity, &computed)
                 {
@@ -3333,66 +3672,18 @@ pub async fn download_to_path(
         }
     }
 
-    remove_if_exists(&part_path).await?;
+    preserve_or_remove_partial(
+        &part_path,
+        &request.integrity,
+        any_route_can_resume(&routes),
+    )
+    .await?;
     Err(last_error.unwrap_or_else(|| {
         ErrorKind::OtherError(format!(
             "Unable to download {} from any source",
             sanitize_url_for_log(&request.url)
         ))
         .into()
-    }))
-}
-
-/// Downloads a file from specified mirrors
-#[tracing::instrument(skip_all)]
-pub async fn fetch_mirrors(
-    mirrors: &[&str],
-    sha1: Option<&str>,
-    download_meta: Option<&DownloadMeta>,
-    uri_path: Option<&'static str>,
-    semaphore: &FetchSemaphore,
-    exec: impl sqlx::Executor<'_, Database = sqlx::Sqlite> + Copy,
-) -> crate::Result<Bytes> {
-    if mirrors.is_empty() {
-        return Err(
-            ErrorKind::InputError("No mirrors provided!".to_string()).into()
-        );
-    }
-
-    let route_count = mirrors.len().min(METADATA_ATTEMPT_BUDGET);
-    let mut last_error = None;
-    for (index, mirror) in mirrors.iter().take(route_count).enumerate() {
-        let attempt_budget = if index + 1 == route_count {
-            METADATA_ATTEMPT_BUDGET - index
-        } else {
-            1
-        };
-        match fetch_advanced_with_client_and_progress(
-            Method::GET,
-            mirror,
-            sha1,
-            None,
-            None,
-            download_meta,
-            None,
-            uri_path,
-            semaphore,
-            exec,
-            &REQWEST_CLIENT,
-            None,
-            None,
-            attempt_budget,
-        )
-        .await
-        {
-            Ok(bytes) => return Ok(bytes),
-            Err(error) => last_error = Some(error),
-        }
-    }
-
-    Err(last_error.unwrap_or_else(|| {
-        ErrorKind::OtherError("Unable to download from any mirror".to_string())
-            .into()
     }))
 }
 
@@ -3814,6 +4105,7 @@ mod tests {
     #[tokio::test]
     async fn file_download_times_out_when_a_successful_response_stalls() {
         let _guard = RANGE_SPLITTING_TEST_LOCK.lock().await;
+        RANGE_SPLITTING_PROTOCOL_FAILURES.lock().clear();
         let (url, server) = spawn_stream_server(Vec::new(), 4, true).await;
         let directory = tempfile::tempdir().unwrap();
         let destination = directory.path().join("stalled.bin");
@@ -3832,6 +4124,7 @@ mod tests {
     #[tokio::test]
     async fn file_download_allows_data_that_keeps_arriving_slowly() {
         let _guard = RANGE_SPLITTING_TEST_LOCK.lock().await;
+        RANGE_SPLITTING_PROTOCOL_FAILURES.lock().clear();
         let chunks = (0..4)
             .map(|byte| (Duration::from_millis(100), vec![byte]))
             .collect();
@@ -3849,6 +4142,7 @@ mod tests {
     #[tokio::test]
     async fn file_download_completes_normally() {
         let _guard = RANGE_SPLITTING_TEST_LOCK.lock().await;
+        RANGE_SPLITTING_PROTOCOL_FAILURES.lock().clear();
         let (url, server) = spawn_stream_server(
             vec![(Duration::ZERO, b"done".to_vec())],
             4,
@@ -3868,6 +4162,7 @@ mod tests {
     #[tokio::test]
     async fn canceling_a_file_download_drops_the_response_read_promptly() {
         let _guard = RANGE_SPLITTING_TEST_LOCK.lock().await;
+        RANGE_SPLITTING_PROTOCOL_FAILURES.lock().clear();
         let (url, server) = spawn_stream_server(Vec::new(), 4, true).await;
         let directory = tempfile::tempdir().unwrap();
         let destination = directory.path().join("canceled.bin");
@@ -4047,14 +4342,14 @@ mod tests {
     }
 
     #[test]
-    fn loader_libraries_use_only_the_two_mirror_routes() {
+    fn loader_libraries_prefer_mirrors_with_an_official_fallback() {
         let source = "https://libraries.minecraft.net/net/minecraftforge/forge/1.20.1/forge-1.20.1.jar";
         let routes = resolve_download_routes_for(
             source,
             ResourceClass::MinecraftLibrary,
             crate::state::DownloadSourceMode::MirrorPreferred,
         );
-        assert_eq!(routes.len(), 2);
+        assert_eq!(routes.len(), 3);
         assert_eq!(
             routes[0].url,
             "https://bmclapi2.bangbang93.com/maven/net/minecraftforge/forge/1.20.1/forge-1.20.1.jar"
@@ -4063,7 +4358,16 @@ mod tests {
             routes[1].url,
             "https://bmclapi2.bangbang93.com/libraries/net/minecraftforge/forge/1.20.1/forge-1.20.1.jar"
         );
-        assert!(routes.iter().all(|route| route.is_mirror));
+        assert_eq!(routes[2].url, source);
+        assert!(!routes[2].is_mirror);
+
+        let official_only = resolve_download_routes_for(
+            source,
+            ResourceClass::MinecraftLibrary,
+            crate::state::DownloadSourceMode::OfficialOnly,
+        );
+        assert_eq!(official_only.len(), 1);
+        assert_eq!(official_only[0].url, source);
     }
 
     #[test]
@@ -4229,6 +4533,7 @@ mod tests {
     #[tokio::test]
     async fn segmented_download_uses_parallel_validated_ranges() {
         let _guard = RANGE_SPLITTING_TEST_LOCK.lock().await;
+        RANGE_SPLITTING_PROTOCOL_FAILURES.lock().clear();
         let size = (SEGMENTED_DOWNLOAD_THRESHOLD + 1024 * 1024) as usize;
         let data = Arc::new(
             (0..size)
@@ -4285,6 +4590,7 @@ mod tests {
     #[tokio::test]
     async fn mirror_ranges_start_concurrently_and_retries_reuse_redirect() {
         let _guard = RANGE_SPLITTING_TEST_LOCK.lock().await;
+        RANGE_SPLITTING_PROTOCOL_FAILURES.lock().clear();
         let size = (SEGMENTED_DOWNLOAD_THRESHOLD * 2) as usize;
         let data = Arc::new(
             (0..size)
@@ -4337,6 +4643,7 @@ mod tests {
     #[tokio::test]
     async fn temporary_range_failure_resumes_without_disabling_segments() {
         let _guard = RANGE_SPLITTING_TEST_LOCK.lock().await;
+        RANGE_SPLITTING_PROTOCOL_FAILURES.lock().clear();
         let size = (SEGMENTED_DOWNLOAD_THRESHOLD * 2) as usize;
         let data = Arc::new(
             (0..size)
@@ -4385,8 +4692,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn invalid_content_range_falls_back_without_persisting_host_state() {
+    async fn invalid_content_range_disables_range_splitting_after_repeats() {
         let _guard = RANGE_SPLITTING_TEST_LOCK.lock().await;
+        RANGE_SPLITTING_PROTOCOL_FAILURES.lock().clear();
         let data = Arc::new(vec![7_u8; 1024 * 1024]);
         let (url, _, _, server) =
             spawn_range_server(data.clone(), true, false, false, false).await;
@@ -4431,13 +4739,22 @@ mod tests {
             Err(SegmentDownloadError::Protocol("invalid Content-Range"))
         ));
         disable_range_splitting(&route);
-        assert!(range_splitting_allowed(&route));
+        assert!(
+            range_splitting_allowed(&route),
+            "a single protocol failure should not disable range splitting"
+        );
+        disable_range_splitting(&route);
+        assert!(
+            !range_splitting_allowed(&route),
+            "repeated protocol failures should disable range splitting"
+        );
         server.abort();
     }
 
     #[tokio::test]
     async fn ignored_ranges_fall_back_to_one_full_file_write() {
         let _guard = RANGE_SPLITTING_TEST_LOCK.lock().await;
+        RANGE_SPLITTING_PROTOCOL_FAILURES.lock().clear();
         let size = (SEGMENTED_DOWNLOAD_THRESHOLD * 2) as usize;
         let data = Arc::new(
             (0..size)
@@ -4478,6 +4795,7 @@ mod tests {
     #[tokio::test]
     async fn canceling_segmented_download_releases_permits_and_temp_files() {
         let _guard = RANGE_SPLITTING_TEST_LOCK.lock().await;
+        RANGE_SPLITTING_PROTOCOL_FAILURES.lock().clear();
         let size = (SEGMENTED_DOWNLOAD_THRESHOLD * 4) as usize;
         let data = Arc::new(vec![13_u8; size]);
         let (url, _, _, server) =
@@ -4520,6 +4838,7 @@ mod tests {
     #[tokio::test]
     async fn unknown_size_and_small_files_use_one_connection() {
         let _guard = RANGE_SPLITTING_TEST_LOCK.lock().await;
+        RANGE_SPLITTING_PROTOCOL_FAILURES.lock().clear();
         for (expected_size, integrity) in [
             (None, Integrity::default()),
             (Some(1024_u64), Integrity::default().with_size(1024)),
@@ -4548,6 +4867,144 @@ mod tests {
             assert_eq!(normal_requests.load(Ordering::Relaxed), 1);
             server.abort();
         }
+    }
+
+    #[tokio::test]
+    async fn single_connection_downloads_resume_from_partial_files() {
+        let _guard = RANGE_SPLITTING_TEST_LOCK.lock().await;
+        RANGE_SPLITTING_PROTOCOL_FAILURES.lock().clear();
+        let size = 512 * 1024_usize;
+        let data = Arc::new(
+            (0..size)
+                .map(|index| (index % 251) as u8)
+                .collect::<Vec<_>>(),
+        );
+        let hash = sha1_smol::Sha1::from(&data[..]).hexdigest();
+        let (url, requests, normal_requests, server) =
+            spawn_range_server(data.clone(), false, false, false, false).await;
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("resumed.bin");
+        let part_path = suffixed_path(&destination, ".part");
+        tokio::fs::write(&part_path, &data[..size / 2])
+            .await
+            .unwrap();
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .connect_lazy("sqlite::memory:")
+            .unwrap();
+        let result = download_to_path(
+            DownloadRequest::new(&url, ResourceClass::Other)
+                .with_integrity(Integrity::sha1(hash).with_size(size as u64)),
+            &destination,
+            &FetchSemaphore(Semaphore::new(2)),
+            &pool,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.size, size as u64);
+        assert_eq!(tokio::fs::read(&destination).await.unwrap(), *data);
+        assert_eq!(
+            requests.load(Ordering::Relaxed),
+            1,
+            "the resumed download should finish with one range request"
+        );
+        assert_eq!(
+            normal_requests.load(Ordering::Relaxed),
+            0,
+            "the resumed download should not restart from the beginning"
+        );
+        assert!(!part_path.exists());
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn stale_partial_files_with_wrong_content_self_heal() {
+        let _guard = RANGE_SPLITTING_TEST_LOCK.lock().await;
+        RANGE_SPLITTING_PROTOCOL_FAILURES.lock().clear();
+        let size = 512 * 1024_usize;
+        let data = Arc::new(
+            (0..size)
+                .map(|index| (index % 251) as u8)
+                .collect::<Vec<_>>(),
+        );
+        let hash = sha1_smol::Sha1::from(&data[..]).hexdigest();
+        let (url, _, _, server) =
+            spawn_range_server(data.clone(), false, false, false, false).await;
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("stale.bin");
+        let part_path = suffixed_path(&destination, ".part");
+        tokio::fs::write(&part_path, vec![0xAB_u8; size / 2])
+            .await
+            .unwrap();
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .connect_lazy("sqlite::memory:")
+            .unwrap();
+        let result = download_to_path(
+            DownloadRequest::new(&url, ResourceClass::Other)
+                .with_integrity(Integrity::sha1(hash).with_size(size as u64)),
+            &destination,
+            &FetchSemaphore(Semaphore::new(2)),
+            &pool,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.size, size as u64);
+        assert_eq!(tokio::fs::read(&destination).await.unwrap(), *data);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn segmented_fallback_keeps_partial_files_for_resume() {
+        let _guard = RANGE_SPLITTING_TEST_LOCK.lock().await;
+        RANGE_SPLITTING_PROTOCOL_FAILURES.lock().clear();
+        let size = (SEGMENTED_DOWNLOAD_THRESHOLD * 2) as usize;
+        let data = Arc::new(
+            (0..size)
+                .map(|index| (index % 251) as u8)
+                .collect::<Vec<_>>(),
+        );
+        let hash = sha1_smol::Sha1::from(&data[..]).hexdigest();
+        let (url, requests, normal_requests, server) =
+            spawn_range_server(data.clone(), false, false, false, false).await;
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("fallback-resume.bin");
+        let part_path = suffixed_path(&destination, ".part");
+        tokio::fs::write(&part_path, &data[..size / 4])
+            .await
+            .unwrap();
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .connect_lazy("sqlite::memory:")
+            .unwrap();
+        // A single global permit forces the segmented attempt to fall back
+        // before transferring anything; the preserved partial data must
+        // survive that fallback and drive a resumed single connection.
+        let result = download_to_path(
+            DownloadRequest::new(&url, ResourceClass::Other)
+                .with_integrity(Integrity::sha1(hash).with_size(size as u64)),
+            &destination,
+            &FetchSemaphore(Semaphore::new(1)),
+            &pool,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.size, size as u64);
+        assert_eq!(tokio::fs::read(&destination).await.unwrap(), *data);
+        assert_eq!(
+            requests.load(Ordering::Relaxed),
+            1,
+            "the fallback should finish with one resumed range request"
+        );
+        assert_eq!(
+            normal_requests.load(Ordering::Relaxed),
+            0,
+            "the preserved partial data should not be discarded"
+        );
+        server.abort();
     }
 
     #[test]

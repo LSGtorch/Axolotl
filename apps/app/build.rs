@@ -63,6 +63,7 @@ fn main() {
                     .commands(&[
                         "resolve_chinese_content_search",
                         "lookup_chinese_content_names",
+                        "lookup_content_wiki_ids",
                     ])
                     .default_permission(
                         DefaultPermissionRule::AllowAllCommands,
@@ -114,6 +115,7 @@ fn main() {
                     .commands(&[
                         "get_java_versions",
                         "set_java_version",
+                        "remove_java_version",
                         "jre_find_filtered_jres",
                         "jre_get_jre",
                         "jre_test_jre",
@@ -121,6 +123,11 @@ fn main() {
                         "jre_get_max_memory",
                         "jre_get_memory_status",
                         "jre_optimize_memory",
+                        "list_java_distribution_versions",
+                        "list_java_feed_vendors",
+                        "list_java_feed_versions",
+                        "download_java_from_feed",
+                        "download_java",
                     ])
                     .default_permission(
                         DefaultPermissionRule::AllowAllCommands,

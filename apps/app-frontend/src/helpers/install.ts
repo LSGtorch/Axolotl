@@ -128,6 +128,7 @@ export interface InstallJobSnapshot {
 		| 'duplicate_instance'
 		| 'install_existing_instance'
 		| 'install_pack_to_existing_instance'
+		| 'download_java'
 	status: InstallJobStatus
 	provider: 'modrinth' | 'curse_forge' | 'minecraft' | 'java' | 'application' | 'local'
 	target:

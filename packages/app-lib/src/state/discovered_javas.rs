@@ -50,7 +50,7 @@ impl DiscoveredJava {
         let rows = sqlx::query(
             "
             SELECT path, major_version, full_version, architecture,
-                file_size, file_mtime_ms
+                file_size, file_mtime_ms, distribution
             FROM discovered_javas
             ORDER BY major_version, path
             ",
@@ -66,6 +66,7 @@ impl DiscoveredJava {
                     version: row.get("full_version"),
                     architecture: row.get("architecture"),
                     path: row.get("path"),
+                    distribution: row.get("distribution"),
                 },
                 file_size: row.get("file_size"),
                 file_mtime_ms: row.get("file_mtime_ms"),
@@ -81,15 +82,16 @@ impl DiscoveredJava {
             "
             INSERT INTO discovered_javas (
                 path, major_version, full_version, architecture,
-                file_size, file_mtime_ms
+                file_size, file_mtime_ms, distribution
             )
-            VALUES ($1, $2, $3, $4, $5, $6)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             ON CONFLICT (path) DO UPDATE SET
                 major_version = $2,
                 full_version = $3,
                 architecture = $4,
                 file_size = $5,
-                file_mtime_ms = $6
+                file_mtime_ms = $6,
+                distribution = $7
             ",
         )
         .bind(&self.java.path)
@@ -98,6 +100,7 @@ impl DiscoveredJava {
         .bind(&self.java.architecture)
         .bind(self.file_size)
         .bind(self.file_mtime_ms)
+        .bind(&self.java.distribution)
         .execute(exec)
         .await?;
 
@@ -132,15 +135,16 @@ impl DiscoveredJava {
                 "
                 INSERT INTO discovered_javas (
                     path, major_version, full_version, architecture,
-                    file_size, file_mtime_ms
+                    file_size, file_mtime_ms, distribution
                 )
-                VALUES ($1, $2, $3, $4, $5, $6)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
                 ON CONFLICT (path) DO UPDATE SET
                     major_version = $2,
                     full_version = $3,
                     architecture = $4,
                     file_size = $5,
-                    file_mtime_ms = $6
+                    file_mtime_ms = $6,
+                    distribution = $7
                 ",
             )
             .bind(&entry.java.path)
@@ -149,6 +153,7 @@ impl DiscoveredJava {
             .bind(&entry.java.architecture)
             .bind(entry.file_size)
             .bind(entry.file_mtime_ms)
+            .bind(&entry.java.distribution)
             .execute(&mut *transaction)
             .await?;
         }

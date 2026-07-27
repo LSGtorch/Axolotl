@@ -119,11 +119,7 @@
 
 <script setup lang="ts">
 import type { Labrinth } from '@modrinth/api-client'
-import {
-	ClipboardCopyIcon,
-	ExternalIcon,
-	FolderOpenIcon,
-} from '@modrinth/assets'
+import { ClipboardCopyIcon, ExternalIcon, FolderOpenIcon } from '@modrinth/assets'
 import {
 	type BulkOperationStatus,
 	CollapsibleAdmonition,
@@ -1020,6 +1016,26 @@ async function bulkUpdateAllProjects(onProgress?: (status: BulkOperationStatus) 
 		for (const item of curseForgeUpdates) {
 			await updateCurseForgeFile(props.instance.id, item.file_path!)
 		}
+
+		if (linkedModpackHasUpdate.value && linkedModpackUpdateVersionId.value && props.instance.link) {
+			isModpackUpdating.value = true
+			try {
+				if (props.instance.link.type === 'curseforge_modpack') {
+					const fileId = Number(linkedModpackUpdateVersionId.value)
+					if (Number.isFinite(fileId)) {
+						await updateManagedCurseForgeModpack(props.instance.id, fileId)
+					}
+				} else {
+					await update_managed_modrinth_version(
+						props.instance.id,
+						linkedModpackUpdateVersionId.value,
+					)
+				}
+			} finally {
+				isModpackUpdating.value = false
+			}
+		}
+
 		await refreshContentState('must_revalidate')
 	} catch (err) {
 		handleError(err as Error)
@@ -1088,7 +1104,9 @@ async function switchProjectVersion(mod: ContentItem, version: Labrinth.Versions
 }
 
 async function handleUpdate(id: string) {
-	const item = projects.value.find((p) => getContentItemId(p) === id)
+	const item =
+		projects.value.find((p) => getContentItemId(p) === id) ??
+		linkedModpackContentItems.value.find((p) => getContentItemId(p) === id)
 	if (!item || !canUpdateProject(item) || !item.project?.id || !item.version?.id) return
 	if (item.primary_provider === 'curseforge') {
 		await updateProject(item)
@@ -1629,6 +1647,7 @@ provideContentManager({
 	items: mergedProjects,
 	loading,
 	error: ref(null),
+	modpackItems: linkedModpackContentItems,
 	modpack: computed(() => {
 		if (linkedModpackProject.value) {
 			return {

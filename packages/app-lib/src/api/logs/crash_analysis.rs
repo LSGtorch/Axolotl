@@ -809,9 +809,7 @@ fn has_nonzero_exit_status(content: &str) -> bool {
         line.strip_prefix("# Process exited with status:")
             .map(|status| {
                 let status = status.trim();
-                status != "exit status: 0"
-                    && status != "exit code: 0"
-                    && status != "0"
+                status != "exit status: 0" && status != "0"
             })
     }) == Some(true)
 }
@@ -1048,12 +1046,6 @@ mod tests {
         ));
         assert!(!has_nonzero_exit_status(
             "log\n# Process exited with status: exit status: 0\n"
-        ));
-        assert!(!has_nonzero_exit_status(
-            "log\n# Process exited with status: exit code: 0\n"
-        ));
-        assert!(has_nonzero_exit_status(
-            "log\n# Process exited with status: exit code: 1\n"
         ));
     }
 

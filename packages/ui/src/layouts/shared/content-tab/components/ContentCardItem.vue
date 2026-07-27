@@ -1,7 +1,11 @@
 <script setup lang="ts">
 import {
 	ArrowLeftRightIcon,
+	ChevronDownIcon,
+	ChevronRightIcon,
+	ClockIcon,
 	DownloadIcon,
+	HeartIcon,
 	MoreVerticalIcon,
 	SpinnerIcon,
 	TrashExclamationIcon,
@@ -19,9 +23,11 @@ import BulletDivider from '#ui/components/base/BulletDivider.vue'
 import ButtonStyled from '#ui/components/base/ButtonStyled.vue'
 import Checkbox from '#ui/components/base/Checkbox.vue'
 import type { Option as OverflowMenuOption } from '#ui/components/base/OverflowMenu.vue'
+import TagTagItem from '#ui/components/base/TagTagItem.vue'
 import TeleportOverflowMenu from '#ui/components/base/TeleportOverflowMenu.vue'
 import Toggle from '#ui/components/base/Toggle.vue'
 import { defineMessages, useVIntl } from '#ui/composables/i18n'
+import { useRelativeTime } from '#ui/composables/how-ago'
 import { commonMessages } from '#ui/utils/common-messages'
 import { truncatedTooltip } from '#ui/utils/truncate'
 
@@ -67,6 +73,19 @@ interface Props {
 	hideDelete?: boolean
 	hideActions?: boolean
 	inline?: boolean
+	isGroupHeader?: boolean
+	groupItemCount?: number
+	groupExpanded?: boolean
+	groupSwitchVersion?: () => void
+	isGroupChild?: boolean
+	groupCheckboxIndeterminate?: boolean
+	downloads?: number | null
+	followers?: number | null
+	categories?: Array<{
+		name: string
+		icon?: string
+		action?: (event: MouseEvent) => void
+	}>
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -90,6 +109,15 @@ const props = withDefaults(defineProps<Props>(), {
 	hideDelete: false,
 	hideActions: false,
 	inline: false,
+	isGroupHeader: false,
+	groupItemCount: 0,
+	groupExpanded: false,
+	groupSwitchVersion: undefined,
+	isGroupChild: false,
+	groupCheckboxIndeterminate: false,
+	downloads: null,
+	followers: null,
+	categories: undefined,
 })
 
 const selected = defineModel<boolean>('selected')
@@ -100,6 +128,7 @@ const emit = defineEmits<{
 	delete: [event: MouseEvent]
 	update: []
 	switchVersion: []
+	toggleExpand: []
 }>()
 
 const instance = getCurrentInstance()
@@ -109,11 +138,26 @@ const hasSwitchVersionListener = computed(
 	() => typeof instance?.vnode.props?.onSwitchVersion === 'function',
 )
 
+const formatCompact = (n: number | undefined | null) => {
+	if (n == null) return ''
+	return new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 2 }).format(n)
+}
+
+const formatTimeAgo = useRelativeTime()
+
 const versionNumberRef = ref<HTMLElement | null>(null)
 const fileNameRef = ref<HTMLElement | null>(null)
 
 const isDisabled = computed(() => props.disabled || props.installing)
 const isToggleDisabled = computed(() => isDisabled.value || props.toggleDisabled)
+
+const interactiveSelectors = 'a, button, input, select, [role="checkbox"], [role="button"]'
+
+function handleRowClick(event: MouseEvent) {
+	const target = event.target as HTMLElement
+	if (target.closest(interactiveSelectors)) return
+	emit('toggleExpand')
+}
 
 const clientWarningMessage = computed(() => {
 	switch (props.clientWarning) {
@@ -132,6 +176,191 @@ const deleteHovered = ref(false)
 
 <template>
 	<div
+		v-if="isGroupHeader"
+		role="row"
+		class="flex h-[74px] cursor-pointer items-center justify-between gap-4 px-3 hover:bg-[hsla(0,0%,50%,0.1)]"
+		:class="{ 'opacity-50': disabled }"
+		@click="handleRowClick"
+	>
+		<div
+			class="flex min-w-0 items-center gap-4"
+			:class="
+				hideActions ? 'flex-1' : 'flex-1 @[800px]:w-[45%] @[800px]:shrink-0 @[800px]:flex-none'
+			"
+		>
+			<Checkbox
+				v-if="showCheckbox"
+				:model-value="selected ?? false"
+				:indeterminate="groupCheckboxIndeterminate"
+				:aria-label="formatMessage(messages.selectProject, { project: project.title })"
+				class="shrink-0"
+				@update:model-value="(value, event) => emit('select', value, event)"
+			/>
+
+			<div class="flex min-w-0 items-center gap-3">
+				<Avatar
+					:src="project.icon_url"
+					:alt="project.title"
+					size="3rem"
+					no-shadow
+					class="rounded-2xl border border-surface-5"
+				/>
+				<div class="flex min-w-0 flex-col gap-0.5">
+					<div class="flex min-w-0 items-center gap-1">
+						<AutoLink
+							:target="
+								typeof projectLink === 'string' && projectLink.startsWith('http')
+									? '_blank'
+									: undefined
+							"
+							:to="projectLink"
+							class="truncate font-semibold leading-6 text-contrast !decoration-contrast"
+							:class="{ 'hover:underline': projectLink }"
+						>
+							{{ project.title }}
+						</AutoLink>
+						<span class="shrink-0 text-sm font-medium text-secondary">
+							({{ groupItemCount }})
+						</span>
+					</div>
+					<div class="flex min-w-0 items-center gap-1">
+						<AutoLink
+							v-if="owner"
+							:target="
+								typeof owner.link === 'string' && owner.link.startsWith('http')
+									? '_blank'
+									: undefined
+							"
+							:to="owner.link"
+							class="flex shrink-0 items-center gap-1 !decoration-secondary"
+							:class="{ 'hover:underline': owner.link }"
+						>
+							<Avatar
+								:src="owner.avatar_url"
+								:alt="owner.name"
+								size="1.5rem"
+								:circle="owner.type === 'user'"
+								no-shadow
+								class="shrink-0"
+							/>
+							<span class="text-sm leading-5 text-secondary">{{ owner.name }}</span>
+						</AutoLink>
+						<template v-if="version">
+							<BulletDivider class="shrink-0 @[800px]:hidden" />
+							<AutoLink
+								:target="
+									typeof versionLink === 'string' && versionLink.startsWith('http')
+										? '_blank'
+										: undefined
+								"
+								:to="versionLink"
+								class="truncate text-sm leading-5 text-secondary !decoration-secondary @[800px]:hidden"
+								:class="{ 'hover:underline': versionLink }"
+							>
+								{{ version.version_number }}
+							</AutoLink>
+							<template v-if="version.date_published">
+								<BulletDivider class="shrink-0 @[800px]:hidden" />
+								<ClockIcon class="size-4 shrink-0 text-secondary @[800px]:hidden" />
+								<span class="shrink-0 text-sm leading-5 text-secondary @[800px]:hidden">
+									{{ formatTimeAgo(new Date(version.date_published)) }}
+								</span>
+							</template>
+						</template>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<div
+			class="hidden flex-col gap-0.5 @[800px]:flex"
+			:class="hideActions ? 'flex-1' : 'flex-1 min-w-0'"
+		>
+			<template v-if="version">
+				<div class="flex min-w-0 items-center gap-1.5 font-medium leading-6 text-contrast">
+					<AutoLink
+						:target="
+							typeof versionLink === 'string' && versionLink.startsWith('http')
+								? '_blank'
+								: undefined
+						"
+						:to="versionLink"
+						class="truncate self-start !decoration-contrast"
+						:class="{ 'hover:underline': versionLink, 'cursor-pointer': versionLink }"
+					>
+						{{ version.version_number }}
+					</AutoLink>
+					<template v-if="version.date_published">
+						<ClockIcon class="hidden size-4 shrink-0 text-secondary @[600px]:inline" />
+						<span
+							class="hidden shrink-0 text-sm font-normal leading-6 text-secondary @[600px]:inline"
+						>
+							{{ formatTimeAgo(new Date(version.date_published)) }}
+						</span>
+					</template>
+				</div>
+				<span class="flex min-w-0 leading-6 text-secondary">
+					<span class="truncate">{{ version.file_name }}</span>
+				</span>
+			</template>
+			<div
+				v-if="downloads != null || followers != null"
+				class="flex flex-nowrap items-center gap-3 overflow-hidden"
+			>
+				<div v-if="downloads != null" class="flex items-center gap-2 text-secondary">
+					<DownloadIcon class="size-4" />
+					<span class="text-sm font-medium">{{ formatCompact(downloads) }}</span>
+				</div>
+				<div v-if="followers != null" class="flex items-center gap-2 text-secondary">
+					<HeartIcon class="size-4" />
+					<span class="text-sm font-medium">{{ formatCompact(followers) }}</span>
+				</div>
+			</div>
+		</div>
+
+		<div v-if="!hideActions" class="flex min-w-[160px] shrink-0 items-center justify-end gap-2">
+			<ButtonStyled
+				v-if="hasUpdate"
+				circular
+				type="transparent"
+				color="green"
+				color-fill="text"
+				hover-color-fill="background"
+			>
+				<button
+					v-tooltip="
+						isDisabled && disabledTooltip
+							? disabledTooltip
+							: formatMessage(commonMessages.updateAvailableLabel)
+					"
+					:disabled="isDisabled"
+					@click.stop="emit('update')"
+				>
+					<DownloadIcon class="size-5" />
+				</button>
+			</ButtonStyled>
+			<ButtonStyled v-else-if="groupSwitchVersion" circular type="transparent">
+				<button
+					v-tooltip="formatMessage(commonMessages.switchVersionButton)"
+					@click.stop="groupSwitchVersion"
+				>
+					<ArrowLeftRightIcon class="size-5" />
+				</button>
+			</ButtonStyled>
+			<ButtonStyled circular type="transparent">
+				<button
+					class="flex items-center text-secondary hover:text-primary transition-colors"
+					@click.stop="emit('toggleExpand')"
+				>
+					<ChevronDownIcon v-if="groupExpanded" class="size-5" />
+					<ChevronRightIcon v-else class="size-5" />
+				</button>
+			</ButtonStyled>
+		</div>
+	</div>
+
+	<div
+		v-else
 		role="row"
 		class="flex items-center justify-between"
 		:class="{
@@ -139,6 +368,7 @@ const deleteHovered = ref(false)
 			'gap-3': inline,
 			'opacity-50 grayscale': disabled && !installing,
 			'opacity-50': installing,
+			'pl-10': isGroupChild && !inline,
 		}"
 	>
 		<div
@@ -281,7 +511,7 @@ const deleteHovered = ref(false)
 						typeof versionLink === 'string' && versionLink.startsWith('http') ? '_blank' : undefined
 					"
 					:to="versionLink"
-					class="inline-flex min-w-0 font-medium leading-6 text-contrast !decoration-contrast"
+					class="inline-flex self-start font-medium leading-6 text-contrast !decoration-contrast"
 					:class="{ 'hover:underline': versionLink, 'cursor-pointer': versionLink }"
 				>
 					<span ref="versionNumberRef" class="truncate">{{
@@ -369,7 +599,11 @@ const deleteHovered = ref(false)
 				@update:model-value="(val) => emit('update:enabled', val as boolean)"
 			/>
 
-			<ButtonStyled v-if="hasDeleteListener && !props.hideDelete" circular type="transparent">
+			<ButtonStyled
+				v-if="hasDeleteListener && !props.hideDelete && !props.isGroupChild"
+				circular
+				type="transparent"
+			>
 				<button
 					v-tooltip="
 						isDisabled && disabledTooltip

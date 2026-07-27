@@ -29,6 +29,7 @@
 			>
 				<button
 					class="!shadow-none"
+					aria-label="Test Java installation"
 					:disabled="testingJava || props.disabled"
 					@click="runTest(props.modelValue?.path)"
 					@mouseenter="!props.disabled && (hoveringTest = true)"
@@ -51,6 +52,7 @@
 						testingJavaSuccess === true ? formatMessage(messages.alreadyInstalled) : undefined
 					"
 					class="!shadow-none"
+					aria-label="Install recommended Java"
 					:disabled="props.disabled || installingJava || testingJavaSuccess === true"
 					@click="reinstallJava"
 				>
@@ -63,13 +65,23 @@
 				</button>
 			</ButtonStyled>
 			<ButtonStyled>
-				<button class="!shadow-none" :disabled="props.disabled" @click="autoDetect">
+				<button class="!shadow-none" aria-label="Detect Java" :disabled="props.disabled" @click="autoDetect">
 					<SearchIcon />
 					{{ formatMessage(messages.detect) }}
 				</button>
 			</ButtonStyled>
 			<ButtonStyled>
-				<button class="!shadow-none" :disabled="props.disabled" @click="handleJavaFileInput()">
+				<button
+					class="!shadow-none"
+					:disabled="props.disabled || deepScanningJava"
+					@click="autoDeepScan"
+				>
+					<ScanEyeIcon />
+					{{ formatMessage(messages.deepScan) }}
+				</button>
+			</ButtonStyled>
+			<ButtonStyled>
+				<button class="!shadow-none" aria-label="Browse for Java executable" :disabled="props.disabled" @click="handleJavaFileInput()">
 					<FolderSearchIcon />
 					{{ formatMessage(messages.browse) }}
 				</button>
@@ -84,6 +96,7 @@ import {
 	DownloadIcon,
 	FolderSearchIcon,
 	RefreshCwIcon,
+	ScanEyeIcon,
 	SearchIcon,
 	SpinnerIcon,
 	XCircleIcon,
@@ -115,6 +128,7 @@ const messages = defineMessages({
 	},
 	detect: { id: 'app.java.detect', defaultMessage: 'Detect' },
 	browse: { id: 'app.java.browse', defaultMessage: 'Browse' },
+	deepScan: { id: 'app.java.deep-scan', defaultMessage: 'Deep Scan' },
 })
 
 const props = defineProps({
@@ -161,6 +175,7 @@ const {
 } = useJavaTest()
 
 const installingJava = ref(false)
+const deepScanningJava = ref(false)
 const hoveringTest = ref(false)
 let hasInitialized = false
 
@@ -210,35 +225,51 @@ async function autoDetect() {
 	if (!props.compact) {
 		detectJavaModal.value.show(props.version, props.modelValue)
 	} else {
-		const versions = await find_filtered_jres(props.version).catch(handleError)
-		if (versions.length > 0) {
+		const versions = await find_filtered_jres(props.version, false, false).catch(handleError)
+		if (versions?.length > 0) {
 			emit('update:modelValue', versions[0])
 		}
 	}
 }
 
+async function autoDeepScan() {
+	deepScanningJava.value = true
+	try {
+		if (!props.compact) {
+			detectJavaModal.value.show(props.version, props.modelValue, true)
+		} else {
+			const versions = await find_filtered_jres(props.version, true, false).catch(handleError)
+			if (versions?.length > 0) {
+				emit('update:modelValue', versions[0])
+			}
+		}
+	} finally {
+		deepScanningJava.value = false
+	}
+}
+
 async function reinstallJava() {
 	installingJava.value = true
-	const path = await auto_install_java(props.version).catch(handleError)
-	let result = await get_jre(path)
+	try {
+		const path = await auto_install_java(props.version).catch(handleError)
+		if (!path) return
 
-	if (!result) {
-		result = {
-			path: path,
-			version: props.version.toString(),
-			parsed_version: props.version,
-			architecture: 'x86',
+		let result = await get_jre(path).catch(handleError)
+		if (!result) {
+			result = {
+				path: path,
+				version: props.version?.toString() ?? '',
+				parsed_version: props.version ?? 0,
+				architecture: 'x86',
+			}
 		}
+
+		trackEvent('JavaReInstall', { path: path, version: props.version })
+		emit('update:modelValue', result)
+		runTest(result.path)
+	} finally {
+		installingJava.value = false
 	}
-
-	trackEvent('JavaReInstall', {
-		path: path,
-		version: props.version,
-	})
-
-	emit('update:modelValue', result)
-	installingJava.value = false
-	runTest(result.path)
 }
 </script>
 

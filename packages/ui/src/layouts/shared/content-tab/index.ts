@@ -1,7 +1,6 @@
 export { default as ContentCardItem } from './components/ContentCardItem.vue'
 export { default as ContentCard } from './components/ContentCardItem.vue'
 export { default as ContentCardTable } from './components/ContentCardTable.vue'
-export { default as ContentModpackCard } from './components/ContentModpackCard.vue'
 export { default as ConfirmBulkUpdateModal } from './components/modals/ConfirmBulkUpdateModal.vue'
 export { default as ConfirmDeletionModal } from './components/modals/ConfirmDeletionModal.vue'
 export { default as ConfirmModpackUpdateModal } from './components/modals/ConfirmModpackUpdateModal.vue'

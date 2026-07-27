@@ -66,11 +66,6 @@ export interface ScanResult {
 	instances: ScanInstance[]
 }
 
-interface ScannedImportableInstance {
-	name: string
-	path: string
-}
-
 /**
  * Scan a launcher's data directory for importable Minecraft instances.
  *
@@ -82,21 +77,18 @@ export async function scanLauncherInstances(
 	launcherType: string,
 	basePath: string,
 ): Promise<ScanResult[]> {
-	const instances: ScannedImportableInstance[] = await invoke(
-		'plugin:drop|drop_scan_launcher_instances',
-		{
-			launcherType,
-			basePath,
-		},
-	)
+	const names: string[] = await invoke('plugin:drop|drop_scan_launcher_instances', {
+		launcherType,
+		basePath,
+	})
 
 	return [
 		{
 			launcherName: launcherType,
 			launcherType,
-			instances: instances.map((instance) => ({
-				name: instance.name,
-				path: instance.path,
+			instances: names.map((name) => ({
+				name,
+				path: `${basePath}/${name}`,
 				version: '',
 				loader: '',
 			})),

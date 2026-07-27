@@ -11,7 +11,6 @@ use crate::util::fetch::{
     ContentValidation, DownloadRequest, FetchProgressFn, Integrity,
     ResourceClass, download_to_path, fetch_json,
 };
-use dashmap::DashMap;
 use futures::{TryStreamExt, stream};
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
@@ -30,17 +29,63 @@ use crate::{
     LoadingBarType, State,
     util::jre::{self},
 };
+use xz2::read::XzDecoder;
 
-pub async fn get_java_versions() -> crate::Result<DashMap<u32, JavaVersion>> {
+pub async fn get_java_versions() -> crate::Result<Vec<JavaVersion>> {
     let state = State::get().await?;
 
     JavaVersion::get_all(&state.pool).await
+}
+
+/// Lists available Java major versions from the specified distribution API.
+pub async fn list_java_distribution_versions(
+    distribution: String,
+) -> crate::Result<Vec<u32>> {
+    let state = State::get().await?;
+    match distribution.as_str() {
+        "zulu" => {
+            let platform = std::env::consts::OS;
+            let arch = std::env::consts::ARCH;
+            let url = format!(
+                "https://api.azul.com/metadata/v1/zulu/packages/?os={}&arch={}&archive_type=tar.gz&java_package_type=jre&page_size=1000",
+                platform, arch
+            );
+            let packages: Vec<AzulPackageSummary> = fetch_json(
+                Method::GET,
+                &url,
+                None,
+                None,
+                None,
+                &state.api_semaphore,
+                &state.pool,
+            )
+            .await?;
+            let mut versions: Vec<u32> = packages
+                .iter()
+                .filter_map(|p| p.java_version.first().copied())
+                .filter(|v| *v >= 8)
+                .collect();
+            versions.sort_unstable();
+            versions.dedup();
+            Ok(versions)
+        }
+        _ => Err(crate::ErrorKind::InputError(format!(
+            "Unknown distribution: {distribution}"
+        ))
+        .into()),
+    }
 }
 
 pub async fn set_java_version(java_version: JavaVersion) -> crate::Result<()> {
     let state = State::get().await?;
     java_version.upsert(&state.pool).await?;
     Ok(())
+}
+
+/// Removes a configured Java version by its executable path.
+pub async fn remove_java_version(path: String) -> crate::Result<()> {
+    let state = State::get().await?;
+    JavaVersion::delete(&path, &state.pool).await
 }
 
 const JAVA_RESCAN_DEBOUNCE: Duration = Duration::from_secs(60);
@@ -51,8 +96,11 @@ static JAVA_SCAN_STATE: LazyLock<tokio::sync::Mutex<Option<Instant>>> =
 // Searches for jres on the system given a java version (ex: 8, 17, 21)
 pub async fn find_filtered_jres(
     java_version: Option<u32>,
+    full_scan: bool,
+    force_fresh: bool,
+    exhaustive: bool,
 ) -> crate::Result<Vec<JavaVersion>> {
-    let jres = get_available_jres().await?;
+    let jres = get_available_jres(full_scan, force_fresh, exhaustive).await?;
 
     Ok(if let Some(java_version) = java_version {
         jres.into_iter()
@@ -67,23 +115,45 @@ pub async fn find_filtered_jres(
 /// when possible. When the cache is hit, a debounced rescan runs in the
 /// background and a `java_discovery_update` event fires if it changes
 /// anything; the cache being empty forces a full scan instead.
-pub async fn get_available_jres() -> crate::Result<Vec<JavaVersion>> {
+///
+/// When `full_scan` is true the cache is always bypassed and a fresh
+/// full scan (including BFS directory traversal) is performed.
+///
+/// When `force_fresh` is true the cache is bypassed for a fresh quick scan,
+/// ensuring newly installed Java runtimes appear without requiring a deep
+/// scan or background rescan.
+pub async fn get_available_jres(
+    full_scan: bool,
+    force_fresh: bool,
+    exhaustive: bool,
+) -> crate::Result<Vec<JavaVersion>> {
     let state = State::get().await?;
 
-    let cached = validate_cached_javas(&state).await?;
-    if !cached.is_empty() {
-        schedule_background_java_rescan();
-        return Ok(cached);
+    if full_scan || exhaustive {
+        let mut last_scan = JAVA_SCAN_STATE.lock().await;
+        let jres = refresh_discovered_javas(&state, true, exhaustive).await?;
+        *last_scan = Some(Instant::now());
+        return Ok(jres);
+    }
+
+    if !force_fresh {
+        let cached = validate_cached_javas(&state).await?;
+        if !cached.is_empty() {
+            schedule_background_java_rescan();
+            return Ok(cached);
+        }
     }
 
     let mut last_scan = JAVA_SCAN_STATE.lock().await;
-    // Re-check after taking the lock: a concurrent caller may have just
-    // finished the initial scan while this one was waiting
-    let cached = validate_cached_javas(&state).await?;
-    if !cached.is_empty() {
-        return Ok(cached);
+    if !force_fresh {
+        // Re-check after taking the lock: a concurrent caller may have just
+        // finished the initial scan while this one was waiting
+        let cached = validate_cached_javas(&state).await?;
+        if !cached.is_empty() {
+            return Ok(cached);
+        }
     }
-    let jres = refresh_discovered_javas(&state).await?;
+    let jres = refresh_discovered_javas(&state, false, false).await?;
     *last_scan = Some(Instant::now());
     Ok(jres)
 }
@@ -99,10 +169,6 @@ async fn validate_cached_javas(
 
     for entry in entries {
         let path = PathBuf::from(&entry.java.path);
-        if jre::is_java_install_staging_path(&path) {
-            DiscoveredJava::remove(&entry.java.path, &state.pool).await?;
-            continue;
-        }
         match java_file_signature(&path) {
             Some((size, mtime))
                 if size == entry.file_size && mtime == entry.file_mtime_ms =>
@@ -130,11 +196,15 @@ async fn validate_cached_javas(
     Ok(valid)
 }
 
-// Runs a full system scan and replaces the discovery cache with its results
+// Runs a system scan and replaces the discovery cache with its results.
+// When `full_scan` is true a BFS directory traversal is performed;
+// otherwise only well-known paths and registry entries are checked.
 async fn refresh_discovered_javas(
     state: &State,
+    full_scan: bool,
+    exhaustive: bool,
 ) -> crate::Result<Vec<JavaVersion>> {
-    let jres = jre::get_all_jre().await?;
+    let jres = jre::get_all_jre(full_scan, exhaustive).await?;
 
     let previous: HashSet<(String, String)> =
         DiscoveredJava::get_all(&state.pool)
@@ -148,6 +218,16 @@ async fn refresh_discovered_javas(
         .filter_map(|java| DiscoveredJava::from_java(java.clone()))
         .collect();
     DiscoveredJava::replace_all(&state.pool, &entries).await?;
+
+    // Also upsert into java_versions so they appear in the settings list
+    for java in &jres {
+        if let Err(e) = java.upsert(&state.pool).await {
+            tracing::warn!(
+                "Failed to upsert discovered Java {} into java_versions: {e}",
+                java.parsed_version
+            );
+        }
+    }
 
     let current: HashSet<(String, String)> = entries
         .iter()
@@ -173,7 +253,7 @@ fn schedule_background_java_rescan() {
         let Ok(state) = State::get().await else {
             return;
         };
-        match refresh_discovered_javas(&state).await {
+        match refresh_discovered_javas(&state, true, false).await {
             Ok(_) => *last_scan = Some(Instant::now()),
             Err(e) => {
                 tracing::warn!("Background Java rescan failed: {e}");
@@ -191,10 +271,6 @@ pub async fn find_cached_java(
     let state = State::get().await?;
 
     for entry in DiscoveredJava::get_all(&state.pool).await? {
-        if jre::is_java_install_staging_path(Path::new(&entry.java.path)) {
-            DiscoveredJava::remove(&entry.java.path, &state.pool).await?;
-            continue;
-        }
         if entry.java.parsed_version != major_version {
             continue;
         }
@@ -220,7 +296,7 @@ pub async fn find_java_for_version(
         return Ok(Some(java));
     }
 
-    let scanned = get_available_jres().await?;
+    let scanned = get_available_jres(false, false, false).await?;
     Ok(scanned
         .into_iter()
         .find(|java| java.parsed_version == major_version))
@@ -293,6 +369,7 @@ enum MojangRuntimeFile {
 #[derive(Deserialize)]
 struct AzulPackageSummary {
     package_uuid: String,
+    java_version: Vec<u32>,
 }
 
 #[derive(Deserialize)]
@@ -301,6 +378,38 @@ struct AzulPackage {
     name: PathBuf,
     sha256_hash: String,
     size: u64,
+}
+
+// ── JetBrains JDK feed types ────────────────────────────────────────────────
+
+const JDK_FEED_URL: &str =
+    "https://download.jetbrains.com/jdk/feed/v1/jdks.json.xz";
+
+#[derive(Deserialize, Clone)]
+struct JdkFeed {
+    jdks: Vec<JdkFeedEntry>,
+}
+
+#[derive(Deserialize, Clone)]
+struct JdkFeedEntry {
+    vendor: String,
+    product: Option<String>,
+    #[serde(rename = "jdk_version_major")]
+    jdk_version_major: u32,
+    #[serde(rename = "jdk_version")]
+    jdk_version: String,
+    packages: Vec<JdkFeedPackage>,
+}
+
+#[derive(Deserialize, Clone)]
+struct JdkFeedPackage {
+    os: String,
+    arch: String,
+    url: String,
+    sha256: String,
+    archive_size: u64,
+    package_type: String,
+    install_folder_name: String,
 }
 
 #[derive(Clone, Default)]
@@ -1048,7 +1157,7 @@ async fn install_azul_runtime(
     let download_result = download_to_path(
         DownloadRequest::new(&download.download_url, ResourceClass::Java)
             .with_integrity(Integrity {
-                size: Some(download.size),
+                size: None,
                 sha256: Some(download.sha256_hash.clone()),
                 content: ContentValidation::Jar,
                 ..Integrity::default()
@@ -1129,6 +1238,401 @@ pub async fn test_jre(
         path.display()
     );
     Ok(version == major_version)
+}
+
+// ── JetBrains JDK feed download / parse ─────────────────────────────────────
+
+static JDK_FEED_CACHE: LazyLock<tokio::sync::Mutex<Option<JdkFeed>>> =
+    LazyLock::new(|| tokio::sync::Mutex::new(None));
+
+/// Fetches the JetBrains JDK feed, caching it after the first successful
+/// download. The feed is an XZ-compressed JSON file listing all available
+/// JDK builds across vendors, platforms and architectures.
+async fn fetch_jdk_feed() -> crate::Result<JdkFeed> {
+    // Check cache first
+    {
+        let cache = JDK_FEED_CACHE.lock().await;
+        if let Some(ref feed) = *cache {
+            return Ok(JdkFeed {
+                jdks: feed.jdks.clone(),
+            });
+        }
+    }
+
+    // Download feed
+    let client = reqwest::Client::new();
+    let response = client.get(JDK_FEED_URL).send().await?;
+    let bytes = response.bytes().await?;
+
+    // Decompress xz
+    let mut decoder = XzDecoder::new(&bytes[..]);
+    let mut decompressed = Vec::new();
+    std::io::Read::read_to_end(&mut decoder, &mut decompressed)?;
+
+    let feed: JdkFeed = serde_json::from_slice(&decompressed)?;
+
+    // Cache
+    {
+        let mut cache = JDK_FEED_CACHE.lock().await;
+        *cache = Some(feed.clone());
+    }
+
+    Ok(feed)
+}
+
+fn map_platform_to_feed_os() -> &'static str {
+    match std::env::consts::OS {
+        "linux" => "linux",
+        "macos" => "macOS",
+        "windows" => "windows",
+        _ => "linux",
+    }
+}
+
+fn map_arch_to_feed_arch() -> &'static str {
+    match std::env::consts::ARCH {
+        "x86_64" => "x86_64",
+        "aarch64" => "aarch64",
+        _ => "x86_64",
+    }
+}
+
+/// Lists available JDK vendors from the JetBrains feed that provide builds
+/// for the current platform.
+pub async fn list_java_feed_vendors() -> crate::Result<Vec<String>> {
+    let feed = fetch_jdk_feed().await?;
+    let os = map_platform_to_feed_os();
+    let arch = map_arch_to_feed_arch();
+
+    let mut vendors: Vec<String> = feed
+        .jdks
+        .iter()
+        .filter(|e| e.packages.iter().any(|p| p.os == os && p.arch == arch))
+        .map(|e| e.vendor.clone())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    vendors.sort();
+    Ok(vendors)
+}
+
+#[derive(Serialize)]
+pub struct JdkVersionInfo {
+    pub major_version: u32,
+    pub full_version: String,
+    pub vendor: String,
+    pub product: String,
+}
+
+/// Lists available JDK versions for a given vendor from the JetBrains feed,
+/// filtered to builds that match the current platform.
+pub async fn list_java_feed_versions(
+    vendor: &str,
+) -> crate::Result<Vec<JdkVersionInfo>> {
+    let feed = fetch_jdk_feed().await?;
+    let os = map_platform_to_feed_os();
+    let arch = map_arch_to_feed_arch();
+
+    let mut versions: Vec<JdkVersionInfo> = feed
+        .jdks
+        .iter()
+        .filter(|e| {
+            e.vendor == vendor
+                && e.packages.iter().any(|p| p.os == os && p.arch == arch)
+        })
+        .map(|e| JdkVersionInfo {
+            major_version: e.jdk_version_major,
+            full_version: e.jdk_version.clone(),
+            vendor: e.vendor.clone(),
+            product: e.product.clone().unwrap_or_default(),
+        })
+        .collect();
+
+    versions.sort_by(|a, b| b.major_version.cmp(&a.major_version));
+    versions.dedup_by(|a, b| a.major_version == b.major_version);
+    Ok(versions)
+}
+
+/// Extracts a zip or tar.gz archive to the destination directory.
+fn extract_archive(archive_path: &Path, dest: &Path) -> crate::Result<()> {
+    // Try zip first
+    {
+        let file = std::fs::File::open(archive_path)?;
+        if let Ok(mut archive) = zip::ZipArchive::new(file) {
+            archive.extract(dest).map_err(|error| {
+                crate::ErrorKind::InputError(format!(
+                    "Failed to extract zip archive: {error}"
+                ))
+            })?;
+            return Ok(());
+        }
+    }
+
+    // Fall back to tar.gz
+    let file = std::fs::File::open(archive_path)?;
+    let decoder = flate2::read::GzDecoder::new(file);
+    let mut archive = tar::Archive::new(decoder);
+    archive.unpack(dest)?;
+    Ok(())
+}
+
+/// Downloads and installs a JDK build from the JetBrains feed. The download
+/// is verified against the SHA-256 and size advertised in the feed before
+/// extraction.
+pub async fn download_java_from_feed(
+    vendor: &str,
+    jdk_version_major: u32,
+) -> crate::Result<PathBuf> {
+    download_java_from_feed_inner(vendor, jdk_version_major, None).await
+}
+
+/// Downloads Java from the JetBrains feed with an install progress reporter,
+/// so the caller can observe progress through the install-job system.
+pub async fn download_java_from_feed_with_reporter(
+    vendor: &str,
+    jdk_version_major: u32,
+    reporter: InstallProgressReporter,
+) -> crate::Result<PathBuf> {
+    download_java_from_feed_inner(vendor, jdk_version_major, Some(reporter))
+        .await
+}
+
+async fn download_java_from_feed_inner(
+    vendor: &str,
+    jdk_version_major: u32,
+    reporter: Option<InstallProgressReporter>,
+) -> crate::Result<PathBuf> {
+    let state = State::get().await?;
+    let _install_guard = JAVA_INSTALL_LOCK.lock().await;
+
+    let loading_bar = if reporter.is_none() {
+        Some(
+            init_loading(
+                LoadingBarType::JavaDownload {
+                    version: jdk_version_major,
+                },
+                100.0,
+                "Downloading java version",
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
+
+    if let Some(loading_bar) = &loading_bar {
+        emit_loading(loading_bar, 0.0, Some("Fetching metadata"))?;
+    }
+    update_java_install_progress(
+        reporter.as_ref(),
+        jdk_version_major,
+        InstallJavaStep::FetchingMetadata,
+        Some(java_step_progress(1)),
+    )
+    .await?;
+
+    let feed = fetch_jdk_feed().await?;
+    let os = map_platform_to_feed_os();
+    let arch = map_arch_to_feed_arch();
+
+    let entry = feed
+        .jdks
+        .iter()
+        .find(|e| {
+            e.vendor == vendor
+                && e.jdk_version_major == jdk_version_major
+                && e.packages
+                    .iter()
+                    .any(|p| p.os == os && p.arch == arch)
+        })
+        .ok_or_else(|| {
+            crate::ErrorKind::InputError(format!(
+                "No JDK found for {vendor} Java {jdk_version_major} on {os}/{arch}"
+            ))
+        })?;
+
+    let pkg = entry
+        .packages
+        .iter()
+        .find(|p| p.os == os && p.arch == arch)
+        .ok_or_else(|| {
+            crate::ErrorKind::InputError(
+                "No package for current platform".to_string(),
+            )
+        })?;
+
+    if let Some(reporter) = &reporter {
+        reporter
+            .set_context(
+                InstallErrorContext::new("download Java from feed")
+                    .urls(vec![pkg.url.clone()])
+                    .java_version(jdk_version_major)
+                    .os(std::env::consts::OS)
+                    .arch(std::env::consts::ARCH)
+                    .build(),
+            )
+            .await?;
+    }
+
+    let metadata_dir = state.directories.metadata_dir();
+    let java_dir = metadata_dir.join("java_versions");
+    io::create_dir_all(&java_dir).await?;
+
+    let dir_name = format!(
+        "{}-jdk-{}",
+        vendor.to_lowercase().replace(' ', "-"),
+        jdk_version_major
+    );
+    let staging_root = java_dir.join(format!("{}.staging", dir_name));
+    let final_root = java_dir.join(&dir_name);
+
+    remove_path_if_present(&staging_root).await?;
+    io::create_dir_all(&staging_root).await?;
+
+    let archive_path = staging_root.join(&pkg.install_folder_name);
+
+    // Download with integrity verification.
+    // The JetBrains feed serves both .tar.gz and .zip archives, so we skip
+    // ContentValidation::Jar (which only validates zip files) – SHA-256
+    // verification already guarantees file integrity.
+    let integrity = Integrity {
+        size: Some(pkg.archive_size),
+        sha256: Some(pkg.sha256.clone()),
+        content: ContentValidation::None,
+        ..Integrity::default()
+    };
+
+    // Track real download progress
+    let mut download_pct = 0_f64;
+    let reporter_for_progress = reporter.clone();
+    let mut progress =
+        |current: u64,
+         total: u64|
+         -> Pin<Box<dyn Future<Output = crate::Result<()>> + Send>> {
+            if let Some(ref reporter) = reporter_for_progress {
+                let reporter = reporter.clone();
+                Box::pin(async move {
+                    update_java_install_progress(
+                        Some(&reporter),
+                        jdk_version_major,
+                        InstallJavaStep::Downloading,
+                        Some(InstallProgress {
+                            current,
+                            total: total.max(1),
+                            secondary: None,
+                        }),
+                    )
+                    .await
+                })
+            } else {
+                let pct = if total > 0 {
+                    (current as f64 / total as f64) * 50.0
+                } else {
+                    0.0
+                };
+                let delta = pct - download_pct;
+                download_pct = pct;
+                let lb = loading_bar.clone();
+                Box::pin(async move {
+                    if let Some(lb) = &lb {
+                        emit_loading(lb, delta, Some("Downloading..."))?;
+                    }
+                    Ok(())
+                })
+            }
+        };
+
+    download_to_path(
+        DownloadRequest::new(&pkg.url, ResourceClass::Java)
+            .with_integrity(integrity),
+        &archive_path,
+        &state.download_semaphore,
+        &state.pool,
+        Some(&mut progress as &mut FetchProgressFn<'_>),
+    )
+    .await
+    .map_err(|e| {
+        tracing::warn!(
+            "Failed to download Java from vendor {vendor} at URL {}: {e}",
+            pkg.url
+        );
+        crate::Error::from(crate::ErrorKind::OtherError(format!(
+            "Failed to download Java from {}: {e}",
+            vendor
+        )))
+    })?;
+
+    if let Some(reporter) = &reporter {
+        // Report extracting phase via reporter
+        update_java_install_progress(
+            Some(reporter),
+            jdk_version_major,
+            InstallJavaStep::Extracting,
+            Some(java_step_progress(3)),
+        )
+        .await?;
+    }
+
+    // Emit remaining delta to reach exactly 50 % before extraction (legacy path)
+    if let Some(loading_bar) = &loading_bar {
+        emit_loading(
+            loading_bar,
+            (50.0 - download_pct).max(0.0),
+            Some("Extracting..."),
+        )?;
+    }
+
+    // Extract archive (zip or tar.gz)
+    let staging_for_extract = staging_root.clone();
+    let archive_for_extract = archive_path.clone();
+    tokio::task::spawn_blocking(move || {
+        extract_archive(&archive_for_extract, &staging_for_extract)
+    })
+    .await??;
+
+    io::remove_file(&archive_path).await?;
+
+    // Find the extracted directory (first entry)
+    let extracted_dir = {
+        let mut entries = std::fs::read_dir(&staging_root)?;
+        let first = entries.next().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::NotFound, "Empty archive")
+        })??;
+        first.path()
+    };
+
+    remove_path_if_present(&final_root).await?;
+    tokio::fs::rename(&extracted_dir, &final_root).await?;
+    remove_path_if_present(&staging_root).await?;
+
+    let executable = if cfg!(target_os = "macos") {
+        final_root.join("Contents/Home/bin/java")
+    } else {
+        final_root.join("bin").join(jre::JAVA_BIN)
+    };
+
+    // Advance from 50 % (post-download) to 90 % to reflect installation work
+    if let Some(loading_bar) = &loading_bar {
+        emit_loading(loading_bar, 40.0, Some("Verifying installation"))?;
+    }
+
+    // Report validating phase via reporter
+    update_java_install_progress(
+        reporter.as_ref(),
+        jdk_version_major,
+        InstallJavaStep::Validating,
+        Some(java_step_progress(4)),
+    )
+    .await?;
+
+    let result = check_jre(executable).await?;
+
+    // Complete the remaining 10 % of the bar
+    if let Some(loading_bar) = &loading_bar {
+        emit_loading(loading_bar, 10.0, None)?;
+    }
+
+    Ok(result.path.into())
 }
 
 fn system_memory() -> sysinfo::System {

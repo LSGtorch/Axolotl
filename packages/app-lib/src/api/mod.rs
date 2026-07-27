@@ -47,8 +47,9 @@ pub mod prelude {
         State,
         data::*,
         event::CommandPayload,
-        install, instance, jre, metadata, minecraft_auth, mr_auth, pack,
-        process, settings,
+        install, instance,
+        jre::{self, JdkVersionInfo},
+        metadata, minecraft_auth, mr_auth, pack, process, settings,
         state::{ReleaseChannel, db_backup::app_db_backup_dir},
         translation,
         util::{

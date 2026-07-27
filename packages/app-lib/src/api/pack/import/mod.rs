@@ -620,16 +620,6 @@ async fn import_instance_inner(
                 }
             }
             if !matched {
-                if let Some(instance_path) = instance_path {
-                    return generic::import_generic(
-                        PathBuf::from(instance_path),
-                        instance_id,
-                        reporter.clone(),
-                        details.clone(),
-                        symlink,
-                    )
-                    .await;
-                }
                 return Err(crate::ErrorKind::InputError(
                     "Could not determine launcher type for the given path"
                         .to_string(),

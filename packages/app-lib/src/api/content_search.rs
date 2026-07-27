@@ -15,8 +15,15 @@ static WIKI_ENTRIES: LazyLock<Vec<WikiEntry>> =
 static CHINESE_NAME_INDEX: LazyLock<ChineseNameIndex> =
     LazyLock::new(|| build_chinese_name_index(&WIKI_ENTRIES));
 
+static WIKI_ID_INDEX: LazyLock<WikiIdIndex> =
+    LazyLock::new(|| build_wiki_id_index(&WIKI_ENTRIES));
+
 #[derive(Clone, Debug)]
 struct WikiEntry {
+    /// MC 百科 (mcmod.cn) class ID, encoded as the entry's 1-based line
+    /// number in `WikiEntries.txt`; empty lines reserve the IDs of entries
+    /// without a platform slug.
+    wiki_id: u32,
     chinese_name: Option<String>,
     curseforge_slug: Option<String>,
     modrinth_slug: Option<String>,
@@ -100,6 +107,80 @@ fn collect_chinese_names(
                 .map(|name| (slug.clone(), name.clone()))
         })
         .collect()
+}
+
+#[derive(Debug, Default)]
+struct WikiIdIndex {
+    modrinth: HashMap<String, u32>,
+    curseforge: HashMap<String, u32>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WikiIdLookup {
+    pub modrinth: HashMap<String, u32>,
+    pub curseforge: HashMap<String, u32>,
+}
+
+/// Batch-resolves MC 百科 (mcmod.cn) class IDs for known platform slugs,
+/// keyed by each input slug exactly as it was passed in.
+pub fn lookup_content_wiki_ids(
+    modrinth_slugs: &[String],
+    curseforge_slugs: &[String],
+) -> WikiIdLookup {
+    WikiIdLookup {
+        modrinth: collect_wiki_ids(modrinth_slugs, &WIKI_ID_INDEX.modrinth),
+        curseforge: collect_wiki_ids(
+            curseforge_slugs,
+            &WIKI_ID_INDEX.curseforge,
+        ),
+    }
+}
+
+fn collect_wiki_ids(
+    slugs: &[String],
+    index: &HashMap<String, u32>,
+) -> HashMap<String, u32> {
+    slugs
+        .iter()
+        .filter_map(|slug| {
+            index
+                .get(&slug.to_lowercase())
+                .map(|wiki_id| (slug.clone(), *wiki_id))
+        })
+        .collect()
+}
+
+fn build_wiki_id_index(entries: &[WikiEntry]) -> WikiIdIndex {
+    let mut modrinth = HashMap::<String, (u32, u32)>::new();
+    let mut curseforge = HashMap::<String, (u32, u32)>::new();
+    for entry in entries {
+        for (slug, index) in [
+            (entry.modrinth_slug.as_deref(), &mut modrinth),
+            (entry.curseforge_slug.as_deref(), &mut curseforge),
+        ] {
+            let Some(slug) = slug else {
+                continue;
+            };
+            let key = slug.to_lowercase();
+            let is_better = index
+                .get(&key)
+                .is_none_or(|(_, popularity)| *popularity < entry.popularity);
+            if is_better {
+                index.insert(key, (entry.wiki_id, entry.popularity));
+            }
+        }
+    }
+    WikiIdIndex {
+        modrinth: modrinth
+            .into_iter()
+            .map(|(key, (wiki_id, _))| (key, wiki_id))
+            .collect(),
+        curseforge: curseforge
+            .into_iter()
+            .map(|(key, (wiki_id, _))| (key, wiki_id))
+            .collect(),
+    }
 }
 
 fn build_chinese_name_index(entries: &[WikiEntry]) -> ChineseNameIndex {
@@ -345,7 +426,11 @@ fn parse_wiki_entries(source: &str) -> Vec<WikiEntry> {
     let mut popularity_iter = popularities.into_iter();
     let mut results = Vec::new();
 
-    for line in lines.into_iter().filter(|line| !line.is_empty()) {
+    for (line_index, line) in lines.into_iter().enumerate() {
+        if line.is_empty() {
+            continue;
+        }
+        let wiki_id = line_index as u32 + 1;
         let popularity = popularity_iter.next().unwrap_or_default();
         for raw_entry in line.split('¨') {
             let mut parts = raw_entry.split('|');
@@ -369,6 +454,7 @@ fn parse_wiki_entries(source: &str) -> Vec<WikiEntry> {
                 }
             });
             results.push(WikiEntry {
+                wiki_id,
                 chinese_name,
                 curseforge_slug,
                 modrinth_slug,
@@ -719,8 +805,20 @@ mod tests {
         assert_eq!(entries[0].modrinth_slug.as_deref(), Some("modrinth"));
         assert_eq!(entries[0].chinese_name.as_deref(), Some("中文 (Curse)"));
         assert_eq!(entries[0].popularity, 1);
+        assert_eq!(entries[0].wiki_id, 1);
         assert_eq!(entries[1].curseforge_slug, None);
         assert_eq!(entries[1].modrinth_slug.as_deref(), Some("only-mr"));
+        assert_eq!(entries[1].wiki_id, 1);
+    }
+
+    #[test]
+    fn empty_lines_reserve_wiki_ids_and_keep_popularity_aligned() {
+        let entries = parse_wiki_entries("first@|甲\n\nthird@|乙\n001002");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].wiki_id, 1);
+        assert_eq!(entries[0].popularity, 1);
+        assert_eq!(entries[1].wiki_id, 3);
+        assert_eq!(entries[1].popularity, 2);
     }
 
     #[test]
@@ -797,6 +895,28 @@ mod tests {
             lookup.modrinth.get("AE2").map(String::as_str),
             Some("应用能源2 (Applied Energistics 2)")
         );
+    }
+
+    #[test]
+    fn looks_up_wiki_ids_for_known_slugs() {
+        let lookup = lookup_content_wiki_ids(
+            &[
+                "industrial-craft".to_string(),
+                "totally-unknown-project".to_string(),
+            ],
+            &["Industrial-Craft".to_string()],
+        );
+        assert_eq!(lookup.modrinth.get("industrial-craft"), Some(&2));
+        assert!(!lookup.modrinth.contains_key("totally-unknown-project"));
+        assert_eq!(lookup.curseforge.get("Industrial-Craft"), Some(&2));
+    }
+
+    #[test]
+    fn wiki_id_index_prefers_more_popular_entries_for_duplicate_slugs() {
+        let entries = parse_wiki_entries("dup@|旧名\ndup@|新名\n001002");
+        let index = build_wiki_id_index(&entries);
+        assert_eq!(index.modrinth.get("dup"), Some(&2));
+        assert_eq!(index.curseforge.get("dup"), Some(&2));
     }
 
     #[test]
@@ -889,6 +1009,7 @@ mod tests {
     #[test]
     fn removes_words_that_can_be_composed_from_shorter_words() {
         let entry = WikiEntry {
+            wiki_id: 1,
             chinese_name: Some("末影接口 (Ender IO EnderIO)".to_string()),
             curseforge_slug: Some("ender-io-enderio".to_string()),
             modrinth_slug: None,

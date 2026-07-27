@@ -88,6 +88,15 @@ where
         settings.prev_custom_dir = Some(old_launcher_root_str.clone());
 
         for (_, legacy_version) in legacy_settings.java_globals.0 {
+            if crate::util::jre::is_java_install_staging_path(
+                std::path::Path::new(&legacy_version.path),
+            ) {
+                tracing::warn!(
+                    java = %legacy_version.path,
+                    "Skipping incomplete Java installation during legacy migration"
+                );
+                continue;
+            }
             if let Ok(java_version) =
                 check_jre(PathBuf::from(legacy_version.path)).await
             {

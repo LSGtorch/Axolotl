@@ -40,6 +40,62 @@ jobs:
             target/release/bundle/nsis/*.exe
             target/release/bundle/msi/*.msi
 
+      - name: Build portable zip (Windows only)
+        if: runner.os == 'Windows'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}" -replace '^v', ''
+          $appName = "Axolotl Launcher"
+          $outDir = "target/release/bundle/nsis"
+          $buildDir = "target/portable-build"
+
+          # Reuse the binary already built by tauri-action
+          $appExe = "target/release/${appName}.exe"
+          if (Test-Path $appExe) {
+            New-Item -ItemType Directory -Force -Path "$buildDir\Axolotl" | Out-Null
+            Copy-Item -Force $appExe "$buildDir\Axolotl\"
+
+            # Create empty .Axolotl folder to trigger portable mode
+            New-Item -ItemType Directory -Force -Path "$buildDir\Axolotl\.Axolotl" | Out-Null
+
+            # Create portable zip (for manual download)
+            $zipName = "Axolotl_portable_${version}_x64.zip"
+            Compress-Archive -Path "$buildDir\Axolotl" -DestinationPath "$outDir\$zipName" -Force
+            Write-Output "Created portable zip: $outDir\$zipName"
+
+            # Create portable exe (for Tauri auto-update, .bin avoids exposing raw .exe in Release)
+            $exeName = "Axolotl_portable_${version}_x64.bin"
+            Copy-Item -Force $appExe "$outDir\$exeName"
+            Write-Output "Created portable exe: $outDir\$exeName"
+
+            # Sign the portable exe
+            $exePath = Resolve-Path "$outDir\$exeName"
+
+            cd apps/app
+            pnpm tauri signer sign --password "$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD" "$exePath"
+            cd ../..
+
+            $sigPath = "${exePath}.sig"
+            if (Test-Path $sigPath) {
+              gh release upload "${{ github.ref_name }}" $exePath --clobber
+              gh release upload "${{ github.ref_name }}" $sigPath --clobber
+              Write-Output "Uploaded portable exe $exeName and signature"
+            } else {
+              Write-Error "Signature file not generated for $exeName"
+              exit 1
+            }
+
+            # Upload portable zip (for manual download only, no signature needed)
+            $zipPath = Resolve-Path "$outDir\$zipName"
+            gh release upload "${{ github.ref_name }}" "$zipPath" --clobber
+          } else {
+            Write-Warning "Binary not found at $appExe"
+          }
+
   verify-and-publish:
     name: Verify and publish
     needs: windows-release

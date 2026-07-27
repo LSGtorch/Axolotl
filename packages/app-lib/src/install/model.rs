@@ -384,6 +384,10 @@ pub enum InstallRequest {
         #[serde(default)]
         post_install_edit: Option<InstallPostInstallEdit>,
     },
+    DownloadJava {
+        vendor: String,
+        version: u32,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -413,6 +417,7 @@ impl InstallRequest {
             Self::InstallPackToExistingInstance { .. } => {
                 InstallJobKind::InstallPackToExistingInstance
             }
+            Self::DownloadJava { .. } => InstallJobKind::DownloadJava,
         }
     }
 
@@ -450,6 +455,7 @@ pub enum InstallJobKind {
     DuplicateInstance,
     InstallExistingInstance,
     InstallPackToExistingInstance,
+    DownloadJava,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Eq, PartialEq)]
@@ -532,6 +538,7 @@ impl InstallJobKind {
             Self::InstallPackToExistingInstance => {
                 "install_pack_to_existing_instance"
             }
+            Self::DownloadJava => "download_java",
         }
     }
 
@@ -544,6 +551,7 @@ impl InstallJobKind {
             "install_pack_to_existing_instance" => {
                 Self::InstallPackToExistingInstance
             }
+            "download_java" => Self::DownloadJava,
             _ => Self::CreateInstance,
         }
     }
@@ -870,6 +878,7 @@ impl InstallJobState {
             InstallRequest::InstallExistingInstance { .. } => {
                 InstallJobProvider::Minecraft
             }
+            InstallRequest::DownloadJava { .. } => InstallJobProvider::Java,
             InstallRequest::ImportInstance { .. }
             | InstallRequest::DuplicateInstance { .. } => {
                 InstallJobProvider::Local

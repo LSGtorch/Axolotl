@@ -1,23 +1,30 @@
 <template>
-	<FilterPills v-model="selectedFilters" :options="visibleOptions">
-		<template #all> {{ formatMessage(messages.all) }} </template>
-	</FilterPills>
+	<div class="flex flex-wrap items-center gap-1.5">
+		<button
+			v-for="option in filterOptions"
+			:key="option.id"
+			class="cursor-pointer rounded-full px-3 py-1.5 text-base font-semibold leading-5 transition-all duration-100 active:scale-[0.97]"
+			:class="
+				modelValue.has(option.id)
+					? 'bg-brand-highlight text-brand'
+					: 'bg-surface-4 text-primary hover:bg-surface-5'
+			"
+			:aria-pressed="modelValue.has(option.id)"
+			@click="handleToggle(option.id)"
+		>
+			{{ option.label }}
+		</button>
+	</div>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
 
-import FilterPills from '#ui/components/base/FilterPills.vue'
 import { defineMessages, useVIntl } from '#ui/composables/i18n'
 
-import type { ConditionalLevel } from '../composables/console-filtering'
 import type { LogLevel } from '../types'
 
-type FilterValue = LogLevel | 'all'
-
-const props = defineProps<{
-	presentLevels: Set<ConditionalLevel>
-}>()
+type FilterValue = LogLevel
 
 const modelValue = defineModel<Set<FilterValue>>({ required: true })
 
@@ -28,47 +35,22 @@ const emit = defineEmits<{
 const { formatMessage } = useVIntl()
 
 const messages = defineMessages({
-	all: { id: 'console.filter.all', defaultMessage: 'All' },
 	error: { id: 'console.filter.error', defaultMessage: 'Error' },
 	warn: { id: 'console.filter.warn', defaultMessage: 'Warn' },
 	info: { id: 'console.filter.info', defaultMessage: 'Info' },
-	debug: { id: 'console.filter.debug', defaultMessage: 'Debug' },
-	trace: { id: 'console.filter.trace', defaultMessage: 'Trace' },
 })
 
-const ALWAYS_VISIBLE = [
+const FILTER_OPTIONS = [
 	{ id: 'error' as const, message: messages.error },
 	{ id: 'warn' as const, message: messages.warn },
 	{ id: 'info' as const, message: messages.info },
 ]
 
-const CONDITIONAL_OPTIONS = [
-	{ id: 'debug' as const, message: messages.debug },
-	{ id: 'trace' as const, message: messages.trace },
-]
-
-const visibleOptions = computed(() =>
-	[
-		...ALWAYS_VISIBLE,
-		...CONDITIONAL_OPTIONS.filter((opt) => props.presentLevels.has(opt.id)),
-	].map((option) => ({ id: option.id, label: formatMessage(option.message) })),
+const filterOptions = computed(() =>
+	FILTER_OPTIONS.map((option) => ({ id: option.id, label: formatMessage(option.message) })),
 )
 
-const selectedFilters = computed({
-	get() {
-		if (modelValue.value.has('all')) return []
-		return [...modelValue.value] as string[]
-	},
-	set(ids: string[]) {
-		if (ids.length === 0) {
-			emit('toggle', 'all')
-		} else {
-			const current = selectedFilters.value
-			const added = ids.find((id) => !current.includes(id))
-			const removed = current.find((id) => !ids.includes(id))
-			if (added) emit('toggle', added as FilterValue)
-			if (removed) emit('toggle', removed as FilterValue)
-		}
-	},
-})
+function handleToggle(id: FilterValue) {
+	emit('toggle', id)
+}
 </script>

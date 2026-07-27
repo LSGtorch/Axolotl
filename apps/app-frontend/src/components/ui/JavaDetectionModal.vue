@@ -27,10 +27,24 @@
 					</div>
 				</template>
 				<template #empty-state>
-					<div class="p-4 text-secondary">{{ formatMessage(messages.noneFound) }}</div>
+					<div class="p-4 text-secondary">
+						<SpinnerIcon v-if="fullScanRunning" class="animate-spin h-4 w-4 inline mr-2" />
+						{{ fullScanRunning ? formatMessage(messages.scanning) : formatMessage(messages.noneFound) }}
+					</div>
 				</template>
 			</Table>
-			<div class="flex justify-end">
+			<div class="flex justify-between">
+				<ButtonStyled type="outlined">
+					<button
+						class="!shadow-none !border-surface-4 !border"
+						:disabled="fullScanRunning"
+						@click="runFullScan"
+					>
+						<SpinnerIcon v-if="fullScanRunning" class="animate-spin h-4 w-4" />
+						<SearchIcon v-else class="h-4 w-4" />
+						{{ fullScanRunning ? formatMessage(messages.scanning) : formatMessage(messages.deepScan) }}
+					</button>
+				</ButtonStyled>
 				<ButtonStyled type="outlined">
 					<button
 						class="!shadow-none !border-surface-4 !border"
@@ -45,7 +59,7 @@
 	</ModalWrapper>
 </template>
 <script setup>
-import { CheckIcon, PlusIcon, XIcon } from '@modrinth/assets'
+import { CheckIcon, PlusIcon, SearchIcon, SpinnerIcon, XIcon } from '@modrinth/assets'
 import {
 	ButtonStyled,
 	commonMessages,
@@ -73,6 +87,14 @@ const messages = defineMessages({
 		id: 'app.java.none-found',
 		defaultMessage: 'No Java installations found!',
 	},
+	deepScan: {
+		id: 'app.java.deep-scan',
+		defaultMessage: 'Deep Scan',
+	},
+	scanning: {
+		id: 'app.java.scanning',
+		defaultMessage: 'Scanning...',
+	},
 	version: { id: 'app.java.table.version', defaultMessage: 'Version' },
 	path: { id: 'app.java.table.path', defaultMessage: 'Path' },
 	actions: { id: 'app.java.table.actions', defaultMessage: 'Actions' },
@@ -81,6 +103,7 @@ const messages = defineMessages({
 const chosenInstallOptions = ref([])
 const detectJavaModal = ref(null)
 const currentSelected = ref({})
+const fullScanRunning = ref(false)
 const javaInstallColumns = [
 	{ key: 'version', label: formatMessage(messages.version), width: '9rem' },
 	{ key: 'path', label: formatMessage(messages.path) },
@@ -91,9 +114,10 @@ const lastRequestedVersion = ref(null)
 let unlistenJavaDiscovery = null
 
 defineExpose({
-	show: async (version, currentSelectedJava) => {
+	show: async (version, currentSelectedJava, fullScan = false) => {
 		lastRequestedVersion.value = version ?? null
-		chosenInstallOptions.value = await find_filtered_jres(version).catch(handleError)
+		fullScanRunning.value = false
+		chosenInstallOptions.value = await find_filtered_jres(version, false, false).catch(handleError)
 
 		currentSelected.value = currentSelectedJava
 		if (!currentSelected.value) {
@@ -105,11 +129,27 @@ defineExpose({
 		}
 
 		detectJavaModal.value.show()
+
+		if (fullScan) {
+			await runFullScan()
+		}
 	},
 })
 
+async function runFullScan() {
+	fullScanRunning.value = true
+	chosenInstallOptions.value = await find_filtered_jres(lastRequestedVersion.value, true, false).catch(handleError)
+	fullScanRunning.value = false
+
+	trackEvent('JavaFullScan', {
+		version: lastRequestedVersion.value,
+		count: chosenInstallOptions.value?.length ?? 0,
+	})
+}
+
 async function refreshInstallOptions() {
-	const updated = await find_filtered_jres(lastRequestedVersion.value).catch(() => null)
+	if (fullScanRunning.value) return
+	const updated = await find_filtered_jres(lastRequestedVersion.value, false, false).catch(() => null)
 	if (updated) {
 		chosenInstallOptions.value = updated
 	}

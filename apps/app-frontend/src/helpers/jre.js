@@ -22,10 +22,14 @@ export async function set_java_version(javaVersion) {
 	return await invoke('plugin:jre|set_java_version', { javaVersion })
 }
 
-// Finds all the installation of Java 7, if it exists
+export async function remove_java_version(path) {
+	return await invoke('plugin:jre|remove_java_version', { path })
+}
+
+// Finds all the installation of the given Java version, if it exists
 // Returns [JavaVersion]
-export async function find_filtered_jres(version) {
-	return await invoke('plugin:jre|jre_find_filtered_jres', { version })
+export async function find_filtered_jres(version, fullScan = false, forceFresh = false, exhaustive = false) {
+	return await invoke('plugin:jre|jre_find_filtered_jres', { version, fullScan, forceFresh, exhaustive })
 }
 
 // Gets java version from a specific path by trying to run 'java -version' on it.
@@ -45,6 +49,10 @@ export async function auto_install_java(javaVersion) {
 	return await invoke('plugin:jre|jre_auto_install_java', { javaVersion })
 }
 
+export async function list_java_distribution_versions(distribution) {
+	return await invoke('plugin:jre|list_java_distribution_versions', { distribution })
+}
+
 // Get max memory in KiB
 export async function get_max_memory() {
 	return await invoke('plugin:jre|jre_get_max_memory')
@@ -60,4 +68,20 @@ export async function get_memory_status(instanceId, requestedMemoryMb, automatic
 
 export async function optimize_memory() {
 	return await invoke('plugin:jre|jre_optimize_memory')
+}
+
+export async function list_java_feed_vendors() {
+	return await invoke('plugin:jre|list_java_feed_vendors')
+}
+
+export async function list_java_feed_versions(vendor) {
+	return await invoke('plugin:jre|list_java_feed_versions', { vendor })
+}
+
+export async function download_java_from_feed(vendor, jdkVersionMajor) {
+	return await invoke('plugin:jre|download_java_from_feed', { vendor, jdkVersionMajor })
+}
+
+export async function download_java(vendor, version) {
+	return await invoke('plugin:jre|download_java', { vendor, version })
 }

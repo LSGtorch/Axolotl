@@ -10,7 +10,12 @@
 				:tags="{ loaders: allLoaders, gameVersions: allGameVersions }"
 				class="project-sidebar-section"
 			/>
-			<ProjectSidebarLinks link-target="_blank" :project="data" class="project-sidebar-section" />
+			<ProjectSidebarLinks
+				link-target="_blank"
+				:project="data"
+				:mcmod-url="mcmodUrl"
+				class="project-sidebar-section"
+			/>
 			<ProjectSidebarTags :project="data" class="project-sidebar-section" />
 			<ProjectSidebarCreators
 				:members="members"
@@ -66,21 +71,42 @@
 							}}
 						</button>
 					</ButtonStyled>
-					<ButtonStyled v-if="data.site_url" size="large" circular type="transparent">
+					<ButtonStyled
+						v-if="data.site_url || mcmodUrl"
+						size="large"
+						circular
+						type="transparent"
+					>
 						<OverflowMenu
 							:tooltip="formatMessage(commonMessages.moreOptionsButton)"
 							:options="[
-								{
-									id: 'open-in-browser',
-									link: data.site_url,
-									external: true,
-								},
+								...(data.site_url
+									? [
+											{
+												id: 'open-in-browser',
+												link: data.site_url,
+												external: true,
+											},
+										]
+									: []),
+								...(mcmodUrl
+									? [
+											{
+												id: 'open-in-mcmod',
+												link: mcmodUrl,
+												external: true,
+											},
+										]
+									: []),
 							]"
 							:aria-label="formatMessage(commonMessages.moreOptionsButton)"
 						>
 							<MoreVerticalIcon aria-hidden="true" />
 							<template #open-in-browser>
 								<ExternalIcon /> {{ formatMessage(commonMessages.openInBrowserButton) }}
+							</template>
+							<template #open-in-mcmod>
+								<BookOpenIcon /> {{ formatMessage(messages.openInMcmod) }}
 							</template>
 						</OverflowMenu>
 					</ButtonStyled>
@@ -150,6 +176,7 @@
 
 <script setup lang="ts">
 import {
+	BookOpenIcon,
 	DownloadIcon,
 	ExternalIcon,
 	LanguagesIcon,
@@ -178,6 +205,7 @@ import { computed, ref, shallowRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import TranslatedProjectDescription from '@/components/ui/TranslatedProjectDescription.vue'
+import { resolveMcmodUrl } from '@/helpers/content-search'
 import {
 	type CurseForgeFile,
 	type CurseForgeProject,
@@ -213,6 +241,10 @@ const messages = defineMessages({
 	loading: {
 		id: 'app.project.curseforge.loading',
 		defaultMessage: 'Loading CurseForge project…',
+	},
+	openInMcmod: {
+		id: 'app.project.open-in-mcmod',
+		defaultMessage: 'Open in MC Mod',
 	},
 	description: {
 		id: 'project.description.title',
@@ -275,6 +307,7 @@ const messages = defineMessages({
 const loading = ref(true)
 const installing = ref(false)
 const project = shallowRef<CurseForgeProject | null>(null)
+const mcmodUrl = ref<string | null>(null)
 const description = ref('')
 const files = shallowRef<CurseForgeFile[]>([])
 const allLoaders = ref([])
@@ -495,6 +528,7 @@ async function loadProject(projectId: number) {
 	translations.value = {}
 	loading.value = true
 	project.value = null
+	mcmodUrl.value = null
 	description.value = ''
 	files.value = []
 	allLoaders.value = []
@@ -512,6 +546,9 @@ async function loadProject(projectId: number) {
 		project.value = projectData
 		breadcrumbs.setName('Project', projectData.name)
 		loading.value = false
+		void resolveMcmodUrl(projectData.slug, 'curseforge').then((url) => {
+			if (requestVersion === projectRequestVersion) mcmodUrl.value = url
+		})
 
 		const [projectDescription, projectFiles, loaders, gameVersions] = await supplementaryData
 		if (requestVersion !== projectRequestVersion) return

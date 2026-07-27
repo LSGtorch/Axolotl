@@ -187,6 +187,11 @@ impl State {
         }
 
         tokio::task::spawn(async move {
+            crate::util::fetch::cleanup_stale_partial_downloads(vec![
+                state.directories.metadata_dir(),
+                state.directories.caches_dir(),
+            ]);
+
             instances::watcher::watch_instances_init(
                 &state.file_watcher,
                 &state.directories,

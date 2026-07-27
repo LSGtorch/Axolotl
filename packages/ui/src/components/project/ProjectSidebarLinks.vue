@@ -4,6 +4,7 @@
 			project.issues_url ||
 			project.source_url ||
 			project.wiki_url ||
+			mcmodUrl ||
 			project.discord_url ||
 			project.site_url ||
 			projectV3?.link_urls.store?.url ||
@@ -45,6 +46,11 @@
 				{{ formatMessage(messages.wiki) }}
 				<ExternalIcon aria-hidden="true" class="external-icon" />
 			</a>
+			<a v-if="mcmodUrl" :href="mcmodUrl" :target="linkTarget" rel="noopener nofollow ugc">
+				<BookOpenIcon aria-hidden="true" />
+				{{ formatMessage(messages.mcmod) }}
+				<ExternalIcon aria-hidden="true" class="external-icon" />
+			</a>
 			<a
 				v-if="project.discord_url"
 				:href="project.discord_url"
@@ -80,6 +86,7 @@
 					(project.issues_url ||
 						project.source_url ||
 						project.wiki_url ||
+						mcmodUrl ||
 						project.discord_url ||
 						projectV3?.link_urls.site?.url ||
 						project.site_url ||
@@ -118,6 +125,7 @@
 <script setup lang="ts">
 import type { Labrinth } from '@modrinth/api-client'
 import {
+	BookOpenIcon,
 	BuyMeACoffeeIcon,
 	CodeIcon,
 	CurrencyIcon,
@@ -153,6 +161,7 @@ defineProps<{
 	}
 	projectV3?: Labrinth.Projects.v3.Project
 	linkTarget: string
+	mcmodUrl?: string | null
 }>()
 
 const messages = defineMessages({
@@ -171,6 +180,10 @@ const messages = defineMessages({
 	wiki: {
 		id: 'project.about.links.wiki',
 		defaultMessage: 'Visit wiki',
+	},
+	mcmod: {
+		id: 'project.about.links.mcmod',
+		defaultMessage: 'MC Mod',
 	},
 	discord: {
 		id: 'project.about.links.discord',

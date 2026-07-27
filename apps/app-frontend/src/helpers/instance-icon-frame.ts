@@ -19,11 +19,6 @@ const builtInInstanceIconHashes = new Set([
 	'10d2332465a667ab338a69ee59cc4c9c0531de8f',
 	'a975108ca40a06718b504a411ddd7c4944113ac3',
 	'4c680e8810b69ded4e94d372d150bd910f0cc592',
-	'c16e9e836c69eff2d12c198ed787e52ca7b50983',
-	'602c09c32802066c038e89f8866a0856fcf0b80d',
-	'dd5e032590ffd001e1624d18eaa45e79ca4307e7',
-	'd191a7a6cb6f3927deb4d77c76c7bcb82d39934c',
-	'1b566599d048720dce64ade90dec669eaf0d9779',
 ])
 
 export function isBuiltInInstanceIcon(iconPath: string | null | undefined): boolean {

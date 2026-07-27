@@ -3383,6 +3383,9 @@
 	"project.about.links.issues": {
 		"defaultMessage": "Report issues"
 	},
+	"project.about.links.mcmod": {
+		"defaultMessage": "MC Mod"
+	},
 	"project.about.links.site": {
 		"defaultMessage": "Visit website"
 	},

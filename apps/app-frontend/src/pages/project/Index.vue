@@ -24,6 +24,7 @@
 				link-target="_blank"
 				:project="data"
 				:project-v3="projectV3"
+				:mcmod-url="mcmodUrl"
 				class="project-sidebar-section"
 			/>
 			<ProjectSidebarTags :project="data" class="project-sidebar-section" />
@@ -122,6 +123,15 @@
 										link: `https://modrinth.com/project/${data.slug}`,
 										external: true,
 									},
+									...(mcmodUrl
+										? [
+												{
+													id: 'open-in-mcmod',
+													link: mcmodUrl,
+													external: true,
+												},
+											]
+										: []),
 									{
 										divider: true,
 									},
@@ -137,6 +147,9 @@
 								<MoreVerticalIcon aria-hidden="true" />
 								<template #open-in-browser>
 									<ExternalIcon /> {{ formatMessage(commonMessages.openInBrowserButton) }}
+								</template>
+								<template #open-in-mcmod>
+									<BookOpenIcon /> {{ formatMessage(messages.openInMcmod) }}
 								</template>
 								<template #report>
 									<ReportIcon /> {{ formatMessage(commonMessages.reportButton) }}
@@ -208,6 +221,15 @@
 										link: `https://modrinth.com/${data.project_type}/${data.slug}`,
 										external: true,
 									},
+									...(mcmodUrl
+										? [
+												{
+													id: 'open-in-mcmod',
+													link: mcmodUrl,
+													external: true,
+												},
+											]
+										: []),
 									{
 										divider: true,
 									},
@@ -223,6 +245,9 @@
 								<MoreVerticalIcon aria-hidden="true" />
 								<template #open-in-browser>
 									<ExternalIcon /> {{ formatMessage(commonMessages.openInBrowserButton) }}
+								</template>
+								<template #open-in-mcmod>
+									<BookOpenIcon /> {{ formatMessage(messages.openInMcmod) }}
 								</template>
 								<template #follow>
 									<HeartIcon /> {{ formatMessage(commonMessages.followButton) }}
@@ -309,6 +334,7 @@
 <script setup>
 import {
 	BookmarkIcon,
+	BookOpenIcon,
 	CheckIcon,
 	ClipboardCopyIcon,
 	DownloadIcon,
@@ -369,6 +395,7 @@ import {
 	get_version,
 	get_version_many,
 } from '@/helpers/cache.js'
+import { resolveMcmodUrl } from '@/helpers/content-search'
 import { process_listener } from '@/helpers/events'
 import {
 	get as getInstance,
@@ -423,6 +450,10 @@ const messages = defineMessages({
 		id: 'app.project.install-button.switch-version',
 		defaultMessage: 'Switch version',
 	},
+	openInMcmod: {
+		id: 'app.project.open-in-mcmod',
+		defaultMessage: 'Open in MC Mod',
+	},
 	translateProject: {
 		id: 'app.project.translation.translate',
 		defaultMessage: 'Translate',
@@ -465,6 +496,7 @@ const { installingServerProjects, playServerProject, showAddServerToInstanceModa
 	injectServerInstall()
 const installing = ref(false)
 const data = shallowRef(null)
+const mcmodUrl = ref(null)
 const versions = shallowRef([])
 const members = shallowRef([])
 const categories = shallowRef([])
@@ -700,6 +732,10 @@ async function fetchProjectData() {
 	}
 
 	data.value = project
+	mcmodUrl.value = null
+	void resolveMcmodUrl(project.slug, 'modrinth').then((url) => {
+		if (String(route.params.id) === requestedProjectId) mcmodUrl.value = url
+	})
 	const relatedData = await Promise.all([
 		get_version_many(project.versions, 'must_revalidate').catch(handleError),
 		get_team(project.team).catch(handleError),

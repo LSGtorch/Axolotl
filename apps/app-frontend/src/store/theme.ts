@@ -13,7 +13,6 @@ export const DEFAULT_FEATURE_FLAGS = {
 	always_show_app_controls: false,
 	skip_non_essential_warnings: false,
 	skip_unknown_pack_warning: false,
-	pride_fundraiser: true,
 	i18n_debug: false,
 	show_instance_play_time: true,
 	advanced_filters_collapsed: true,

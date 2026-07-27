@@ -359,7 +359,8 @@
 			</label>
 			<label class="flex flex-col gap-1.5 text-sm font-semibold">
 				{{ formatMessage(messages.apiKey) }}
-				<StyledInput v-model="openaiSecret"
+				<StyledInput
+v-model="openaiSecret"
 							 :icon="KeyIcon"
 							 type="password"
 							 autocomplete="off"
@@ -384,7 +385,8 @@
 			<!-- 系统提示词：独立成行、固定高度、自动适配主题 -->
 			<label class="flex flex-col gap-1.5 text-sm font-semibold">
 				{{ formatMessage(messages.systemPrompt) }}
-				<textarea v-model="settings.openai_system_prompt"
+				<textarea
+v-model="settings.openai_system_prompt"
 						  class="w-full h-24 resize-none rounded-[--radius-md] border border-[--color-surface-5] bg-[--color-bg] p-2 text-sm text-[--color-contrast] placeholder:text-[--color-secondary] focus:border-[--color-brand] focus:outline-none"
 						  rows="3" />
 			</label>

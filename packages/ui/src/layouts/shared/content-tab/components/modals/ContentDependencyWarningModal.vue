@@ -7,13 +7,7 @@
 		:on-hide="() => backupCreator?.cancelBackup()"
 	>
 		<div class="flex flex-col gap-6">
-			<Admonition
-				v-if="symlinkTarget"
-				type="warning"
-				:header="formatMessage(messages.symlinkWarningHeader)"
-			>
-				{{ formatMessage(messages.symlinkWarningBody, { path: symlinkTarget }) }}
-			</Admonition>
+			<SymlinkWarningAdmonition :symlink-target="symlinkTarget" />
 			<Admonition type="critical" :header="formatMessage(messages.admonitionHeader)">
 				{{
 					visibleItems.length === 1
@@ -211,6 +205,7 @@ import { commonMessages, formatContentTypeSentence } from '#ui/utils/common-mess
 import type { ContentCardTableItem } from '../../types'
 import ContentCardItem from '../ContentCardItem.vue'
 import InlineBackupCreator from './InlineBackupCreator.vue'
+import SymlinkWarningAdmonition from './SymlinkWarningAdmonition.vue'
 
 export interface ContentDependencyWarningDependent {
 	item: ContentCardTableItem
@@ -303,15 +298,6 @@ const messages = defineMessages({
 	serverContext: {
 		id: 'content.dependency-warning.context.server',
 		defaultMessage: 'server',
-	},
-	symlinkWarningHeader: {
-		id: 'app.symlink-warning.write.header',
-		defaultMessage: 'Shared instance',
-	},
-	symlinkWarningBody: {
-		id: 'app.symlink-warning.write.body',
-		defaultMessage:
-			'This instance is linked to "{path}". Changes will also affect the original files.',
 	},
 })
 

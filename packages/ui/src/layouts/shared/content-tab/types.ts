@@ -42,6 +42,15 @@ export interface ContentCardTableItem {
 	hideSwitchVersion?: boolean
 	pendingManualDownload?: boolean
 	overflowOptions?: OverflowMenuOption[]
+	isGroupHeader?: boolean
+	group?: string
+	groupItemCount?: number
+	groupSwitchVersion?: () => void
+	groupChildIds?: string[]
+	isGroupChild?: boolean
+	downloads?: number | null
+	followers?: number | null
+	categories?: ContentModpackCardCategory[]
 }
 
 export type ContentCardTableSortColumn = 'project' | 'version'

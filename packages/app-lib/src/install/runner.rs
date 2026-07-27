@@ -1,9 +1,10 @@
 use super::events::{InstallProgressReporter, emit_install_job};
 use super::model::{
-    InstallCleanup, InstallErrorContext, InstallErrorView, InstallJobDisplay,
-    InstallJobEventKind, InstallJobSnapshot, InstallJobState, InstallJobStatus,
-    InstallPhaseDetails, InstallPhaseId, InstallPostInstallEdit,
-    InstallProgress, InstallRequest, InstallRollbackState, InstallTarget,
+    InstallCleanup, InstallErrorContext, InstallErrorView, InstallJavaStep,
+    InstallJobDisplay, InstallJobEventKind, InstallJobSnapshot,
+    InstallJobState, InstallJobStatus, InstallPhaseDetails, InstallPhaseId,
+    InstallPostInstallEdit, InstallProgress, InstallRequest,
+    InstallRollbackState, InstallTarget,
 };
 use super::{cleanroom, diagnostics, recovery, store};
 use crate::ErrorKind;
@@ -100,6 +101,13 @@ pub async fn install_existing_instance(
     force: bool,
 ) -> crate::Result<InstallJobSnapshot> {
     start(InstallRequest::InstallExistingInstance { instance_id, force }).await
+}
+
+pub async fn download_java(
+    vendor: String,
+    version: u32,
+) -> crate::Result<InstallJobSnapshot> {
+    start(InstallRequest::DownloadJava { vendor, version }).await
 }
 
 pub async fn install_pack_to_existing_instance(
@@ -450,6 +458,9 @@ async fn prepare_initial_instance(
             instance_id, ..
         } => {
             prepare_existing_rollback(job_state, state, &instance_id).await?;
+        }
+        InstallRequest::DownloadJava { vendor, version } => {
+            set_display(job_state, format!("Java {version} ({vendor})"), None);
         }
     }
 
@@ -876,6 +887,27 @@ async fn run_request(
             .await?;
             apply_post_install_edit(&instance_id, post_install_edit).await?;
             Ok(Some(instance_id))
+        }
+        InstallRequest::DownloadJava { vendor, version } => {
+            update_progress(
+                job_id,
+                job_state,
+                state,
+                InstallPhaseId::PreparingJava,
+                InstallPhaseDetails::Java {
+                    major_version: version,
+                    step: InstallJavaStep::FetchingMetadata,
+                },
+            )
+            .await?;
+            let reporter =
+                InstallProgressReporter::new(job_id, job_state.clone());
+            let path = crate::api::jre::download_java_from_feed_with_reporter(
+                &vendor, version, reporter,
+            )
+            .await?;
+            let _ = path;
+            Ok(None)
         }
     }
 }

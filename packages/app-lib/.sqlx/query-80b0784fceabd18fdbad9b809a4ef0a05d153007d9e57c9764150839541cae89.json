@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "\n            SELECT\n                major_version, full_version, architecture, path\n            FROM java_versions\n            ",
+  "query": "SELECT major_version, full_version, architecture, path, distribution as \"distribution?: String\" FROM java_versions",
   "describe": {
     "columns": [
       {
@@ -22,6 +22,11 @@
         "name": "path",
         "ordinal": 3,
         "type_info": "Text"
+      },
+      {
+        "name": "distribution?: String",
+        "ordinal": 4,
+        "type_info": "Text"
       }
     ],
     "parameters": {
@@ -31,8 +36,9 @@
       false,
       false,
       false,
-      false
+      false,
+      true
     ]
   },
-  "hash": "265f9c9ad992da0aeaf69c3f0077b54a186b98796ec549c9d891089ea33cf3fc"
+  "hash": "80b0784fceabd18fdbad9b809a4ef0a05d153007d9e57c9764150839541cae89"
 }

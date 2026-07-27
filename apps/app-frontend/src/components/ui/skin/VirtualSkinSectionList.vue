@@ -84,6 +84,7 @@ const props = defineProps<{
 	isSkinActive: (skin: Skin) => boolean
 	isAddSkinButtonDragActive: boolean
 	readOnly?: boolean
+	activeTab?: 'saved' | 'default'
 }>()
 
 const emit = defineEmits<{
@@ -140,21 +141,44 @@ const cardHeight = computed(
 	() => (cardWidth.value * SKIN_CARD_ASPECT_HEIGHT) / SKIN_CARD_ASPECT_WIDTH,
 )
 
-const sections = computed<SkinSection[]>(() => [
-	{
-		key: 'saved-skins',
-		title: formatMessage(messages.savedSkinsSection),
-		kind: 'saved',
-		skins: props.savedSkins,
-	},
-	...props.defaultSkinSections.map((section) => ({
-		key: defaultSkinSectionKey(section.title),
-		title: section.title,
-		kind: 'default' as const,
-		infoTooltip: section.infoTooltip,
-		skins: section.skins,
-	})),
-])
+const sections = computed<SkinSection[]>(() => {
+	if (props.activeTab === 'saved') {
+		return [
+			{
+				key: 'saved-skins',
+				title: formatMessage(messages.savedSkinsSection),
+				kind: 'saved',
+				skins: props.savedSkins,
+			},
+		]
+	}
+
+	if (props.activeTab === 'default') {
+		return props.defaultSkinSections.map((section) => ({
+			key: defaultSkinSectionKey(section.title),
+			title: section.title,
+			kind: 'default' as const,
+			infoTooltip: section.infoTooltip,
+			skins: section.skins,
+		}))
+	}
+
+	return [
+		{
+			key: 'saved-skins',
+			title: formatMessage(messages.savedSkinsSection),
+			kind: 'saved',
+			skins: props.savedSkins,
+		},
+		...props.defaultSkinSections.map((section) => ({
+			key: defaultSkinSectionKey(section.title),
+			title: section.title,
+			kind: 'default' as const,
+			infoTooltip: section.infoTooltip,
+			skins: section.skins,
+		})),
+	]
+})
 
 const draggableSavedSkins = ref<Skin[]>([])
 const isDraggingSavedSkin = ref(false)

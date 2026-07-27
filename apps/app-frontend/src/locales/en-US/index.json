@@ -1280,6 +1280,12 @@
 	"app.java.detect": {
 		"message": "Detect"
 	},
+	"app.java.deep-scan": {
+		"message": "Deep Scan"
+	},
+	"app.java.scanning": {
+		"message": "Scanning..."
+	},
 	"app.java.install-recommended": {
 		"message": "Install recommended"
 	},
@@ -1817,6 +1823,9 @@
 	"app.project.install-context.install-content-to-instance": {
 		"message": "Install content to instance"
 	},
+	"app.project.open-in-mcmod": {
+		"message": "Open in MC Mod"
+	},
 	"app.project.translation.failed": {
 		"message": "Translation failed. The original content was kept. Try again."
 	},
@@ -2021,8 +2030,119 @@
 	"app.settings.java.auto-high-performance-mode-description": {
 		"message": "Sets the launcher and Java to use the high-performance GPU in Windows graphics settings when Minecraft launches. Windows only."
 	},
+	"app.settings.java.cancel": {
+		"message": "Cancel"
+	},
 	"app.settings.java.location": {
 		"message": "Java {version} location"
+	},
+	"app.settings.java.quick-add": {
+		"message": "Quick add"
+	},
+	"app.settings.java.custom-version": {
+		"message": "Custom version"
+	},
+	"app.settings.java.add": {
+		"message": "Add Java version"
+	},
+	"app.settings.java.version-placeholder": {
+		"message": "Version number..."
+	},
+	"app.settings.java.find-java": {
+		"message": "Find Java"
+	},
+	"app.settings.java.deep-scan": {
+		"message": "Deep Scan"
+	},
+	"app.settings.java.deep-scan-confirm": {
+		"message": "This will scan ALL directories on ALL drives. May take several minutes."
+	},
+	"app.settings.java.manual-add": {
+		"message": "Manual Add"
+	},
+	"app.settings.java.download-java": {
+		"message": "Download Java"
+	},
+	"app.settings.java.scan-anyway": {
+		"message": "Scan Anyway"
+	},
+	"app.settings.java.scanning": {
+		"message": "Scanning..."
+	},
+	"app.settings.java.no-versions": {
+		"message": "No Java versions configured. Use the buttons below to find or add Java installations."
+	},
+	"app.settings.java.table.version": {
+		"message": "Java Version"
+	},
+	"app.settings.java.table.distribution": {
+		"message": "Distribution"
+	},
+	"app.settings.java.table.path": {
+		"message": "Path"
+	},
+	"app.settings.java.table.actions": {
+		"message": ""
+	},
+	"app.settings.java.download.title": {
+		"message": "Download Java"
+	},
+	"app.settings.java.download.select-version": {
+		"message": "Select a Java version:"
+	},
+	"app.settings.java.download.select-vendor": {
+		"message": "Choose a distribution:"
+	},
+	"app.settings.java.download.no-vendors": {
+		"message": "No distributions available."
+	},
+	"app.settings.java.download.select-version-feed": {
+		"message": "Select a version of {vendor}:"
+	},
+	"app.settings.java.download.downloading": {
+		"message": "Downloading Java {version}..."
+	},
+	"app.settings.java.download.select-distribution": {
+		"message": "Choose a distribution:"
+	},
+	"app.settings.java.download.back": {
+		"message": "Back to distributions"
+	},
+	"app.settings.java.download.loading": {
+		"message": "Loading versions..."
+	},
+	"app.settings.java.download.no-versions": {
+		"message": "No versions available for this distribution."
+	},
+	"app.settings.java.download.progress-title": {
+		"message": "Downloading Java"
+	},
+	"app.settings.java.download.progress-info": {
+		"message": "Downloading Java {version} from {distribution}"
+	},
+	"app.settings.java.download.preparing": {
+		"message": "Preparing download..."
+	},
+	"app.settings.java.download.extracting": {
+		"message": "Extracting files..."
+	},
+	"app.settings.java.download.extracting.status": {
+		"message": "Extracting files..."
+	},
+	"app.settings.java.download.background": {
+		"message": "Background"
+	},
+	"app.settings.java.download.background-hint": {
+		"message": "Download continues — check the Downloads page for progress."
+	},
+	"app.settings.java.download.version-label": {
+		"message": "Java {version}"
+	},
+	"app.settings.java.download.cancelling": {
+		"message": "Cancelling..."
+	},
+	"app.settings.java.download.downloading-label": {
+		"message": "Downloading..."
 	},
 	"app.settings.resources.app-cache": {
 		"message": "App cache"
@@ -2034,7 +2154,10 @@
 		"message": "App directory"
 	},
 	"app.settings.resources.app-directory-description": {
-		"message": "The directory where the launcher stores all of its files. Changes apply after restarting the launcher."
+		"message": "The directory where the launcher stores all of its game files. Changes apply after restarting the launcher."
+	},
+	"app.settings.resources.app-directory-description-portable": {
+		"message": "Running in portable mode. All data is fixed under the program directory and cannot be modified."
 	},
 	"app.settings.resources.concurrency.manual": {
 		"message": "Manual"
@@ -2347,6 +2470,12 @@
 	},
 	"app.skins.third-party-account.title": {
 		"message": "Third-party skin management"
+	},
+	"app.skins.tabs.saved": {
+		"message": "Saved skins"
+	},
+	"app.skins.tabs.default": {
+		"message": "Official skins"
 	},
 	"app.skins.title": {
 		"message": "Skin selector"
@@ -2932,6 +3061,33 @@
 	},
 	"instance.settings.tabs.java.version": {
 		"message": "Java {version}"
+	},
+	"instance.settings.tabs.java.current-path": {
+		"message": "Active path"
+	},
+	"instance.settings.tabs.java.custom-path-option": {
+		"message": "Custom path..."
+	},
+	"instance.settings.tabs.java.optimal-label": {
+		"message": "(recommended for this instance)"
+	},
+	"instance.settings.tabs.java.select-java": {
+		"message": "Select Java version"
+	},
+	"instance.settings.tabs.java.table.version": {
+		"message": "Version"
+	},
+	"instance.settings.tabs.java.table.distribution": {
+		"message": "Distribution"
+	},
+	"instance.settings.tabs.java.table.path": {
+		"message": "Path"
+	},
+	"instance.settings.tabs.java.auto-label": {
+		"message": "Auto (recommended)"
+	},
+	"instance.settings.tabs.java.custom-label": {
+		"message": "Custom path..."
 	},
 	"instance.settings.tabs.window": {
 		"message": "Window"

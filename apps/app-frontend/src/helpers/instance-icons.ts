@@ -1,24 +1,9 @@
-import { defineMessage, type MessageDescriptor, type PickedFile } from '@modrinth/ui'
-
-import { cache_icon } from '@/helpers/instance'
+import { defineMessage, type MessageDescriptor } from '@modrinth/ui'
 
 export interface BuiltInInstanceIcon {
 	id: string
 	name: MessageDescriptor
 	url: string
-}
-
-/** Fetch a bundled instance icon and write it to the launcher's icon cache. */
-export async function cacheBuiltInInstanceIcon(icon: BuiltInInstanceIcon): Promise<PickedFile> {
-	const response = await fetch(icon.url)
-	if (!response.ok) throw new Error(`Failed to load the bundled icon '${icon.id}'`)
-	const blob = await response.blob()
-	const file = new File([blob], `${icon.id}.png`, { type: blob.type || 'image/png' })
-	const path = await cache_icon(
-		icon.id + '.png',
-		Array.from(new Uint8Array(await blob.arrayBuffer())),
-	)
-	return { file, path, previewUrl: icon.url, frameless: true }
 }
 
 export const builtInInstanceIcons: BuiltInInstanceIcon[] = [

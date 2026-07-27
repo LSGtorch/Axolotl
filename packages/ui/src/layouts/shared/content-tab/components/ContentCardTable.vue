@@ -8,6 +8,7 @@ import { useStickyObserver } from '#ui/composables/sticky-observer'
 import { useVirtualScroll } from '#ui/composables/virtual-scroll'
 import { commonMessages } from '#ui/utils/common-messages'
 
+import { useGroupSelection } from '../composables/group-selection'
 import type {
 	ContentCardTableItem,
 	ContentCardTableSortColumn,
@@ -27,6 +28,7 @@ interface Props {
 	hideDelete?: boolean
 	hideHeader?: boolean
 	flat?: boolean
+	expandedGroups?: Set<string>
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -38,6 +40,7 @@ const props = withDefaults(defineProps<Props>(), {
 	hideDelete: false,
 	hideHeader: false,
 	flat: false,
+	expandedGroups: () => new Set(),
 })
 
 const stickyHeaderRef = ref<HTMLElement | null>(null)
@@ -51,6 +54,7 @@ const emit = defineEmits<{
 	update: [id: string]
 	switchVersion: [id: string]
 	sort: [column: ContentCardTableSortColumn, direction: ContentCardTableSortDirection]
+	toggleExpand: [groupId: string]
 }>()
 
 // Check if any actions are available
@@ -101,53 +105,19 @@ defineExpose({
 })
 
 // Selection logic
-const allSelected = computed(() => {
-	if (props.items.length === 0) return false
-	return props.items.every((item) => selectedIds.value.includes(item.id))
+const {
+	allSelected,
+	someSelected,
+	getGroupCheckboxState,
+	isItemSelected,
+	toggleSelectAll,
+	toggleItemSelection,
+} = useGroupSelection({
+	items: toRef(props, 'items'),
+	selectedIds,
 })
-
-const someSelected = computed(() => {
-	return props.items.some((item) => selectedIds.value.includes(item.id)) && !allSelected.value
-})
-
-function toggleSelectAll() {
-	if (allSelected.value || someSelected.value) {
-		selectedIds.value = []
-	} else {
-		selectedIds.value = props.items.map((item) => item.id)
-	}
-}
 
 const lastSelectedIndex = ref<number | null>(null)
-
-function toggleItemSelection(
-	itemId: string,
-	selected: boolean,
-	index?: number,
-	event?: MouseEvent,
-) {
-	if (selected && event?.shiftKey && lastSelectedIndex.value !== null && index !== undefined) {
-		const start = Math.min(lastSelectedIndex.value, index)
-		const end = Math.max(lastSelectedIndex.value, index)
-		const rangeIds = props.items.slice(start, end + 1).map((item) => item.id)
-		const merged = new Set([...selectedIds.value, ...rangeIds])
-		selectedIds.value = [...merged]
-	} else if (selected) {
-		if (!selectedIds.value.includes(itemId)) {
-			selectedIds.value = [...selectedIds.value, itemId]
-		}
-	} else {
-		selectedIds.value = selectedIds.value.filter((id) => id !== itemId)
-	}
-
-	if (index !== undefined) {
-		lastSelectedIndex.value = index
-	}
-}
-
-function isItemSelected(itemId: string): boolean {
-	return selectedIds.value.includes(itemId)
-}
 
 function handleSort(column: ContentCardTableSortColumn) {
 	if (!props.sortable) return
@@ -193,8 +163,11 @@ function handleSort(column: ContentCardTableSortColumn) {
 					@update:model-value="toggleSelectAll"
 				/>
 
+				<template v-if="$slots['header-project']">
+					<slot name="header-project" />
+				</template>
 				<button
-					v-if="sortable"
+					v-else-if="sortable"
 					role="columnheader"
 					:aria-sort="
 						sortBy === 'project' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'
@@ -236,10 +209,12 @@ function handleSort(column: ContentCardTableSortColumn) {
 				}}</span>
 			</div>
 
-			<div v-if="hasAnyActions" role="columnheader" class="min-w-[160px] shrink-0 text-right">
-				<span class="font-semibold text-secondary">{{
-					formatMessage(commonMessages.actionsLabel)
-				}}</span>
+			<div
+				v-if="hasAnyActions || $slots['header-actions']"
+				role="columnheader"
+				class="min-w-[160px] shrink-0"
+			>
+				<slot name="header-actions" />
 			</div>
 		</div>
 
@@ -276,7 +251,22 @@ function handleSort(column: ContentCardTableSortColumn) {
 					:show-checkbox="showSelection"
 					:hide-delete="hideDelete"
 					:hide-actions="!hasAnyActions"
-					:selected="isItemSelected(item.id)"
+					:is-group-header="item.isGroupHeader"
+					:group-item-count="item.groupItemCount"
+					:is-group-child="!!item.group && !item.isGroupHeader"
+					:downloads="item.downloads"
+					:followers="item.followers"
+					:categories="item.categories"
+					:group-checkbox-indeterminate="
+						item.isGroupHeader ? getGroupCheckboxState(item).indeterminate : false
+					"
+					:group-expanded="
+						item.isGroupHeader && item.group ? props.expandedGroups.has(item.group) : false
+					"
+					:group-switch-version="item.groupSwitchVersion"
+					:selected="
+						item.isGroupHeader ? getGroupCheckboxState(item).checked : isItemSelected(item.id)
+					"
 					:class="[
 						isItemSelected(item.id)
 							? 'bg-surface-2.5'
@@ -288,14 +278,20 @@ function handleSort(column: ContentCardTableSortColumn) {
 					]"
 					@select="
 						(val, event) =>
-							toggleItemSelection(item.id, val ?? false, visibleRange.start + idx, event)
+							toggleItemSelection(
+								item.id,
+								val ?? false,
+								lastSelectedIndex,
+								visibleRange.start + idx,
+								event,
+								item,
+							)
 					"
 					@update:enabled="(val) => emit('update:enabled', item.id, val)"
 					@delete="(e: MouseEvent) => emit('delete', item.id, e)"
 					@update="emit('update', item.id)"
-					v-on="
-						hasSwitchVersionListener ? { switchVersion: () => emit('switchVersion', item.id) } : {}
-					"
+					@switch-version="emit('switchVersion', item.id)"
+					@toggle-expand="item.group ? emit('toggleExpand', item.group) : undefined"
 				>
 					<template #additionalButtonsLeft>
 						<slot name="itemButtonsLeft" :item="item" :index="visibleRange.start + idx" />
@@ -336,7 +332,22 @@ function handleSort(column: ContentCardTableSortColumn) {
 				:show-checkbox="showSelection"
 				:hide-delete="hideDelete"
 				:hide-actions="!hasAnyActions"
-				:selected="isItemSelected(item.id)"
+				:is-group-header="item.isGroupHeader"
+				:group-item-count="item.groupItemCount"
+				:is-group-child="!!item.group && !item.isGroupHeader"
+				:downloads="item.downloads"
+				:followers="item.followers"
+				:categories="item.categories"
+				:group-checkbox-indeterminate="
+					item.isGroupHeader ? getGroupCheckboxState(item).indeterminate : false
+				"
+				:group-expanded="
+					item.isGroupHeader && item.group ? props.expandedGroups.has(item.group) : false
+				"
+				:group-switch-version="item.groupSwitchVersion"
+				:selected="
+					item.isGroupHeader ? getGroupCheckboxState(item).checked : isItemSelected(item.id)
+				"
 				:class="[
 					isItemSelected(item.id)
 						? 'bg-surface-2.5'
@@ -346,11 +357,15 @@ function handleSort(column: ContentCardTableSortColumn) {
 					'border-0 border-t border-solid border-surface-4',
 					index === items.length - 1 && !flat ? 'rounded-b-[20px]' : '',
 				]"
-				@select="(val, event) => toggleItemSelection(item.id, val ?? false, index, event)"
+				@select="
+					(val, event) =>
+						toggleItemSelection(item.id, val ?? false, lastSelectedIndex, index, event, item)
+				"
 				@update:enabled="(val) => emit('update:enabled', item.id, val)"
 				@delete="(e: MouseEvent) => emit('delete', item.id, e)"
 				@update="emit('update', item.id)"
 				@switch-version="emit('switchVersion', item.id)"
+				@toggle-expand="item.group ? emit('toggleExpand', item.group) : undefined"
 			>
 				<template #additionalButtonsLeft>
 					<slot name="itemButtonsLeft" :item="item" :index="index" />

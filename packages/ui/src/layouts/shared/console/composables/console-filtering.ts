@@ -160,29 +160,20 @@ export function highlightAppendedRange(terminal: Terminal, fromRow: number, vers
 export type ConditionalLevel = 'debug' | 'trace'
 
 export function useConsoleFilters() {
-	const activeFilters = ref<Set<LogLevel | 'all'>>(new Set(['all']))
+	const activeFilters = ref<Set<LogLevel>>(new Set(['error', 'warn', 'info']))
 
-	function toggleFilter(level: LogLevel | 'all') {
+	function toggleFilter(level: LogLevel) {
 		const next = new Set(activeFilters.value)
-		if (level === 'all') {
-			next.clear()
-			next.add('all')
+		if (next.has(level)) {
+			next.delete(level)
 		} else {
-			next.delete('all')
-			if (next.has(level)) {
-				next.delete(level)
-			} else {
-				next.add(level)
-			}
-			if (next.size === 0) {
-				next.add('all')
-			}
+			next.add(level)
 		}
 		activeFilters.value = next
 	}
 
 	function buildFilterPredicate(): FilterPredicate | null {
-		if (activeFilters.value.has('all')) return null
+		if (activeFilters.value.size === 0) return () => false
 		const allowed = activeFilters.value
 		return (line: LogLine) => {
 			return allowed.has(line.level ?? 'info')

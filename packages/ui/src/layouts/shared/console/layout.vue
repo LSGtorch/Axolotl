@@ -47,11 +47,7 @@
 		</div>
 
 		<div class="flex items-center justify-between">
-			<ConsoleFilterPills
-				v-model="activeFilters"
-				:present-levels="presentLevels"
-				@toggle="handleFilterToggle"
-			/>
+			<ConsoleFilterPills v-model="activeFilters" @toggle="handleFilterToggle" />
 			<ConsoleActionButtons
 				:show-clear="isLiveSource"
 				:has-logs="hasLogs"
@@ -97,10 +93,7 @@
 		max-width="500px"
 	>
 		<div class="flex flex-col gap-6">
-			<Admonition
-				type="critical"
-				:header="formatMessage(consoleMessages.deleteIrreversible)"
-			>
+			<Admonition type="critical" :header="formatMessage(consoleMessages.deleteIrreversible)">
 				{{ formatMessage(consoleMessages.deleteConfirmation) }}
 			</Admonition>
 		</div>
@@ -154,7 +147,6 @@ import {
 	rewriteTerminal,
 	useConsoleFilters,
 } from './composables'
-import type { ConditionalLevel } from './composables/console-filtering'
 import { consoleMessages, localFindingMessages } from './messages'
 import { injectConsoleManager } from './providers'
 import type { LogLevel, LogLine } from './types'
@@ -413,15 +405,6 @@ const isApp =
 const isSharing = ref(false)
 const { activeFilters, toggleFilter, buildFilterPredicate } = useConsoleFilters()
 const hasLogs = computed(() => ctx.logLines.value.length > 0)
-const presentLevels = computed(() => {
-	const levels = new Set<ConditionalLevel>()
-	for (const line of ctx.logLines.value) {
-		if (line.level === 'debug') levels.add('debug')
-		if (line.level === 'trace') levels.add('trace')
-		if (levels.size === 2) break
-	}
-	return levels
-})
 const isLiveSource = computed(() => {
 	const sources = ctx.logSources?.value
 	const index = ctx.activeLogSourceIndex?.value
@@ -539,7 +522,7 @@ function handleTerminalReady(_terminal: Terminal) {
 	rewriteFiltered()
 }
 
-function handleFilterToggle(value: LogLevel | 'all') {
+function handleFilterToggle(value: LogLevel) {
 	toggleFilter(value)
 	rewriteFiltered()
 }

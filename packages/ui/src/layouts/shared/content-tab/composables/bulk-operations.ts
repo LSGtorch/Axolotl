@@ -8,6 +8,15 @@ export function useBulkOperation() {
 	const bulkProgress = ref(0)
 	const bulkTotal = ref(0)
 	const bulkOperation = ref<BulkOperationType | null>(null)
+	const bulkWaiting = ref(false)
+
+	function resetState() {
+		isBulkOperating.value = false
+		bulkOperation.value = null
+		bulkProgress.value = 0
+		bulkTotal.value = 0
+		bulkWaiting.value = false
+	}
 
 	async function runBulk<T>(
 		operation: BulkOperationType,
@@ -31,10 +40,26 @@ export function useBulkOperation() {
 			}
 		} finally {
 			options?.onComplete?.()
-			isBulkOperating.value = false
-			bulkOperation.value = null
-			bulkProgress.value = 0
-			bulkTotal.value = 0
+			resetState()
+		}
+	}
+
+	async function runBulkWithWaiting(
+		operation: BulkOperationType,
+		total: number,
+		fn: () => Promise<void>,
+		onComplete?: () => void,
+	) {
+		isBulkOperating.value = true
+		bulkOperation.value = operation
+		bulkTotal.value = total
+		bulkProgress.value = 0
+		bulkWaiting.value = true
+		try {
+			await fn()
+		} finally {
+			onComplete?.()
+			resetState()
 		}
 	}
 
@@ -66,5 +91,13 @@ export function useBulkOperation() {
 		})
 	}
 
-	return { isBulkOperating, bulkProgress, bulkTotal, bulkOperation, runBulk }
+	return {
+		isBulkOperating,
+		bulkProgress,
+		bulkTotal,
+		bulkOperation,
+		bulkWaiting,
+		runBulk,
+		runBulkWithWaiting,
+	}
 }

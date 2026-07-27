@@ -23,6 +23,11 @@ export interface ChineseNameLookup {
 	curseforge: Record<string, string>
 }
 
+export interface WikiIdLookup {
+	modrinth: Record<string, number>
+	curseforge: Record<string, number>
+}
+
 export function containsChineseSearchText(query: string): boolean {
 	return /[\u3400-\u4dbf\u4e00-\u9fff]/u.test(query)
 }
@@ -38,6 +43,30 @@ export function lookupChineseContentNames(modrinthSlugs: string[], curseforgeSlu
 		modrinthSlugs,
 		curseforgeSlugs,
 	})
+}
+
+export function lookupContentWikiIds(modrinthSlugs: string[], curseforgeSlugs: string[]) {
+	return invoke<WikiIdLookup>('plugin:content-search|lookup_content_wiki_ids', {
+		modrinthSlugs,
+		curseforgeSlugs,
+	})
+}
+
+/**
+ * Resolves the MC 百科 (mcmod.cn) page URL for a project slug, or `null`
+ * when the bundled wiki dictionary has no entry for it.
+ */
+export async function resolveMcmodUrl(
+	slug: string | null | undefined,
+	provider: 'modrinth' | 'curseforge',
+): Promise<string | null> {
+	if (!slug) return null
+	const lookup = await lookupContentWikiIds(
+		provider === 'modrinth' ? [slug] : [],
+		provider === 'curseforge' ? [slug] : [],
+	).catch(() => null)
+	const wikiId = provider === 'curseforge' ? lookup?.curseforge[slug] : lookup?.modrinth[slug]
+	return wikiId ? `https://www.mcmod.cn/class/${wikiId}.html` : null
 }
 
 export function bilingualTitle(chineseName: string, originalTitle: string) {

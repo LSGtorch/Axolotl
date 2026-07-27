@@ -86,8 +86,11 @@ const EXCLUDED_DIR_NAMES: &[&str] = &[
 // launchers' bundled runtimes and a bounded keyword search of likely
 // directories
 #[tracing::instrument]
-pub async fn get_all_jre() -> Result<Vec<JavaVersion>, JREError> {
-    let jre_paths = collect_candidate_paths().await?;
+pub async fn get_all_jre(
+    full_scan: bool,
+    exhaustive: bool,
+) -> Result<Vec<JavaVersion>, JREError> {
+    let jre_paths = collect_candidate_paths(full_scan, exhaustive).await?;
 
     // Get JRE versions from potential paths concurrently
     Ok(check_java_at_filepaths(jre_paths)
@@ -98,7 +101,10 @@ pub async fn get_all_jre() -> Result<Vec<JavaVersion>, JREError> {
 
 // Gathers candidate paths from every source; cheap sources run inline while
 // filesystem-heavy sources run on blocking threads with bounded concurrency
-async fn collect_candidate_paths() -> Result<HashSet<PathBuf>, JREError> {
+async fn collect_candidate_paths(
+    full_scan: bool,
+    exhaustive: bool,
+) -> Result<HashSet<PathBuf>, JREError> {
     let mut jre_paths = HashSet::new();
 
     jre_paths.extend(get_all_jre_path().await);
@@ -122,17 +128,26 @@ async fn collect_candidate_paths() -> Result<HashSet<PathBuf>, JREError> {
         jre_paths.extend(set);
     }
 
-    let found: Vec<HashSet<PathBuf>> = stream::iter(bfs_search_roots())
-        .map(|root| {
-            tokio::task::spawn_blocking(move || bfs_keyword_scan(&root))
-        })
-        .buffer_unordered(COLLECT_CONCURRENCY)
-        .filter_map(|res| async move { res.ok() })
-        .collect()
-        .await;
+    if full_scan || exhaustive {
+        let found: Vec<HashSet<PathBuf>> = stream::iter(bfs_search_roots())
+            .map(|root| {
+                let root = root.clone();
+                tokio::task::spawn_blocking(move || {
+                    if exhaustive {
+                        bfs_exhaustive_scan(&root)
+                    } else {
+                        bfs_keyword_scan(&root)
+                    }
+                })
+            })
+            .buffer_unordered(COLLECT_CONCURRENCY)
+            .filter_map(|res| async move { res.ok() })
+            .collect()
+            .await;
 
-    for set in found {
-        jre_paths.extend(set);
+        for set in found {
+            jre_paths.extend(set);
+        }
     }
 
     Ok(jre_paths)
@@ -175,6 +190,7 @@ fn get_common_install_paths() -> HashSet<PathBuf> {
         r"C:\Program Files (x86)\Java",
         r"C:\Program Files\Eclipse Adoptium",
         r"C:\Program Files (x86)\Eclipse Adoptium",
+        r"C:\Program Files\Microsoft",
     ];
     for java_path in java_paths {
         let Ok(java_subpaths) = std::fs::read_dir(java_path) else {
@@ -182,6 +198,46 @@ fn get_common_install_paths() -> HashSet<PathBuf> {
         };
         for java_subpath in java_subpaths.flatten() {
             jre_paths.insert(java_subpath.path().join("bin"));
+        }
+    }
+
+    // Scan all subdirectories of Program Files for any Java installations
+    let program_files_dirs = [r"C:\Program Files", r"C:\Program Files (x86)"];
+    for pf_dir in program_files_dirs {
+        let Ok(subdirs) = std::fs::read_dir(pf_dir) else {
+            continue;
+        };
+        for entry in subdirs.flatten() {
+            let subdir = entry.path();
+            jre_paths.insert(subdir.join("bin"));
+            jre_paths.insert(subdir.join("jre").join("bin"));
+        }
+    }
+
+    // LocalAppData programs (e.g. Eclipse Adoptium installs here)
+    if let Some(local_app_data) = dirs::data_local_dir() {
+        let programs = local_app_data.join("Programs");
+        if programs.is_dir() {
+            if let Ok(dir) = std::fs::read_dir(programs) {
+                for entry in dir.flatten() {
+                    jre_paths.insert(entry.path().join("bin"));
+                }
+            }
+        }
+    }
+
+    // Roaming AppData — check for jdk/jre directories
+    if let Some(app_data) = dirs::data_dir() {
+        if let Ok(dir) = std::fs::read_dir(app_data) {
+            for entry in dir.flatten() {
+                let name = entry.file_name().to_string_lossy().to_lowercase();
+                if name.contains("java")
+                    || name.contains("jdk")
+                    || name.contains("jre")
+                {
+                    jre_paths.insert(entry.path().join("bin"));
+                }
+            }
         }
     }
 
@@ -210,6 +266,31 @@ fn get_common_install_paths() -> HashSet<PathBuf> {
         }
     }
 
+    // User-local JavaVirtualMachines
+    if let Some(home) = dirs::home_dir() {
+        let user_jvm = home
+            .join("Library")
+            .join("Java")
+            .join("JavaVirtualMachines");
+        if user_jvm.is_dir() {
+            if let Ok(dir) = std::fs::read_dir(user_jvm) {
+                for entry in dir.flatten() {
+                    jre_paths.insert(entry.path().join("Contents/Home/bin"));
+                }
+            }
+        }
+
+        // sdkman candidates
+        let sdkman_path = home.join(".sdkman").join("candidates").join("java");
+        if sdkman_path.is_dir() {
+            if let Ok(dir) = std::fs::read_dir(sdkman_path) {
+                for entry in dir.flatten() {
+                    jre_paths.insert(entry.path().join("bin"));
+                }
+            }
+        }
+    }
+
     jre_paths
 }
 
@@ -235,6 +316,49 @@ fn get_common_install_paths() -> HashSet<PathBuf> {
                 let entry_path = entry.path();
                 jre_paths.insert(entry_path.join("jre").join("bin"));
                 jre_paths.insert(entry_path.join("bin"));
+            }
+        }
+    }
+
+    // Additional Java version manager directories
+    if let Some(home) = dirs::home_dir() {
+        // sdkman candidates
+        let sdkman_path = home.join(".sdkman").join("candidates").join("java");
+        if sdkman_path.is_dir() {
+            if let Ok(dir) = std::fs::read_dir(sdkman_path) {
+                for entry in dir.flatten() {
+                    jre_paths.insert(entry.path().join("bin"));
+                }
+            }
+        }
+
+        // asdf installs
+        let asdf_path = home.join(".asdf").join("installs").join("java");
+        if asdf_path.is_dir() {
+            if let Ok(dir) = std::fs::read_dir(asdf_path) {
+                for entry in dir.flatten() {
+                    jre_paths.insert(entry.path().join("bin"));
+                }
+            }
+        }
+
+        // jabba jdk
+        let jabba_path = home.join(".jabba").join("jdk");
+        if jabba_path.is_dir() {
+            if let Ok(dir) = std::fs::read_dir(jabba_path) {
+                for entry in dir.flatten() {
+                    jre_paths.insert(entry.path().join("bin"));
+                }
+            }
+        }
+    }
+
+    // Snap packages
+    let snap_path = PathBuf::from("/snap");
+    if snap_path.is_dir() {
+        if let Ok(dir) = std::fs::read_dir(snap_path) {
+            for entry in dir.flatten() {
+                jre_paths.insert(entry.path().join("bin"));
             }
         }
     }
@@ -415,6 +539,31 @@ fn bfs_search_roots() -> Vec<PathBuf> {
     {
         roots.push(PathBuf::from("/opt"));
         roots.push(PathBuf::from("/usr/local"));
+
+        // Scan all mounted non-removable partitions for Java installations
+        let disks = sysinfo::Disks::new_with_refreshed_list();
+        for disk in disks.list() {
+            if disk.is_removable() {
+                continue;
+            }
+            let mount = disk.mount_point().to_path_buf();
+            if mount != PathBuf::from("/") && mount.as_os_str() != "/" {
+                roots.push(mount);
+            }
+        }
+
+        // Also scan common mount directories
+        for common in &["/mnt", "/media", "/run/media"] {
+            if std::path::Path::new(common).is_dir() {
+                if let Ok(entries) = std::fs::read_dir(common) {
+                    for entry in entries.flatten() {
+                        if entry.path().is_dir() {
+                            roots.push(entry.path());
+                        }
+                    }
+                }
+            }
+        }
     }
 
     roots.retain(|root| root.is_dir());
@@ -480,6 +629,51 @@ fn bfs_keyword_scan(root: &Path) -> HashSet<PathBuf> {
     found
 }
 
+fn bfs_exhaustive_scan(root: &Path) -> HashSet<PathBuf> {
+    let mut found = HashSet::new();
+    let mut scanned_dirs = 0usize;
+    let mut queue = VecDeque::new();
+    queue.push_back((root.to_path_buf(), 0usize));
+
+    while let Some((dir, depth)) = queue.pop_front() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+
+            // No keyword filter at any depth — scan ALL directories
+
+            scanned_dirs += 1;
+            if scanned_dirs > 100_000 {
+                return found;
+            }
+
+            let java_bin = path.join(JAVA_BIN);
+            if java_bin.is_file() {
+                found.insert(java_bin);
+            }
+            // No depth limit — keep going
+            queue.push_back((path, depth + 1));
+        }
+    }
+
+    found
+}
+
+pub(crate) fn is_java_install_staging_path(path: &Path) -> bool {
+    path.components().any(|component| {
+        let std::path::Component::Normal(name) = component else {
+            return false;
+        };
+        let name = name.to_string_lossy().to_ascii_lowercase();
+        name.starts_with('.') && name.ends_with(JAVA_INSTALL_STAGING_SUFFIX)
+    })
+}
+
 // Gets all JREs from the launcher's own auto-installed Java directory
 #[tracing::instrument]
 async fn get_all_autoinstalled_jre_path() -> Result<HashSet<PathBuf>, JREError>
@@ -494,9 +688,6 @@ async fn get_all_autoinstalled_jre_path() -> Result<HashSet<PathBuf>, JREError>
             && let Ok(dir) = std::fs::read_dir(base_path)
         {
             for entry in dir.flatten() {
-                if is_java_install_staging_path(&entry.path()) {
-                    continue;
-                }
                 let file_path = entry.path().join("bin");
 
                 if let Ok(contents) = std::fs::read_to_string(file_path.clone())
@@ -553,17 +744,9 @@ pub async fn check_java_at_filepaths(
 // If no such path exists, or no such valid java at this path exists, returns None
 #[tracing::instrument]
 pub async fn check_java_at_filepath(path: &Path) -> crate::Result<JavaVersion> {
-    if is_java_install_staging_path(path) {
-        return Err(JREError::IncompleteInstallation(path.to_path_buf()).into());
-    }
-
     // Attempt to canonicalize the potential java filepath
     // If it fails, this path does not exist and None is returned (no Java here)
     let path = io::canonicalize(path)?;
-
-    if is_java_install_staging_path(&path) {
-        return Err(JREError::IncompleteInstallation(path).into());
-    }
 
     // Checks for existence of Java at this filepath
     // Adds JAVA_BIN to the end of the path if it is not already there
@@ -623,6 +806,7 @@ pub async fn check_java_at_filepath(path: &Path) -> crate::Result<JavaVersion> {
                 path,
                 version: version.to_string(),
                 architecture: arch.to_string(),
+                distribution: None,
             });
         }
 
@@ -630,16 +814,6 @@ pub async fn check_java_at_filepath(path: &Path) -> crate::Result<JavaVersion> {
     }
 
     Err(JREError::FailedJavaCheck(java).into())
-}
-
-pub(crate) fn is_java_install_staging_path(path: &Path) -> bool {
-    path.components().any(|component| {
-        let std::path::Component::Normal(name) = component else {
-            return false;
-        };
-        let name = name.to_string_lossy().to_ascii_lowercase();
-        name.starts_with('.') && name.ends_with(JAVA_INSTALL_STAGING_SUFFIX)
-    })
 }
 
 /// Reads a Java installation's `release` file (present in Java 8+ distributions
@@ -652,6 +826,7 @@ fn java_version_from_release_file(java: &Path) -> Option<JavaVersion> {
 
     let mut version = None;
     let mut os_arch = None;
+    let mut implementor = None;
     for line in contents.lines() {
         let Some((key, value)) = line.split_once('=') else {
             continue;
@@ -660,6 +835,7 @@ fn java_version_from_release_file(java: &Path) -> Option<JavaVersion> {
         match key.trim() {
             "JAVA_VERSION" => version = Some(value.to_string()),
             "OS_ARCH" => os_arch = Some(value.to_string()),
+            "IMPLEMENTOR" => implementor = Some(value.to_string()),
             _ => {}
         }
     }
@@ -672,6 +848,7 @@ fn java_version_from_release_file(java: &Path) -> Option<JavaVersion> {
         path: java.to_string_lossy().to_string(),
         version: parsed_version.to_string(),
         architecture,
+        distribution: implementor,
     })
 }
 
@@ -712,9 +889,6 @@ pub enum JREError {
 
     #[error("No executable found at {0}")]
     NoExecutable(PathBuf),
-
-    #[error("Java installation is still incomplete at {0}")]
-    IncompleteInstallation(PathBuf),
 
     #[error("Could not check Java version at path {0}")]
     FailedJavaCheck(PathBuf),
@@ -832,40 +1006,5 @@ mod tests {
         assert_eq!(extract_java_version("21-ea").unwrap(), 21);
         assert_eq!(extract_java_version("25").unwrap(), 25);
         assert!(extract_java_version("garbage").is_err());
-    }
-
-    #[test]
-    fn detects_launcher_java_staging_paths() {
-        assert!(is_java_install_staging_path(Path::new(
-            "java_versions/.mojang-java-runtime-epsilon-windows-x64.installing/bin/javaw.exe"
-        )));
-        assert!(is_java_install_staging_path(Path::new(
-            "java_versions/.azul-package.installing/bin/javaw.exe"
-        )));
-        assert!(!is_java_install_staging_path(Path::new(
-            "java_versions/mojang-java-runtime-epsilon-windows-x64/bin/javaw.exe"
-        )));
-        assert!(!is_java_install_staging_path(Path::new(
-            "java_versions/.installing-tools/jdk/bin/javaw.exe"
-        )));
-    }
-
-    #[tokio::test]
-    async fn rejects_incomplete_java_before_release_file_fast_path() {
-        let root = tempfile::tempdir().unwrap();
-        let java = root
-            .path()
-            .join(".mojang-java-runtime-epsilon.installing/bin")
-            .join(JAVA_BIN);
-        std::fs::create_dir_all(java.parent().unwrap()).unwrap();
-        std::fs::write(&java, b"").unwrap();
-        std::fs::write(
-            java.parent().unwrap().parent().unwrap().join("release"),
-            b"JAVA_VERSION=\"25\"\nOS_ARCH=\"x86_64\"\n",
-        )
-        .unwrap();
-
-        let error = check_java_at_filepath(&java).await.unwrap_err();
-        assert!(error.to_string().contains("still incomplete"));
     }
 }

@@ -312,6 +312,11 @@ function friendlyAddonName(addon: Archon.Content.v1.Addon): string {
 
 const modpackAddons = ref<Archon.Content.v1.Addon[]>([])
 
+const modpackContentItems = computed<ContentItem[]>(() => {
+	const addons = modpackContentQuery.data.value?.addons ?? modpackAddons.value
+	return addons.map(addonToContentItem)
+})
+
 const addonLookup = computed(() => {
 	const map = new Map<string, Archon.Content.v1.Addon>()
 	for (const addon of contentQuery.data.value?.addons ?? []) {
@@ -859,10 +864,13 @@ const loadingChangelog = ref(false)
 watch(
 	() => modpackContentQuery.data.value?.addons,
 	(addons) => {
-		if (!isModpackContentModalOpen.value || !addons) return
+		if (!addons) return
 		modpackAddons.value = addons
-		modpackContentModal.value?.setItems(addons.map(addonToContentItem))
+		if (isModpackContentModalOpen.value) {
+			modpackContentModal.value?.setItems(addons.map(addonToContentItem))
+		}
 	},
+	{ immediate: true },
 )
 
 const updatingProjectId = computed(() => updatingProject.value?.project?.id ?? null)
@@ -1325,6 +1333,7 @@ provideContentManager({
 	loading: computed(() => contentQuery.isLoading.value),
 	error: computed(() => contentQuery.error.value ?? null),
 	modpack,
+	modpackItems: modpackContentItems,
 	isPackLocked: ref(false),
 	isBusy: setupActionDisabled,
 	busyMessage: setupActionBusyMessage,

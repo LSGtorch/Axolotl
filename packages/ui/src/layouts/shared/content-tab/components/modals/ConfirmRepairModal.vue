@@ -8,13 +8,7 @@
 		"
 		max-width="500px"
 	>
-		<Admonition
-			v-if="symlinkTarget"
-			type="warning"
-			:header="formatMessage(messages.symlinkWarningHeader)"
-		>
-			{{ formatMessage(messages.symlinkWarningBody, { path: symlinkTarget }) }}
-		</Admonition>
+		<SymlinkWarningAdmonition :symlink-target="symlinkTarget" />
 		<span class="text-primary">
 			{{ formatMessage(server ? messages.serverBody : messages.instanceBody) }}
 		</span>
@@ -42,12 +36,13 @@
 import { HammerIcon, XIcon } from '@modrinth/assets'
 import { ref } from 'vue'
 
-import Admonition from '#ui/components/base/Admonition.vue'
 import ButtonStyled from '#ui/components/base/ButtonStyled.vue'
 import NewModal from '#ui/components/modal/NewModal.vue'
 import { useDebugLogger } from '#ui/composables/debug-logger'
 import { defineMessages, useVIntl } from '#ui/composables/i18n'
 import { commonMessages } from '#ui/utils/common-messages'
+
+import SymlinkWarningAdmonition from './SymlinkWarningAdmonition.vue'
 
 defineProps<{
 	server?: boolean
@@ -83,15 +78,6 @@ const messages = defineMessages({
 	serverLabel: {
 		id: 'instance.confirm-repair.server-label',
 		defaultMessage: 'server',
-	},
-	symlinkWarningHeader: {
-		id: 'app.symlink-warning.write.header',
-		defaultMessage: 'Shared instance',
-	},
-	symlinkWarningBody: {
-		id: 'app.symlink-warning.write.body',
-		defaultMessage:
-			'This instance is linked to "{path}". Changes will also affect the original files.',
 	},
 })
 
