@@ -784,13 +784,9 @@ pub async fn download_version_info(
                                 "Failed to parse Cleanroom version info: {e}"
                             ))
                         })?,
-                        Err(e) => return Err(
-                            crate::ErrorKind::LauncherError(format!(
-                                "Cleanroom is not installed. Version info missing at {}: {e}",
-                                cleanroom_path.display()
-                            ))
-                            .into(),
-                        ),
+                        Err(_) => {
+                            return Ok(info);
+                        }
                     }
                 } else {
                     fetch_json(
