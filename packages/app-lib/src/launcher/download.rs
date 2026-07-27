@@ -773,7 +773,8 @@ pub async fn download_version_info(
                     .await?
                 } else if mod_loader == ModLoader::Cleanroom {
                     // Cleanroom's version info is installed locally by cleanroom::install().
-                    // Read the PartialVersionInfo from the version dir
+                    // If the file doesn't exist yet (installer hasn't run), build a minimal
+                    // version info so the launch process can continue.
                     let cleanroom_path = st
                         .directories
                         .version_dir(&version_id)
@@ -784,13 +785,19 @@ pub async fn download_version_info(
                                 "Failed to parse Cleanroom version info: {e}"
                             ))
                         })?,
-                        Err(e) => return Err(
-                            crate::ErrorKind::LauncherError(format!(
-                                "Cleanroom is not installed. Version info missing at {}: {e}",
+                        Err(_) => {
+                            tracing::warn!(
+                                "Cleanroom version info not found at {}, using minimal loader info",
                                 cleanroom_path.display()
-                            ))
-                            .into(),
-                        ),
+                            );
+                            d::modded::PartialVersionInfo {
+                                id: version_id.clone(),
+                                main_class: "net.minecraft.launchwrapper.Launch".to_string(),
+                                libraries: Vec::new(),
+                                arguments: None,
+                                inherits_from: Some(version.id.clone()),
+                            }
+                        },
                     }
                 } else {
                     fetch_json(
