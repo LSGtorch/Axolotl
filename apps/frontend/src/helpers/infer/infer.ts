@@ -64,17 +64,19 @@ export const inferVersionInfo = async function (
 	const packParser = createPackParser(project, gameVersions, rawFile)
 	const multiFileDetectors = createMultiFileDetectors(project, gameVersions, rawFile)
 
+	const inferredLoaders: Set<string> = new Set()
+
 	const inferFunctions = {
 		...loaderParsers,
 		'pack.mcmeta': packParser,
 	}
 
-	// Multi-loader detection
+	// Detection for loader families
 	const multiLoaderFiles = [
-		'META-INF/neoforge.mods.toml',
-		'META-INF/mods.toml',
 		'fabric.mod.json',
 		'quilt.mod.json',
+		'META-INF/mods.toml',
+		'META-INF/neoforge.mods.toml',
 	]
 	const detectedLoaderFiles = multiLoaderFiles.filter((fileName) => zip.file(fileName) !== null)
 	if (detectedLoaderFiles.length > 1) {

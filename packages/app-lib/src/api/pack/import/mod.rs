@@ -970,16 +970,22 @@ pub(crate) async fn finish_import(
     Ok(())
 }
 
-/// Recursively get a list of all subfiles in src
-/// uses async recursion
-
 #[async_recursion::async_recursion]
 #[tracing::instrument]
 pub async fn get_all_subfiles(
     src: &Path,
     include_empty_dirs: bool,
 ) -> crate::Result<Vec<PathBuf>> {
-    if !src.is_dir() {
+    let meta = tokio::fs::symlink_metadata(src)
+        .await
+        .map_err(|e| IOError::with_path(e, src))?;
+
+    // Symlink / reparse point: never follow, treat as leaf file.
+    if crate::util::io::is_symlink_or_reparse(&meta) {
+        return Ok(vec![src.to_path_buf()]);
+    }
+
+    if meta.is_file() {
         return Ok(vec![src.to_path_buf()]);
     }
 

@@ -319,61 +319,123 @@ fn extract_version_from_id(id: &str) -> Option<String> {
     None
 }
 
-/// Detects which mod loader is used and extracts its version.
-/// Only loaders we can actually install (mapped to PackDependency) are detected.
+////参考自PCL启动器
 fn detect_loader(
     content: &str,
     json: &Value,
 ) -> Option<(String, Option<String>)> {
-    // Order per PCLCE: check Fabric/Quilt before Forge, neoforge before forge
-    let check_fabric = content.contains("net.fabricmc");
-    debug!(
-        "detect_loader: check_fabric content_contains('net.fabricmc')={}",
-        check_fabric
-    );
-    let check_quilt = content.contains("org.quiltmc");
-    debug!(
-        "detect_loader: check_quilt content_contains('org.quiltmc')={}",
-        check_quilt
-    );
-    let neoforge_in_content = content.contains("net.neoforged");
-    let neoforge_in_id = json
-        .get("id")
-        .and_then(|v| v.as_str())
-        .map(|id| id.to_lowercase().contains("neoforge"))
-        .unwrap_or(false);
-    debug!(
-        "detect_loader: check_neoforge content_contains('net.neoforged')={} id_contains('neoforge')={}",
-        neoforge_in_content, neoforge_in_id
-    );
-    let check_forge = content.contains("net.minecraftforge");
-    debug!(
-        "detect_loader: check_forge content_contains('net.minecraftforge')={}",
-        check_forge
-    );
+    let lower = content.to_lowercase();
 
-    let loader_type = if check_fabric {
-        "fabric"
-    } else if check_quilt {
-        "quilt"
-    } else if neoforge_in_content || neoforge_in_id {
-        "neoforge"
-    } else if check_forge {
-        "forge"
-    } else {
-        debug!("detect_loader: no known loader library found in JSON content");
-        return None;
-    };
+    // LabyMod
+    if lower.contains("labymod_data") {
+        let version = json
+            .get("labymod_data")
+            .and_then(|v| v.get("version"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        return Some(("labymod".into(), version));
+    }
 
-    debug!("detect_loader: detected loader_type={}", loader_type);
-    let version = extract_loader_version(content, json, loader_type);
-    debug!(
-        "detect_loader: loader_type={} extracted_version={:?}",
-        loader_type, version
-    );
-    Some((loader_type.to_string(), version))
+    // Legacy Fabric
+    if lower.contains("net.legacyfabric:intermediary") {
+        let version = try_extract_version_from_needle(
+            content,
+            "net.fabricmc:fabric-loader:",
+            None,
+        );
+        return Some(("legacy_fabric".into(), version));
+    }
+
+    // Fabric
+    if lower.contains("net.fabricmc:fabric-loader") {
+        let version = try_extract_version_from_needle(
+            content,
+            "net.fabricmc:fabric-loader:",
+            None,
+        );
+        return Some(("fabric".into(), version));
+    }
+
+    // Quilt
+    if lower.contains("org.quiltmc:quilt-loader") {
+        let version = try_extract_version_from_needle(
+            content,
+            "org.quiltmc:quilt-loader:",
+            None,
+        );
+        return Some(("quilt".into(), version));
+    }
+
+    // Cleanroom
+    if lower.contains("com.cleanroommc:cleanroom:") {
+        let version = try_extract_version_from_needle(
+            content,
+            "com.cleanroommc:cleanroom:",
+            None,
+        );
+        return Some(("cleanroom".into(), version));
+    }
+
+    // Forge
+    if lower.contains("minecraftforge") && !lower.contains("net.neoforge") {
+        let version = try_extract_version_from_needle(
+            content,
+            "minecraftforge:forge:",
+            Some('-'),
+        )
+        .or_else(|| {
+            try_extract_version_from_needle(
+                content,
+                "net.minecraftforge:fmlloader:",
+                Some('-'),
+            )
+        });
+        return Some(("forge".into(), version));
+    }
+
+    // NeoForge
+    if lower.contains("net.neoforge") {
+        let version = try_extract_version_from_needle(
+            content,
+            "net.neoforged:neoforge:",
+            None,
+        )
+        .or_else(|| {
+            try_extract_version_from_needle(
+                content,
+                "net.neoforged.neoforge:neoforge:",
+                None,
+            )
+        });
+        return Some(("neoforge".into(), version));
+    }
+
+    // OptiFine
+    if lower.contains("optifine") {
+        let version = content
+            .split("optifine:OptiFine:")
+            .nth(1)
+            .and_then(|s| {
+                s.trim_matches(|c: char| c == '"' || c == ',' || c == ' ')
+                    .split('_')
+                    .next()
+            })
+            .map(|s| s.to_string());
+        if version.is_some() {
+            return Some(("optifine".into(), version));
+        }
+    }
+
+    // LiteLoader
+    if lower.contains("liteloader") {
+        return Some(("lite_loader".into(), None));
+    }
+
+    debug!("detect_loader: no known loader library found in JSON content");
+    None
 }
 
+#[allow(dead_code)]
 fn extract_loader_version(
     content: &str,
     json: &Value,
@@ -404,6 +466,11 @@ fn extract_loader_version(
         ),
         "fabric" => ("net.fabricmc:fabric-loader:", None, None),
         "quilt" => ("org.quiltmc:quilt-loader:", None, None),
+        "legacy_fabric" => ("net.fabricmc:fabric-loader:", None, None),
+        "cleanroom" => ("com.cleanroommc:cleanroom:", None, None),
+        "labymod" => return None,
+        "lite_loader" => return None,
+        "optifine" => ("optifine:OptiFine:", None, Some('_')),
         _ => return None,
     };
 
@@ -461,6 +528,7 @@ fn try_extract_version_from_needle(
 /// Parses loader version from the instance id.
 /// e.g. "1.8.9-forge-11.15.1.1722" → "11.15.1.1722"
 ///      "1.20.1-fabric-0.15.11" → "0.15.11"
+#[allow(dead_code)]
 fn parse_loader_version_from_id(id: &str, loader_type: &str) -> Option<String> {
     let id_lower = id.to_lowercase();
     let keyword = match loader_type {

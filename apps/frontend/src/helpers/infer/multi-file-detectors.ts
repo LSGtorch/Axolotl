@@ -12,6 +12,29 @@ export function createMultiFileDetectors(
 	rawFile: RawFile,
 ) {
 	return {
+		// Generic loader detection (LiteLoader, LabyMod, Cleanroom)
+		genericLoaders: async (zip: JSZip): Promise<InferredVersionInfo | null> => {
+			const checkFiles = [
+				'META-INF/MANIFEST.MF',
+				'META-INF/mods.toml',
+				'META-INF/neoforge.mods.toml',
+				'fabric.mod.json',
+				'quilt.mod.json',
+				'plugin.yml',
+				'paper-plugin.yml',
+			]
+			const loaders = new Set<string>()
+			for (const fileName of checkFiles) {
+				const file = zip.file(fileName)
+				if (!file) continue
+				const text = (await file.async('text')).toLowerCase()
+				if (text.includes('liteloader')) loaders.add('lite_loader')
+				if (text.includes('labymod')) loaders.add('labymod')
+				if (text.includes('cleanroom')) loaders.add('cleanroom')
+			}
+			if (loaders.size === 0) return null
+			return { loaders: Array.from(loaders) }
+		},
 		// Legacy texture pack (pre-1.6.1)
 		legacyTexturePack: async (zip: JSZip): Promise<InferredVersionInfo | null> => {
 			if (!rawFile.name.endsWith('.zip')) return null

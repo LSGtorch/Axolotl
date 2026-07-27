@@ -3383,6 +3383,21 @@
 	"app.drop.no-instances": {
 		"message": "No instances found"
 	},
+	"app.drop.import-progress-title": {
+		"message": "Importing instances…"
+	},
+	"app.drop.import-progress-text": {
+		"message": "{current} / {total} instances imported"
+	},
+	"app.drop.import-completed-title": {
+		"message": "Import completed"
+	},
+	"app.drop.import-completed-text": {
+		"message": "Successfully imported {count} instances"
+	},
+	"app.drop.import-completed-partial-text": {
+		"message": "Imported {completed} of {total} instances ({failed} failed)"
+	},
 	"app.drop.modpack-not-supported-title": {
 		"message": "Modpack import"
 	},

@@ -91,9 +91,9 @@ sqlx = { workspace = true, features = [
 ] }
 symlink-rs = { workspace = true }
 sysinfo = { workspace = true, features = ["disk", "system"] }
+tar = { workspace = true }
 tauri = { workspace = true, features = ["unstable"], optional = true }
 tempfile = { workspace = true }
-tar = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = [
   "fs",
@@ -119,10 +119,10 @@ url = { workspace = true, features = ["serde"] }
 urlencoding = { workspace = true }
 uuid = { workspace = true, features = ["serde", "v4"] }
 whoami = { workspace = true }
+xz2 = { workspace = true }
 zbus = { workspace = true }
 zhconv = { workspace = true }
 zip = { workspace = true }
-xz2 = { workspace = true }
 
 [build-dependencies]
 dotenvy = { workspace = true }

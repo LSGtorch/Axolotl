@@ -52,6 +52,9 @@ import {
 import { hasPride26Badge } from '@/helpers/user-campaigns.ts'
 import { handleSevereError } from '@/store/error'
 import { useTheming } from '@/store/state'
+import { getCurrentWebview } from '@tauri-apps/api/webview'
+import type { DragDropEvent } from '@tauri-apps/api/webview'
+import { invoke } from '@tauri-apps/api/core'
 
 type UnlistenFn = () => void
 type VirtualSkinSectionListExpose = {
@@ -340,6 +343,7 @@ const hasPendingSkinChange = computed(
 let userCheckInterval: number | null = null
 let pendingSkinRefreshTimeout: number | null = null
 let isUnmounted = false
+let unlistenNativeDrop: (() => void) | null = null
 
 const isDraggingSkinFile = ref(false)
 const isAddSkinButtonDragActive = ref(false)
@@ -881,6 +885,7 @@ function onAddSkinDragOver(event: DragEvent) {
 		return
 	}
 
+	event.preventDefault()
 	isAddSkinButtonDragActive.value = true
 }
 
@@ -923,6 +928,39 @@ async function processSkinFileBuffer(buffer: Uint8Array | ArrayBuffer) {
 	}
 }
 
+/** Native drop handler: Tauri blocks HTML5 `drop` for OS-level file drags,
+ *  so we need onDragDropEvent to receive the file. HTML5 dragenter/dragover
+ *  still fire and provide visual feedback — this only handles the drop. */
+async function setupNativeDropHandler() {
+	try {
+		unlistenNativeDrop = await getCurrentWebview().onDragDropEvent(
+			(event: { payload: DragDropEvent }) => {
+				const payload = event.payload
+				if (payload.type !== 'drop') return
+				if (isSkinManagementReadOnly.value) return
+
+				const pngPath = (payload.paths as string[]).find((p: string) =>
+					p.toLowerCase().endsWith('.png'),
+				)
+				if (!pngPath) return
+
+				readDroppedSkinFile(pngPath)
+			},
+		)
+	} catch (error) {
+		console.warn('Failed to set up native drop handler on skin page', error)
+	}
+}
+
+async function readDroppedSkinFile(path: string) {
+	try {
+		const data = await invoke<number[]>('plugin:files|file_read_dragged_file', { path })
+		await processSkinFileBuffer(new Uint8Array(data))
+	} catch (error) {
+		handleError(error as Error)
+	}
+}
+
 watch(
 	() => selectedSkin.value?.cape_id,
 	() => {},
@@ -937,12 +975,18 @@ watch(isSkinManagementReadOnly, (readOnly) => {
 
 onMounted(() => {
 	userCheckInterval = window.setInterval(checkUserChanges, 250)
+	void setupNativeDropHandler()
 })
 
 onUnmounted(() => {
 	isUnmounted = true
 	if (userCheckInterval !== null) {
 		window.clearInterval(userCheckInterval)
+	}
+
+	if (unlistenNativeDrop) {
+		unlistenNativeDrop()
+		unlistenNativeDrop = null
 	}
 
 	if (pendingSkinRefreshTimeout !== null) {

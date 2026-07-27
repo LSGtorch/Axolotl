@@ -226,13 +226,69 @@ pub async fn create_dir_all(
         })
 }
 
+pub(crate) fn is_symlink_or_reparse(meta: &std::fs::Metadata) -> bool {
+    if meta.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        if meta.file_attributes() & 0x400 != 0 {
+            return true;
+        }
+    }
+    false
+}
+
 pub async fn remove_dir_all(
     path: impl AsRef<std::path::Path>,
 ) -> Result<(), IOError> {
-    let path = path.as_ref();
-    tokio::fs::remove_dir_all(path)
-        .await
-        .map_err(|e| io_error_with_lock_info(e, path))
+    let path = path.as_ref().to_path_buf();
+
+    tokio::task::spawn_blocking(move || {
+        fn remove_safe(path: &Path) -> Result<(), IOError> {
+            let meta = match std::fs::symlink_metadata(path) {
+                Ok(m) => m,
+                Err(e) if e.kind() == ErrorKind::NotFound => return Ok(()),
+                Err(e) => return Err(io_error_with_lock_info(e, path)),
+            };
+
+            if is_symlink_or_reparse(&meta) {
+                return std::fs::remove_file(path)
+                    .or_else(|_| std::fs::remove_dir(path))
+                    .map_err(|e| io_error_with_lock_info(e, path));
+            }
+
+            if meta.is_file() {
+                return std::fs::remove_file(path)
+                    .map_err(|e| io_error_with_lock_info(e, path));
+            }
+
+            let rd = match std::fs::read_dir(path) {
+                Ok(d) => d,
+                Err(e) => return Err(io_error_with_lock_info(e, path)),
+            };
+            for entry in rd {
+                let entry = match entry {
+                    Ok(e) => e,
+                    Err(e) => return Err(io_error_with_lock_info(e, path)),
+                };
+                remove_safe(&entry.path())?;
+            }
+
+            std::fs::remove_dir(path)
+                .map_err(|e| io_error_with_lock_info(e, path))
+        }
+
+        remove_safe(&path)
+    })
+    .await
+    .map_err(|e| {
+        IOError::IOError(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("background task failed: {e}"),
+        ))
+    })?
 }
 
 /// Reads a text file to a string, automatically detecting its encoding and
@@ -333,21 +389,33 @@ pub fn is_same_disk(old_dir: &Path, new_dir: &Path) -> Result<bool> {
 
     #[cfg(windows)]
     {
-        let old_dir = canonicalize(old_dir)
-            .wrap_err_with(|| eyre!("canonicalizing {old_dir:?}"))?;
-        let new_dir = canonicalize(new_dir)
-            .wrap_err_with(|| eyre!("canonicalizing {new_dir:?}"))?;
+        // Extract the volume prefix from the raw path without following
+        // symlinks/reparse points.  `canonicalize` would follow them and
+        // fail on dangling links (target already deleted), so we compare
+        // drive letters directly from the path components first.
+        let old_prefix = old_dir.components().next();
+        let new_prefix = new_dir.components().next();
 
-        let old_component = old_dir.components().next();
-        let new_component = new_dir.components().next();
-
-        match (old_component, new_component) {
+        let same = match (old_prefix, new_prefix) {
             (
                 Some(std::path::Component::Prefix(old)),
                 Some(std::path::Component::Prefix(new)),
-            ) => Ok(old.as_os_str() == new.as_os_str()),
-            _ => Ok(false),
-        }
+            ) => old.as_os_str() == new.as_os_str(),
+            _ => {
+                // Fall back to canonicalization for relative paths, UNC, etc.
+                let old_dir = canonicalize(old_dir)?;
+                let new_dir = canonicalize(new_dir)?;
+                match (old_dir.components().next(), new_dir.components().next())
+                {
+                    (
+                        Some(std::path::Component::Prefix(old)),
+                        Some(std::path::Component::Prefix(new)),
+                    ) => old.as_os_str() == new.as_os_str(),
+                    _ => false,
+                }
+            }
+        };
+        Ok(same)
     }
 }
 
@@ -379,7 +447,32 @@ pub async fn rename_or_move(
 
 #[async_recursion::async_recursion]
 async fn move_recursive(from: &Path, to: &Path) -> Result<()> {
-    if from.is_file() {
+    let meta = tokio::fs::symlink_metadata(from)
+        .await
+        .wrap_err_with(|| eyre!("getting metadata of {from:?}"))?;
+
+    // Symlink / reparse point: recreate the link at the destination and
+    // remove the source link.  Never follow/copy the target.
+    if is_symlink_or_reparse(&meta) {
+        let target = tokio::fs::read_link(from)
+            .await
+            .wrap_err_with(|| eyre!("reading link target of {from:?}"))?;
+        create_symlink(&target, to).await.wrap_err_with(|| {
+            eyre!("recreating symlink at {to:?} (target: {target:?})")
+        })?;
+        // Remove the source link.  On Unix, remove_file works for all
+        // symlinks.  On Windows, directory reparse points (junctions)
+        // may need remove_dir as fallback.
+        if tokio::fs::remove_file(from).await.is_err() {
+            tokio::fs::remove_dir(from)
+                .await
+                .map_err(|e| io_error_with_lock_info(e, from))
+                .wrap_err_with(|| eyre!("removing source link {from:?}"))?;
+        }
+        return Ok(());
+    }
+
+    if meta.is_file() {
         copy(from, to)
             .await
             .wrap_err_with(|| eyre!("copying {from:?} to {to:?}"))?;
@@ -418,6 +511,21 @@ pub async fn copy(
 ) -> Result<u64, IOError> {
     let from: &Path = from.as_ref();
     let to = to.as_ref();
+
+    // Never follow symlinks / reparse points — recreate the link at the
+    // destination instead of copying the target's content.
+    let meta = tokio::fs::symlink_metadata(from)
+        .await
+        .map_err(|e| io_error_with_lock_info(e, from))?;
+
+    if is_symlink_or_reparse(&meta) {
+        let target = tokio::fs::read_link(from)
+            .await
+            .map_err(|e| io_error_with_lock_info(e, from))?;
+        create_symlink(&target, to).await?;
+        return Ok(0);
+    }
+
     tokio::fs::copy(from, to)
         .await
         .map_err(|e| io_error_with_lock_info(e, from))

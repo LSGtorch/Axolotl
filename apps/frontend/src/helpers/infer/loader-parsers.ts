@@ -18,7 +18,113 @@ export function createLoaderParsers(
 	simplifiedGameVersions: string[],
 ) {
 	return {
-		// NeoForge
+		// Fabric (or Babric for mc version beta 1.7.3)
+		'fabric.mod.json': (file: string): InferredVersionInfo => {
+			const metadata = JSON.parse(file) as any
+
+			const mcDependency = metadata.depends?.minecraft
+			const mcDependencies = Array.isArray(mcDependency) ? mcDependency : [mcDependency]
+
+			let detectedGameVersions = metadata.depends
+				? getGameVersionsMatchingSemverRange(metadata.depends.minecraft, simplifiedGameVersions)
+				: []
+			const loaders: string[] = []
+
+			// Detect Beta 1.7.3 -> Babric
+			const hasBabricVersion = mcDependencies.some(
+				(version: string | undefined) => version?.includes('1.0.0-beta.7.3'), // this is fabric's normalized mc version format
+			)
+
+			// Detect 1.3-1.13 -> legacy_fabric
+			const hasLegacyVersions = detectedGameVersions.some((version) => {
+				const match = version.match(/^1\.(\d+)/)
+				return match && parseInt(match[1]) >= 3 && parseInt(match[1]) <= 13
+			})
+
+			if (hasBabricVersion) {
+				loaders.push('babric')
+				detectedGameVersions = gameVersions
+					.filter((version) => version.version === 'b1.7.3')
+					.map((version) => version.version)
+			} else if (hasLegacyVersions) {
+				loaders.push('legacy_fabric')
+			} else {
+				loaders.push('fabric')
+			}
+
+			return {
+				name: `${project.title} ${metadata.version}`,
+				version_number: metadata.version,
+				loaders,
+				version_type: versionType(metadata.version),
+				game_versions: detectedGameVersions,
+			}
+		},
+		// Quilt
+		'quilt.mod.json': (file: string): InferredVersionInfo => {
+			const metadata = JSON.parse(file) as any
+
+			return {
+				name: `${project.title} ${metadata.quilt_loader.version}`,
+				version_number: metadata.quilt_loader.version,
+				loaders: ['quilt'],
+				version_type: versionType(metadata.quilt_loader.version),
+				game_versions: metadata.quilt_loader.depends
+					? getGameVersionsMatchingSemverRange(
+							metadata.quilt_loader.depends.find((x: any) => x.id === 'minecraft')
+								? metadata.quilt_loader.depends.find((x: any) => x.id === 'minecraft').versions
+								: [],
+							simplifiedGameVersions,
+						)
+					: [],
+			}
+		},
+		// Forge 1.13+ (exclude NeoForge per priority)
+		'META-INF/mods.toml': async (file: string, zip: JSZip): Promise<InferredVersionInfo> => {
+			// If neoforge.mods.toml is present, this is NeoForge, not Forge
+			if (zip.file('META-INF/neoforge.mods.toml') !== null) {
+				return {} as InferredVersionInfo
+			}
+			const metadata = parseTOML(file, { joiner: '\n' }) as any
+
+			if (metadata.mods && metadata.mods.length > 0) {
+				let versionNum = metadata.mods[0].version
+
+				// ${file.jarVersion} -> Implementation-Version from manifest
+				const manifestFile = zip.file('META-INF/MANIFEST.MF')
+				if (metadata.mods[0].version.includes('${file.jarVersion}') && manifestFile !== null) {
+					const manifestText = await manifestFile.async('text')
+					const regex = /Implementation-Version: (.*)$/m
+					const match = manifestText.match(regex)
+					if (match) {
+						versionNum = versionNum.replace('${file.jarVersion}', match[1])
+					}
+				}
+
+				let newGameVersions: string[] = []
+				const mcDependencies = Object.values(metadata.dependencies)
+					.flat()
+					.filter((dependency: any) => dependency.modId === 'minecraft')
+
+				if (mcDependencies.length > 0) {
+					newGameVersions = getGameVersionsMatchingMavenRange(
+						(mcDependencies[0] as any).versionRange,
+						simplifiedGameVersions,
+					)
+				}
+
+				return {
+					name: `${project.title} ${versionNum}`,
+					version_number: versionNum,
+					version_type: versionType(versionNum),
+					loaders: ['forge'],
+					game_versions: newGameVersions,
+				}
+			} else {
+				return {} as InferredVersionInfo
+			}
+		},
+		// NeoForge (Positioned after Forge per PCL-CE priority)
 		'META-INF/neoforge.mods.toml': (file: string): InferredVersionInfo => {
 			const metadata = parseTOML(file, { joiner: '\n' }) as any
 
@@ -77,132 +183,16 @@ export function createLoaderParsers(
 				game_versions: newGameVersions,
 			}
 		},
-		// Forge 1.13+
-		'META-INF/mods.toml': async (file: string, zip: JSZip): Promise<InferredVersionInfo> => {
-			const metadata = parseTOML(file, { joiner: '\n' }) as any
-
-			if (metadata.mods && metadata.mods.length > 0) {
-				let versionNum = metadata.mods[0].version
-
-				// ${file.jarVersion} -> Implementation-Version from manifest
-				const manifestFile = zip.file('META-INF/MANIFEST.MF')
-				if (metadata.mods[0].version.includes('${file.jarVersion}') && manifestFile !== null) {
-					const manifestText = await manifestFile.async('text')
-					const regex = /Implementation-Version: (.*)$/m
-					const match = manifestText.match(regex)
-					if (match) {
-						versionNum = versionNum.replace('${file.jarVersion}', match[1])
-					}
-				}
-
-				let newGameVersions: string[] = []
-				const mcDependencies = Object.values(metadata.dependencies)
-					.flat()
-					.filter((dependency: any) => dependency.modId === 'minecraft')
-
-				if (mcDependencies.length > 0) {
-					newGameVersions = getGameVersionsMatchingMavenRange(
-						(mcDependencies[0] as any).versionRange,
-						simplifiedGameVersions,
-					)
-				}
-
-				return {
-					name: `${project.title} ${versionNum}`,
-					version_number: versionNum,
-					version_type: versionType(versionNum),
-					loaders: ['forge'],
-					game_versions: newGameVersions,
-				}
-			} else {
-				return {}
-			}
-		},
-		// Old Forge
-		'mcmod.info': (file: string): InferredVersionInfo => {
-			const metadata = JSON.parse(file) as any
-
-			return {
-				name: metadata.version ? `${project.title} ${metadata.version}` : '',
-				version_number: metadata.version,
-				version_type: versionType(metadata.version),
-				loaders: ['forge'],
-				game_versions: simplifiedGameVersions.filter((version) =>
-					version.startsWith(metadata.mcversion),
-				),
-			}
-		},
-		// Fabric (or Babric for mc version beta 1.7.3)
-		'fabric.mod.json': (file: string): InferredVersionInfo => {
-			const metadata = JSON.parse(file) as any
-
-			const mcDependency = metadata.depends?.minecraft
-			const mcDependencies = Array.isArray(mcDependency) ? mcDependency : [mcDependency]
-
-			let detectedGameVersions = metadata.depends
-				? getGameVersionsMatchingSemverRange(metadata.depends.minecraft, simplifiedGameVersions)
-				: []
-			const loaders: string[] = []
-
-			// Detect Beta 1.7.3 -> Babric
-			const hasBabricVersion = mcDependencies.some(
-				(version: string | undefined) => version?.includes('1.0.0-beta.7.3'), // this is fabric's normalized mc version format
-			)
-
-			// Detect 1.3-1.13 -> legacy-fabric
-			const hasLegacyVersions = detectedGameVersions.some((version) => {
-				const match = version.match(/^1\.(\d+)/)
-				return match && parseInt(match[1]) >= 3 && parseInt(match[1]) <= 13
-			})
-
-			if (hasBabricVersion) {
-				loaders.push('babric')
-				detectedGameVersions = gameVersions
-					.filter((version) => version.version === 'b1.7.3')
-					.map((version) => version.version)
-			} else if (hasLegacyVersions) {
-				loaders.push('legacy-fabric')
-			} else {
-				loaders.push('fabric')
-			}
-
-			return {
-				name: `${project.title} ${metadata.version}`,
-				version_number: metadata.version,
-				loaders,
-				version_type: versionType(metadata.version),
-				game_versions: detectedGameVersions,
-			}
-		},
-		// Quilt
-		'quilt.mod.json': (file: string): InferredVersionInfo => {
-			const metadata = JSON.parse(file) as any
-
-			return {
-				name: `${project.title} ${metadata.quilt_loader.version}`,
-				version_number: metadata.quilt_loader.version,
-				loaders: ['quilt'],
-				version_type: versionType(metadata.quilt_loader.version),
-				game_versions: metadata.quilt_loader.depends
-					? getGameVersionsMatchingSemverRange(
-							metadata.quilt_loader.depends.find((x: any) => x.id === 'minecraft')
-								? metadata.quilt_loader.depends.find((x: any) => x.id === 'minecraft').versions
-								: [],
-							simplifiedGameVersions,
-						)
-					: [],
-			}
-		},
 		// Bukkit + Other Forks
 		'plugin.yml': (file: string): InferredVersionInfo => {
 			const metadata = yaml.load(file) as any
 
 			// Check for Folia support
-			const loaders = []
+			const loaders: string[] = []
 			if (metadata['folia-supported'] === true) {
 				loaders.push('folia')
 			}
-			// We don't know which fork of Bukkit users are using otherwise
+			// Generic detection handled by multi-file-detectors
 
 			return {
 				name: `${project.title} ${metadata.version}`,
@@ -310,4 +300,108 @@ export function createLoaderParsers(
 			}
 		},
 	}
+}
+
+/**
+ * Detect Minecraft loaders from an instance JSON file (the {version}.json in versions/ folder).
+ * Implements the full PCL‑CE if‑else chain: OptiFine → LiteLoader (optional) → LabyMod →
+ * Legacy Fabric → Fabric → Quilt → Cleanroom → Forge (excluding NeoForge) → NeoForge.
+ *
+ * @param jsonText The raw string content of the instance JSON.
+ * @returns Loader IDs (e.g. "forge") and optionally a version string.
+ */
+export function detectLoadersFromInstanceJson(jsonText: string): {
+	loaders: string[]
+	version: string | undefined
+} {
+	const lower = jsonText.toLowerCase()
+
+	// OptiFine (optional, can coexist)
+	let optifineVersion: string | undefined
+	if (lower.includes('optifine')) {
+		optifineVersion = jsonText.match(/(?<=HD_U_)[^"":/]+/)?.[0]
+	}
+
+	// LiteLoader (optional, can coexist)
+	let liteLoader = false
+	if (lower.includes('liteloader')) {
+		liteLoader = true
+	}
+
+	// 3. LabyMod
+	if (lower.includes('labymod_data')) {
+		const version = jsonText.match(/"labymod_data"\s*:\s*\{[^}]*"version"\s*:\s*"([^"]+)"/)?.[1]
+		const result = { loaders: ['labymod'] as string[], version }
+		if (optifineVersion) result.loaders.push('optifine')
+		if (liteLoader) result.loaders.push('lite_loader')
+		return result
+	}
+
+	// 4. Legacy Fabric
+	if (lower.includes('net.legacyfabric:intermediary')) {
+		const version = jsonText.match(/(?<=net\.fabricmc:fabric-loader:)[\d.]+(?:\+build\.\d+)?/)?.[0]
+		const result = { loaders: ['legacy_fabric'] as string[], version }
+		if (optifineVersion) result.loaders.push('optifine')
+		if (liteLoader) result.loaders.push('lite_loader')
+		return result
+	}
+
+	// 5. Fabric
+	if (lower.includes('net.fabricmc:fabric-loader')) {
+		const version = jsonText.match(/(?<=net\.fabricmc:fabric-loader:)[\d.]+(?:\+build\.\d+)?/)?.[0]
+		const result = { loaders: ['fabric'] as string[], version }
+		if (optifineVersion) result.loaders.push('optifine')
+		if (liteLoader) result.loaders.push('lite_loader')
+		return result
+	}
+
+	// 6. Quilt
+	if (lower.includes('org.quiltmc:quilt-loader')) {
+		const version = jsonText.match(
+			/(?<=org\.quiltmc:quilt-loader:)[\d.]+(?:\+build\.\d+)?(?:-beta\.\d{1,2})?/,
+		)?.[0]
+		const result = { loaders: ['quilt'] as string[], version }
+		if (optifineVersion) result.loaders.push('optifine')
+		if (liteLoader) result.loaders.push('lite_loader')
+		return result
+	}
+
+	// 7. Cleanroom
+	if (lower.includes('com.cleanroommc:cleanroom:')) {
+		const version = jsonText.match(
+			/(?<=com\.cleanroommc:cleanroom:)[\d.]+(?:\+build\.\d+)?(?:-alpha)?/,
+		)?.[0]
+		const result = { loaders: ['cleanroom'] as string[], version }
+		if (optifineVersion) result.loaders.push('optifine')
+		if (liteLoader) result.loaders.push('lite_loader')
+		return result
+	}
+
+	// 8. Forge (must NOT contain "net.neoforge")
+	if (lower.includes('minecraftforge') && !lower.includes('net.neoforge')) {
+		const version =
+			jsonText.match(/(?<=forge:[\d.]+(?:_pre\d*)?-)[\d.]+/)?.[0] ??
+			jsonText.match(
+				/(?<=net\.minecraftforge:(?:forge|fmlloader):[\d.]+-)[\d\w._+-]+/,
+			)?.[0]
+		const result = { loaders: ['forge'] as string[], version }
+		if (optifineVersion) result.loaders.push('optifine')
+		if (liteLoader) result.loaders.push('lite_loader')
+		return result
+	}
+
+	// 9. NeoForge
+	if (lower.includes('net.neoforge')) {
+		const version = jsonText.match(/"orgeVersion"\s*[^"]*"([^"]+)"/)?.[1]
+		const result = { loaders: ['neoforge'] as string[], version }
+		if (optifineVersion) result.loaders.push('optifine')
+		if (liteLoader) result.loaders.push('lite_loader')
+		return result
+	}
+
+	// No loader detected, but OptiFine / LiteLoader may still be present
+	const result = { loaders: [] as string[], version: undefined as string | undefined }
+	if (optifineVersion) result.loaders.push('optifine')
+	if (liteLoader) result.loaders.push('lite_loader')
+	return result
 }

@@ -44,7 +44,6 @@ async-tungstenite = { version = "0.31.0", default-features = false, features = [
 ] }
 async-walkdir = "2.1.0"
 async_zip = "0.0.18"
-xz2 = "0.1.7"
 aws-sdk-s3 = { version = "=1.122.0", default-features = false, features = [
   "default-https-client",
   "rt-tokio",
@@ -233,6 +232,7 @@ windows = "=0.61.3"  # Locked on 0.61 until we can update windows-core to 0.62
 windows-core = "=0.61.2"  # Locked on 0.61 until webview2-com updates to 0.62
 winreg = "0.55.0"
 woothee = "0.13.0"
+xz2 = "0.1.7"
 yaserde = "0.12.0"
 zbus = "5.11.0"
 zhconv = { version = "0.4.1", default-features = false, features = [
@@ -285,6 +285,9 @@ uninlined_format_args = "warn"
 unnested_or_patterns = "warn"
 wildcard_dependencies = "warn"
 
+[patch.crates-io]
+tauri-plugin-window-state = { git = "https://github.com/Lintern/plugins-workspace", branch = "v2" }
+
 [profile.dev.package.sqlx-macros]
 opt-level = 3
 
@@ -302,6 +305,3 @@ opt-level = 2
 strip = false  # Keep debug symbols for Sentry
 lto = "thin"  # Enable LTO but keep compile times reasonable
 panic = "unwind"  # Don't exit the whole app on panic in production
-
-[patch.crates-io]
-tauri-plugin-window-state = { git = "https://github.com/Lintern/plugins-workspace", branch = "v2" }
