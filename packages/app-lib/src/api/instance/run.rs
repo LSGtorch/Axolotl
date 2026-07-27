@@ -244,6 +244,7 @@ async fn run_credentials(
                     | crate::state::ModLoader::Fabric
                     | crate::state::ModLoader::Quilt
                     | crate::state::ModLoader::NeoForge
+                    | crate::state::ModLoader::Cleanroom
             ),
         );
         tracing::info!(

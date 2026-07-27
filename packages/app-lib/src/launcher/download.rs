@@ -639,7 +639,7 @@ pub async fn download_version_info(
         .version_dir(&version_id)
         .join(format!("{version_id}.json"));
 
-    let res = if path.exists() && !force.unwrap_or(false) {
+    let res = if path.exists() && !force.unwrap_or(false) && mod_loader != ModLoader::Cleanroom {
         let mut info: GameVersionInfo = io::read(&path)
             .err_into::<crate::Error>()
             .await
@@ -768,12 +768,30 @@ pub async fn download_version_info(
             let partial: d::modded::PartialVersionInfo =
                 if mod_loader == ModLoader::OptiFine {
                     crate::launcher::optifine::build_partial_version_info(
-                        st,
-                        &info,
-                        &version.id,
-                        &loader.id,
+                        st, &info, &version.id, &loader.id,
                     )
                     .await?
+                } else if mod_loader == ModLoader::Cleanroom {
+                    // Cleanroom's version info is installed locally by cleanroom::install().
+                    // Read the PartialVersionInfo from the version dir
+                    let cleanroom_path = st
+                        .directories
+                        .version_dir(&version_id)
+                        .join(format!("{version_id}.json"));
+                    match io::read(&cleanroom_path).await {
+                        Ok(data) => serde_json::from_slice(&data).map_err(|e| {
+                            crate::ErrorKind::LauncherError(format!(
+                                "Failed to parse Cleanroom version info: {e}"
+                            ))
+                        })?,
+                        Err(e) => return Err(
+                            crate::ErrorKind::LauncherError(format!(
+                                "Cleanroom is not installed. Version info missing at {}: {e}",
+                                cleanroom_path.display()
+                            ))
+                            .into(),
+                        ),
+                    }
                 } else {
                     fetch_json(
                         Method::GET,

@@ -251,6 +251,12 @@ pub async fn create_mrpack_json(
             )
             .into());
         }
+        (ModLoader::Cleanroom, _) => {
+            return Err(crate::ErrorKind::OtherError(
+                "Cleanroom instances cannot be exported to mrpack, as the format has no Cleanroom dependency type".to_string(),
+            )
+            .into());
+        }
         _ => {
             return Err(crate::ErrorKind::OtherError(
                 "Loader version mismatch".to_string(),

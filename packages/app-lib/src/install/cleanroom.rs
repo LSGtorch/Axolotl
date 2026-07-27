@@ -63,13 +63,18 @@ pub async fn install(context: &InstanceLaunchContext) -> crate::Result<()> {
 	.await?;
 	let installer = read_installer(&io::read(&installer_path).await?)?;
 
-    let version_dir = state.directories.version_dir(&installer.version.id);
-    io::create_dir_all(&version_dir).await?;
-    io::write(
-        version_dir.join(format!("{}.json", installer.version.id)),
-        serde_json::to_vec(&installer.version)?,
-    )
-    .await?;
+	// Write version.json under the name the launcher expects:
+	// "{minecraft_version}-{loader_id}" == "1.12.2-latest"
+	let version_jar = format!("{}-latest", context.applied_content_set.game_version);
+	let version_dir = state.directories.version_dir(&version_jar);
+	io::create_dir_all(&version_dir).await?;
+	let mut version = installer.version;
+	version.id.clone_from(&version_jar);
+	io::write(
+		version_dir.join(format!("{version_jar}.json")),
+		serde_json::to_vec(&version)?,
+	)
+	.await?;
 
     for (path, contents) in installer.libraries {
         let path = state.directories.libraries_dir().join(path);
