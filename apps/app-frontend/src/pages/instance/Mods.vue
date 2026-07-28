@@ -538,7 +538,11 @@ const modpackContentQuery = useQuery({
 watch(
 	() => modpackContentQuery.data.value,
 	(items) => {
-		linkedModpackContentItems.value = items ?? []
+		if (props.instance?.link) {
+			linkedModpackContentItems.value = items ?? []
+		} else {
+			linkedModpackContentItems.value = []
+		}
 	},
 	{ immediate: true },
 )
