@@ -493,8 +493,11 @@ const displayedModpackProject = computed(
 
 watch(
 	() => props.instance.link,
-	() => {
+	(newLink) => {
 		localImportedModpackUnlinked.value = false
+		if (!newLink) {
+			linkedModpackContentItems.value = []
+		}
 	},
 )
 
@@ -1510,6 +1513,7 @@ async function unpairInstance() {
 	linkedModpackHasUpdate.value = false
 	linkedModpackUpdateVersionId.value = null
 	localImportedModpackUnlinked.value = true
+	linkedModpackContentItems.value = []
 	await initProjects()
 }
 
