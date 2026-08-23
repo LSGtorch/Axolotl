@@ -30,7 +30,7 @@ import {
 	type ScanResult,
 } from '@/helpers/drop'
 import { import_instance } from '@/helpers/import.js'
-import { wait_for_install_job } from '@/helpers/install'
+import { install_create_direct_link_instance, wait_for_install_job } from '@/helpers/install'
 import {
 	add_project_from_path,
 	check_symlink_capability,
@@ -203,6 +203,7 @@ export function useDropImport(options: DropImportOptions) {
 				compatibleMode?: boolean
 			}>
 			symlinkCapable: string
+			directAllowed?: boolean
 		}) => void
 		hide: () => void
 	} | null>(null)
@@ -366,6 +367,14 @@ export function useDropImport(options: DropImportOptions) {
 		dropInstanceImportedText: {
 			id: 'app.drop.instance-imported-text',
 			defaultMessage: '{name} imported successfully.',
+		},
+		dropInstanceDirectLinkedTitle: {
+			id: 'app.drop.instance-direct-linked-title',
+			defaultMessage: 'Instance linked',
+		},
+		dropInstanceDirectLinkedText: {
+			id: 'app.drop.instance-direct-linked-text',
+			defaultMessage: '{name} is now directly linked and can still be used alongside HMCL/PCL.',
 		},
 		dropImportFailedTitle: {
 			id: 'app.drop.import-failed-title',
@@ -1384,6 +1393,7 @@ export function useDropImport(options: DropImportOptions) {
 			symlinkCardsModal.value?.show({
 				instances: options.instanceNames.map((name) => ({ name })),
 				symlinkCapable: options.symlinkCapable,
+				directAllowed: !launcherZipTempDir.value,
 			})
 		})
 	}
@@ -1392,7 +1402,12 @@ export function useDropImport(options: DropImportOptions) {
 		selections: Array<{
 			launcherType: string
 			launcherName: string
-			instances: Array<{ name: string; path: string; compatibleMode?: boolean; versionPath?: string }>
+			instances: Array<{
+				name: string
+				path: string
+				compatibleMode?: boolean
+				versionPath?: string
+			}>
 		}>,
 	) {
 		const allSelected: SelectedInstance[] = []
@@ -1428,6 +1443,7 @@ export function useDropImport(options: DropImportOptions) {
 				basePath: i.basePath || i.path,
 			})),
 			symlinkCapable: cap,
+			directAllowed: !launcherZipTempDir.value,
 		})
 	}
 
@@ -1447,7 +1463,11 @@ export function useDropImport(options: DropImportOptions) {
 
 	async function onSymlinkMethodConfirmed(choices: SymlinkMethodChoice[] | boolean) {
 		if (symlinkChoiceResolve) {
-			symlinkChoiceResolve(Array.isArray(choices) ? (choices[0]?.symlink ?? false) : choices)
+			symlinkChoiceResolve(
+				Array.isArray(choices)
+					? (choices[0]?.symlink ?? choices[0]?.method === 'symlink')
+					: choices,
+			)
 			symlinkChoiceResolve = null
 			return
 		}
@@ -1465,7 +1485,8 @@ export function useDropImport(options: DropImportOptions) {
 							(c.instancePath ?? undefined) === (item.instancePath ?? undefined),
 					)
 					if (choice) {
-						item.symlink = choice.symlink
+						item.method = choice.method
+						item.symlink = choice.symlink ?? choice.method === 'symlink'
 						item.gameVersion = choice.gameVersion
 						item.loader = choice.loader
 						item.loaderVersion = choice.loaderVersion
@@ -1496,22 +1517,38 @@ export function useDropImport(options: DropImportOptions) {
 					)
 				: undefined
 			try {
-				const job = await import_instance(
-					ctx?.launcherType ?? inst.launcherType,
-					inst.compatibleMode ? inst.basePath : (ctx?.basePath ?? inst.path),
-					inst.name,
-					choice?.symlink ?? (Array.isArray(choices) ? false : choices),
-					inst.compatibleMode ? inst.versionPath : undefined,
-					inst.compatibleMode ? undefined : choice?.gameVersion,
-					inst.compatibleMode ? undefined : choice?.loader,
-					inst.compatibleMode ? undefined : choice?.loaderVersion,
-				)
-				await wait_for_install_job(job.job_id)
-				addNotification({
-					title: formatMessage(messages.dropInstanceImportedTitle),
-					text: formatMessage(messages.dropInstanceImportedText, { name: inst.name }),
-					type: 'success',
-				})
+				if (choice?.method === 'direct') {
+					await install_create_direct_link_instance({
+						name: null,
+						launcherType: ctx?.launcherType ?? inst.launcherType,
+						basePath: inst.compatibleMode ? inst.basePath : (ctx?.basePath ?? inst.path),
+						instanceFolder: inst.name,
+						instancePath: inst.compatibleMode ? inst.versionPath : undefined,
+					})
+					addNotification({
+						title: formatMessage(messages.dropInstanceDirectLinkedTitle),
+						text: formatMessage(messages.dropInstanceDirectLinkedText, { name: inst.name }),
+						type: 'success',
+					})
+					await router.push('/library')
+				} else {
+					const job = await import_instance(
+						ctx?.launcherType ?? inst.launcherType,
+						inst.compatibleMode ? inst.basePath : (ctx?.basePath ?? inst.path),
+						inst.name,
+						choice?.symlink ?? (Array.isArray(choices) ? false : choices),
+						inst.compatibleMode ? inst.versionPath : undefined,
+						inst.compatibleMode ? undefined : choice?.gameVersion,
+						inst.compatibleMode ? undefined : choice?.loader,
+						inst.compatibleMode ? undefined : choice?.loaderVersion,
+					)
+					await wait_for_install_job(job.job_id)
+					addNotification({
+						title: formatMessage(messages.dropInstanceImportedTitle),
+						text: formatMessage(messages.dropInstanceImportedText, { name: inst.name }),
+						type: 'success',
+					})
+				}
 			} catch (e) {
 				addNotification({
 					title: formatMessage(messages.dropImportFailedTitle),
@@ -1560,17 +1597,27 @@ export function useDropImport(options: DropImportOptions) {
 			})
 
 			try {
-				const job = await import_instance(
-					ctx?.launcherType ?? inst.launcherType,
-					inst.compatibleMode ? inst.basePath : (ctx?.basePath ?? inst.path),
-					inst.name,
-					choice?.symlink ?? (Array.isArray(choices) ? false : choices),
-					inst.compatibleMode ? inst.versionPath : undefined,
-					inst.compatibleMode ? undefined : choice?.gameVersion,
-					inst.compatibleMode ? undefined : choice?.loader,
-					inst.compatibleMode ? undefined : choice?.loaderVersion,
-				)
-				await wait_for_install_job(job.job_id)
+				if (choice?.method === 'direct') {
+					await install_create_direct_link_instance({
+						name: null,
+						launcherType: ctx?.launcherType ?? inst.launcherType,
+						basePath: inst.compatibleMode ? inst.basePath : (ctx?.basePath ?? inst.path),
+						instanceFolder: inst.name,
+						instancePath: inst.compatibleMode ? inst.versionPath : undefined,
+					})
+				} else {
+					const job = await import_instance(
+						ctx?.launcherType ?? inst.launcherType,
+						inst.compatibleMode ? inst.basePath : (ctx?.basePath ?? inst.path),
+						inst.name,
+						choice?.symlink ?? (Array.isArray(choices) ? false : choices),
+						inst.compatibleMode ? inst.versionPath : undefined,
+						inst.compatibleMode ? undefined : choice?.gameVersion,
+						inst.compatibleMode ? undefined : choice?.loader,
+						inst.compatibleMode ? undefined : choice?.loaderVersion,
+					)
+					await wait_for_install_job(job.job_id)
+				}
 				completed++
 			} catch (e) {
 				failedCount++
@@ -2206,6 +2253,16 @@ export function useDropImport(options: DropImportOptions) {
 				await installModpackFromPath(item.sourcePath, item.name, { persistUntilDone: false })
 				return
 			case 'instance': {
+				if (item.method === 'direct') {
+					await install_create_direct_link_instance({
+						name: null,
+						launcherType: item.launcherType ?? 'Generic',
+						basePath: item.basePath ?? '',
+						instanceFolder: item.instanceFolder ?? item.name,
+						instancePath: item.instancePath,
+					})
+					return
+				}
 				const job = await import_instance(
 					item.launcherType,
 					item.basePath,

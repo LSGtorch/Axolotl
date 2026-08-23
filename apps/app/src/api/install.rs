@@ -2,7 +2,7 @@ use crate::api::Result;
 use crate::api::instance::InstanceLink;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use theseus::data::ModLoader;
+use theseus::data::{CreateDirectLinkInstance, InstanceMetadata, ModLoader};
 use theseus::install::{
     ImportPlanRequest, InstallJobSnapshot, InstallModpackPreview,
     InstallPostInstallEdit,
@@ -16,6 +16,7 @@ pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
         .invoke_handler(tauri::generate_handler![
             install_get_modpack_preview,
             install_create_instance,
+            install_create_direct_link_instance,
             install_create_modpack_instance,
             install_import_instance,
             install_start_import_plan,
@@ -105,6 +106,35 @@ pub async fn install_create_instance(
         match request.link {
             Some(link) => link.into_core()?,
             None => theseus::data::InstanceLink::Unmanaged,
+        },
+    )
+    .await?)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallCreateDirectLinkInstanceRequest {
+    pub name: Option<String>,
+    pub launcher_type: ImportLauncherType,
+    pub base_path: PathBuf,
+    pub instance_folder: String,
+    pub instance_path: Option<String>,
+}
+
+/// Creates a "directly associated" instance from the same launcher identity
+/// used by legacy import. The backend resolves all persistent paths and never
+/// copies, symlinks, or writes into the external Minecraft directory.
+#[tauri::command]
+pub async fn install_create_direct_link_instance(
+    request: InstallCreateDirectLinkInstanceRequest,
+) -> Result<InstanceMetadata> {
+    Ok(theseus::instance::create_with_direct_link(
+        CreateDirectLinkInstance {
+            name: request.name,
+            launcher_type: request.launcher_type,
+            base_path: request.base_path,
+            instance_folder: request.instance_folder,
+            instance_path: request.instance_path,
         },
     )
     .await?)

@@ -350,6 +350,25 @@ export async function install_import_instance(
 	})
 }
 
+export interface DirectLinkInstanceMetadata {
+	id: string
+	name: string
+	path: string
+}
+
+export async function install_create_direct_link_instance(request: {
+	name?: string | null
+	launcherType: string
+	basePath: string
+	instanceFolder: string
+	instancePath?: string | null
+}) {
+	return await invoke<DirectLinkInstanceMetadata>(
+		'plugin:install|install_create_direct_link_instance',
+		{ request },
+	)
+}
+
 export async function install_start_import_plan(request: ImportPlanRequest) {
 	return await invoke<string>('plugin:install|install_start_import_plan', { request })
 }

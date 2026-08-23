@@ -32,6 +32,116 @@ pub(crate) struct InstanceRow {
     pub recent_time_played: i64,
 }
 
+/// Direct-association ("直接关联") columns of an instance.
+///
+/// These are read through runtime queries instead of the compile-time checked
+/// macros because the checked-in `.sqlx` cache was prepared against the schema
+/// before these columns existed and cannot be regenerated without a live
+/// database; keeping every existing macro query byte-identical avoids
+/// invalidating that cache.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct DirectLinkFields {
+    pub launcher: Option<String>,
+    pub launcher_root: Option<String>,
+    pub dot_minecraft: Option<String>,
+    pub version_id: Option<String>,
+    pub version_json_path: Option<String>,
+}
+
+impl DirectLinkFields {
+    fn apply_to(&self, instance: &mut Instance) {
+        instance.linked_launcher = self.launcher.clone();
+        instance.linked_launcher_root = self.launcher_root.clone();
+        instance.linked_dot_minecraft = self.dot_minecraft.clone();
+        instance.linked_version_id = self.version_id.clone();
+        instance.linked_version_json_path = self.version_json_path.clone();
+    }
+}
+
+pub(crate) async fn get_direct_link_fields<'e, E>(
+    id: &str,
+    exec: E,
+) -> crate::Result<DirectLinkFields>
+where
+    E: Executor<'e, Database = Sqlite>,
+{
+    let row: Option<(
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )> = sqlx::query_as(
+        "
+		SELECT
+			linked_launcher,
+			linked_launcher_root,
+			linked_dot_minecraft,
+			linked_version_id,
+			linked_version_json_path
+		FROM instances
+		WHERE id = ?
+		",
+    )
+    .bind(id)
+    .fetch_optional(exec)
+    .await?;
+
+    Ok(row
+        .map(
+            |(
+                launcher,
+                launcher_root,
+                dot_minecraft,
+                version_id,
+                version_json_path,
+            )| DirectLinkFields {
+                launcher,
+                launcher_root,
+                dot_minecraft,
+                version_id,
+                version_json_path,
+            },
+        )
+        .unwrap_or_default())
+}
+
+/// Sets the direct-association columns of an instance.
+pub(crate) async fn set_direct_link_fields(
+    id: &str,
+    fields: &DirectLinkFields,
+    tx: &mut Transaction<'_, Sqlite>,
+) -> crate::Result<()> {
+    let launcher = fields.launcher.as_deref();
+    let launcher_root = fields.launcher_root.as_deref();
+    let dot_minecraft = fields.dot_minecraft.as_deref();
+    let version_id = fields.version_id.as_deref();
+    let version_json_path = fields.version_json_path.as_deref();
+
+    sqlx::query(
+        "
+		UPDATE instances
+		SET
+			linked_launcher = ?,
+			linked_launcher_root = ?,
+			linked_dot_minecraft = ?,
+			linked_version_id = ?,
+			linked_version_json_path = ?
+		WHERE id = ?
+		",
+    )
+    .bind(launcher)
+    .bind(launcher_root)
+    .bind(dot_minecraft)
+    .bind(version_id)
+    .bind(version_json_path)
+    .bind(id)
+    .execute(&mut **tx)
+    .await?;
+
+    Ok(())
+}
+
 impl TryFrom<InstanceRow> for Instance {
     type Error = crate::Error;
 
@@ -48,6 +158,11 @@ impl TryFrom<InstanceRow> for Instance {
             name: row.name,
             icon_path: row.icon_path,
             symlink_target: row.symlink_target,
+            linked_launcher: None,
+            linked_launcher_root: None,
+            linked_dot_minecraft: None,
+            linked_version_id: None,
+            linked_version_json_path: None,
             created: timestamp(row.created),
             modified: timestamp(row.modified),
             last_played: row.last_played.and_then(optional_timestamp),
@@ -181,6 +296,11 @@ struct InstanceMetadataRow {
     name: String,
     icon_path: Option<String>,
     symlink_target: Option<String>,
+    linked_launcher: Option<String>,
+    linked_launcher_root: Option<String>,
+    linked_dot_minecraft: Option<String>,
+    linked_version_id: Option<String>,
+    linked_version_json_path: Option<String>,
     created: i64,
     modified: i64,
     last_played: Option<i64>,
@@ -235,7 +355,14 @@ impl TryFrom<InstanceLaunchOverridesRow> for InstanceLaunchOverrides {
 impl InstanceMetadataRow {
     fn into_record(self) -> crate::Result<InstanceMetadataRecord> {
         let instance_id = self.id.clone();
-        let instance = InstanceRow {
+        let direct_link = DirectLinkFields {
+            launcher: self.linked_launcher.clone(),
+            launcher_root: self.linked_launcher_root.clone(),
+            dot_minecraft: self.linked_dot_minecraft.clone(),
+            version_id: self.linked_version_id.clone(),
+            version_json_path: self.linked_version_json_path.clone(),
+        };
+        let mut instance = InstanceRow {
             id: self.id,
             path: self.path,
             applied_content_set_id: self.applied_content_set_id,
@@ -253,6 +380,7 @@ impl InstanceMetadataRow {
             recent_time_played: self.recent_time_played,
         }
         .try_into()?;
+        direct_link.apply_to(&mut instance);
         let applied_content_set = ContentSet {
             id: required(self.content_set_id, "instance_content_sets.id")?,
             instance_id: required(
@@ -340,7 +468,7 @@ pub(crate) async fn get_instance_by_id<'e, E>(
     exec: E,
 ) -> crate::Result<Option<Instance>>
 where
-    E: Executor<'e, Database = Sqlite>,
+    E: Executor<'e, Database = Sqlite> + Copy,
 {
     let row = sqlx::query_as!(
         InstanceRow,
@@ -354,7 +482,14 @@ where
     .fetch_optional(exec)
     .await?;
 
-    row.map(TryInto::try_into).transpose()
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let mut instance: Instance = row.try_into()?;
+    let fields = get_direct_link_fields(id, exec).await?;
+    fields.apply_to(&mut instance);
+
+    Ok(Some(instance))
 }
 
 pub(crate) async fn get_instance_by_path<'e, E>(
@@ -362,7 +497,7 @@ pub(crate) async fn get_instance_by_path<'e, E>(
     exec: E,
 ) -> crate::Result<Option<Instance>>
 where
-    E: Executor<'e, Database = Sqlite>,
+    E: Executor<'e, Database = Sqlite> + Copy,
 {
     let row = sqlx::query_as!(
         InstanceRow,
@@ -376,7 +511,14 @@ where
     .fetch_optional(exec)
     .await?;
 
-    row.map(TryInto::try_into).transpose()
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let mut instance: Instance = row.try_into()?;
+    let fields = get_direct_link_fields(&instance.id, exec).await?;
+    fields.apply_to(&mut instance);
+
+    Ok(Some(instance))
 }
 
 pub(crate) async fn get_instance_path_by_id<'e, E>(
@@ -426,49 +568,53 @@ pub(crate) async fn get_instance_metadata_by_id(
     id: &str,
     pool: &SqlitePool,
 ) -> crate::Result<Option<InstanceMetadataRecord>> {
-    let row = sqlx::query_as!(
-        InstanceMetadataRow,
+    let row = sqlx::query_as::<_, InstanceMetadataRow>(
         r#"
         SELECT
-            i.id AS "id!: String",
-            i.path AS "path!: String",
-            i.applied_content_set_id AS "applied_content_set_id?: String",
-            i.install_stage AS "install_stage!: String",
-            i.launcher_feature_version AS "launcher_feature_version!: String",
-            i.update_channel AS "update_channel!: String",
-            i.name AS "name!: String",
-            i.icon_path AS "icon_path?: String",
-            i.symlink_target AS "symlink_target?: String",
-            i.created AS "created!: i64",
-            i.modified AS "modified!: i64",
-            i.last_played AS "last_played?: i64",
-			i.pinned_at AS "pinned_at?: i64",
-            i.submitted_time_played AS "submitted_time_played!: i64",
-            i.recent_time_played AS "recent_time_played!: i64",
-            cs.id AS "content_set_id?: String",
-            cs.instance_id AS "content_set_instance_id?: String",
-            cs.name AS "content_set_name?: String",
-            cs.source_kind AS "content_set_source_kind?: String",
-            cs.status AS "content_set_status?: String",
-            cs.game_version AS "content_set_game_version?: String",
-            cs.protocol_version AS "content_set_protocol_version?: i64",
-            cs.loader AS "content_set_loader?: String",
-            cs.loader_version AS "content_set_loader_version?: String",
-            cs.created AS "content_set_created?: i64",
-            cs.modified AS "content_set_modified?: i64",
-            COALESCE(link.link_kind, 'unmanaged') AS "link_kind!: String",
-            link.modrinth_project_id AS "modrinth_project_id?: String",
-            link.modrinth_version_id AS "modrinth_version_id?: String",
-            link.server_project_id AS "server_project_id?: String",
-            link.content_project_id AS "content_project_id?: String",
-            link.content_version_id AS "content_version_id?: String",
-            link.hosting_server_id AS "hosting_server_id?: String",
-            json(link.hosting_instance_ids) AS "hosting_instance_ids?: String",
-            link.hosting_active_instance_id AS "hosting_active_instance_id?: String",
-            link.shared_instance_id AS "shared_instance_id?: String",
-            link.imported_name AS "imported_name?: String",
-            link.imported_version_number AS "imported_version_number?: String",
-            link.imported_filename AS "imported_filename?: String",
+            i.id,
+            i.path,
+            i.applied_content_set_id,
+            i.install_stage,
+            i.launcher_feature_version,
+            i.update_channel,
+            i.name,
+            i.icon_path,
+            i.symlink_target,
+            i.linked_launcher,
+            i.linked_launcher_root,
+            i.linked_dot_minecraft,
+            i.linked_version_id,
+            i.linked_version_json_path,
+            i.created,
+            i.modified,
+            i.last_played,
+			i.pinned_at,
+            i.submitted_time_played,
+            i.recent_time_played,
+            cs.id AS content_set_id,
+            cs.instance_id AS content_set_instance_id,
+            cs.name AS content_set_name,
+            cs.source_kind AS content_set_source_kind,
+            cs.status AS content_set_status,
+            cs.game_version AS content_set_game_version,
+            cs.protocol_version AS content_set_protocol_version,
+            cs.loader AS content_set_loader,
+            cs.loader_version AS content_set_loader_version,
+            cs.created AS content_set_created,
+            cs.modified AS content_set_modified,
+            COALESCE(link.link_kind, 'unmanaged') AS link_kind,
+            link.modrinth_project_id,
+            link.modrinth_version_id,
+            link.server_project_id,
+            link.content_project_id,
+            link.content_version_id,
+            link.hosting_server_id,
+            json(link.hosting_instance_ids) AS hosting_instance_ids,
+            link.hosting_active_instance_id,
+            link.shared_instance_id,
+            link.imported_name,
+            link.imported_version_number,
+            link.imported_filename,
             COALESCE((
                 SELECT json_group_array(group_name)
                 FROM (
@@ -477,8 +623,8 @@ pub(crate) async fn get_instance_metadata_by_id(
                     WHERE instance_id = i.id
                     ORDER BY group_name
                 )
-            ), '[]') AS "groups!: String",
-            json(overrides.overrides) AS "launch_overrides?: String"
+            ), '[]') AS groups,
+            json(overrides.overrides) AS launch_overrides
         FROM instances i
         LEFT JOIN instance_content_sets cs
             ON cs.id = i.applied_content_set_id
@@ -489,8 +635,8 @@ pub(crate) async fn get_instance_metadata_by_id(
             ON overrides.instance_id = i.id
         WHERE i.id = ?
         "#,
-        id,
     )
+    .bind(id)
     .fetch_optional(pool)
     .await?;
 
@@ -506,53 +652,57 @@ pub(crate) async fn get_instance_metadata_many(
     }
 
     let ids_json = serde_json::to_string(ids)?;
-    let rows = sqlx::query_as!(
-        InstanceMetadataRow,
+    let rows = sqlx::query_as::<_, InstanceMetadataRow>(
         r#"
         WITH requested AS (
             SELECT value AS id, key AS ord
             FROM json_each(?)
         )
         SELECT
-            i.id AS "id!: String",
-            i.path AS "path!: String",
-            i.applied_content_set_id AS "applied_content_set_id?: String",
-            i.install_stage AS "install_stage!: String",
-            i.launcher_feature_version AS "launcher_feature_version!: String",
-            i.update_channel AS "update_channel!: String",
-            i.name AS "name!: String",
-            i.icon_path AS "icon_path?: String",
-            i.symlink_target AS "symlink_target?: String",
-            i.created AS "created!: i64",
-            i.modified AS "modified!: i64",
-            i.last_played AS "last_played?: i64",
-			i.pinned_at AS "pinned_at?: i64",
-            i.submitted_time_played AS "submitted_time_played!: i64",
-            i.recent_time_played AS "recent_time_played!: i64",
-            cs.id AS "content_set_id?: String",
-            cs.instance_id AS "content_set_instance_id?: String",
-            cs.name AS "content_set_name?: String",
-            cs.source_kind AS "content_set_source_kind?: String",
-            cs.status AS "content_set_status?: String",
-            cs.game_version AS "content_set_game_version?: String",
-            cs.protocol_version AS "content_set_protocol_version?: i64",
-            cs.loader AS "content_set_loader?: String",
-            cs.loader_version AS "content_set_loader_version?: String",
-            cs.created AS "content_set_created?: i64",
-            cs.modified AS "content_set_modified?: i64",
-            COALESCE(link.link_kind, 'unmanaged') AS "link_kind!: String",
-            link.modrinth_project_id AS "modrinth_project_id?: String",
-            link.modrinth_version_id AS "modrinth_version_id?: String",
-            link.server_project_id AS "server_project_id?: String",
-            link.content_project_id AS "content_project_id?: String",
-            link.content_version_id AS "content_version_id?: String",
-            link.hosting_server_id AS "hosting_server_id?: String",
-            json(link.hosting_instance_ids) AS "hosting_instance_ids?: String",
-            link.hosting_active_instance_id AS "hosting_active_instance_id?: String",
-            link.shared_instance_id AS "shared_instance_id?: String",
-            link.imported_name AS "imported_name?: String",
-            link.imported_version_number AS "imported_version_number?: String",
-            link.imported_filename AS "imported_filename?: String",
+            i.id,
+            i.path,
+            i.applied_content_set_id,
+            i.install_stage,
+            i.launcher_feature_version,
+            i.update_channel,
+            i.name,
+            i.icon_path,
+            i.symlink_target,
+            i.linked_launcher,
+            i.linked_launcher_root,
+            i.linked_dot_minecraft,
+            i.linked_version_id,
+            i.linked_version_json_path,
+            i.created,
+            i.modified,
+            i.last_played,
+			i.pinned_at,
+            i.submitted_time_played,
+            i.recent_time_played,
+            cs.id AS content_set_id,
+            cs.instance_id AS content_set_instance_id,
+            cs.name AS content_set_name,
+            cs.source_kind AS content_set_source_kind,
+            cs.status AS content_set_status,
+            cs.game_version AS content_set_game_version,
+            cs.protocol_version AS content_set_protocol_version,
+            cs.loader AS content_set_loader,
+            cs.loader_version AS content_set_loader_version,
+            cs.created AS content_set_created,
+            cs.modified AS content_set_modified,
+            COALESCE(link.link_kind, 'unmanaged') AS link_kind,
+            link.modrinth_project_id,
+            link.modrinth_version_id,
+            link.server_project_id,
+            link.content_project_id,
+            link.content_version_id,
+            link.hosting_server_id,
+            json(link.hosting_instance_ids) AS hosting_instance_ids,
+            link.hosting_active_instance_id,
+            link.shared_instance_id,
+            link.imported_name,
+            link.imported_version_number,
+            link.imported_filename,
             COALESCE((
                 SELECT json_group_array(group_name)
                 FROM (
@@ -561,8 +711,8 @@ pub(crate) async fn get_instance_metadata_many(
                     WHERE instance_id = i.id
                     ORDER BY group_name
                 )
-            ), '[]') AS "groups!: String",
-            json(overrides.overrides) AS "launch_overrides?: String"
+            ), '[]') AS groups,
+            json(overrides.overrides) AS launch_overrides
         FROM requested
         INNER JOIN instances i
             ON i.id = requested.id
@@ -575,8 +725,8 @@ pub(crate) async fn get_instance_metadata_many(
             ON overrides.instance_id = i.id
         ORDER BY requested.ord
         "#,
-        ids_json,
     )
+    .bind(ids_json)
     .fetch_all(pool)
     .await?;
 
@@ -588,49 +738,53 @@ pub(crate) async fn get_instance_metadata_many(
 pub(crate) async fn list_instance_metadata(
     pool: &SqlitePool,
 ) -> crate::Result<Vec<InstanceMetadataRecord>> {
-    let rows = sqlx::query_as!(
-        InstanceMetadataRow,
+    let rows = sqlx::query_as::<_, InstanceMetadataRow>(
         r#"
         SELECT
-            i.id AS "id!: String",
-            i.path AS "path!: String",
-            i.applied_content_set_id AS "applied_content_set_id?: String",
-            i.install_stage AS "install_stage!: String",
-            i.launcher_feature_version AS "launcher_feature_version!: String",
-            i.update_channel AS "update_channel!: String",
-            i.name AS "name!: String",
-            i.icon_path AS "icon_path?: String",
-            i.symlink_target AS "symlink_target?: String",
-            i.created AS "created!: i64",
-            i.modified AS "modified!: i64",
-            i.last_played AS "last_played?: i64",
-			i.pinned_at AS "pinned_at?: i64",
-            i.submitted_time_played AS "submitted_time_played!: i64",
-            i.recent_time_played AS "recent_time_played!: i64",
-            cs.id AS "content_set_id?: String",
-            cs.instance_id AS "content_set_instance_id?: String",
-            cs.name AS "content_set_name?: String",
-            cs.source_kind AS "content_set_source_kind?: String",
-            cs.status AS "content_set_status?: String",
-            cs.game_version AS "content_set_game_version?: String",
-            cs.protocol_version AS "content_set_protocol_version?: i64",
-            cs.loader AS "content_set_loader?: String",
-            cs.loader_version AS "content_set_loader_version?: String",
-            cs.created AS "content_set_created?: i64",
-            cs.modified AS "content_set_modified?: i64",
-            COALESCE(link.link_kind, 'unmanaged') AS "link_kind!: String",
-            link.modrinth_project_id AS "modrinth_project_id?: String",
-            link.modrinth_version_id AS "modrinth_version_id?: String",
-            link.server_project_id AS "server_project_id?: String",
-            link.content_project_id AS "content_project_id?: String",
-            link.content_version_id AS "content_version_id?: String",
-            link.hosting_server_id AS "hosting_server_id?: String",
-            json(link.hosting_instance_ids) AS "hosting_instance_ids?: String",
-            link.hosting_active_instance_id AS "hosting_active_instance_id?: String",
-            link.shared_instance_id AS "shared_instance_id?: String",
-            link.imported_name AS "imported_name?: String",
-            link.imported_version_number AS "imported_version_number?: String",
-            link.imported_filename AS "imported_filename?: String",
+            i.id,
+            i.path,
+            i.applied_content_set_id,
+            i.install_stage,
+            i.launcher_feature_version,
+            i.update_channel,
+            i.name,
+            i.icon_path,
+            i.symlink_target,
+            i.linked_launcher,
+            i.linked_launcher_root,
+            i.linked_dot_minecraft,
+            i.linked_version_id,
+            i.linked_version_json_path,
+            i.created,
+            i.modified,
+            i.last_played,
+			i.pinned_at,
+            i.submitted_time_played,
+            i.recent_time_played,
+            cs.id AS content_set_id,
+            cs.instance_id AS content_set_instance_id,
+            cs.name AS content_set_name,
+            cs.source_kind AS content_set_source_kind,
+            cs.status AS content_set_status,
+            cs.game_version AS content_set_game_version,
+            cs.protocol_version AS content_set_protocol_version,
+            cs.loader AS content_set_loader,
+            cs.loader_version AS content_set_loader_version,
+            cs.created AS content_set_created,
+            cs.modified AS content_set_modified,
+            COALESCE(link.link_kind, 'unmanaged') AS link_kind,
+            link.modrinth_project_id,
+            link.modrinth_version_id,
+            link.server_project_id,
+            link.content_project_id,
+            link.content_version_id,
+            link.hosting_server_id,
+            json(link.hosting_instance_ids) AS hosting_instance_ids,
+            link.hosting_active_instance_id,
+            link.shared_instance_id,
+            link.imported_name,
+            link.imported_version_number,
+            link.imported_filename,
             COALESCE((
                 SELECT json_group_array(group_name)
                 FROM (
@@ -639,8 +793,8 @@ pub(crate) async fn list_instance_metadata(
                     WHERE instance_id = i.id
                     ORDER BY group_name
                 )
-            ), '[]') AS "groups!: String",
-            json(overrides.overrides) AS "launch_overrides?: String"
+            ), '[]') AS groups,
+            json(overrides.overrides) AS launch_overrides
         FROM instances i
         LEFT JOIN instance_content_sets cs
             ON cs.id = i.applied_content_set_id
@@ -663,51 +817,55 @@ pub(crate) async fn get_instance_launch_context(
     instance_id: &str,
     pool: &SqlitePool,
 ) -> crate::Result<Option<InstanceLaunchContext>> {
-    let row = sqlx::query_as!(
-        InstanceMetadataRow,
+    let row = sqlx::query_as::<_, InstanceMetadataRow>(
         r#"
         SELECT
-            i.id AS "id!: String",
-            i.path AS "path!: String",
-            i.applied_content_set_id AS "applied_content_set_id?: String",
-            i.install_stage AS "install_stage!: String",
-            i.launcher_feature_version AS "launcher_feature_version!: String",
-            i.update_channel AS "update_channel!: String",
-            i.name AS "name!: String",
-            i.icon_path AS "icon_path?: String",
-            i.symlink_target AS "symlink_target?: String",
-            i.created AS "created!: i64",
-            i.modified AS "modified!: i64",
-            i.last_played AS "last_played?: i64",
-			i.pinned_at AS "pinned_at?: i64",
-            i.submitted_time_played AS "submitted_time_played!: i64",
-            i.recent_time_played AS "recent_time_played!: i64",
-            cs.id AS "content_set_id?: String",
-            cs.instance_id AS "content_set_instance_id?: String",
-            cs.name AS "content_set_name?: String",
-            cs.source_kind AS "content_set_source_kind?: String",
-            cs.status AS "content_set_status?: String",
-            cs.game_version AS "content_set_game_version?: String",
-            cs.protocol_version AS "content_set_protocol_version?: i64",
-            cs.loader AS "content_set_loader?: String",
-            cs.loader_version AS "content_set_loader_version?: String",
-            cs.created AS "content_set_created?: i64",
-            cs.modified AS "content_set_modified?: i64",
-            COALESCE(link.link_kind, 'unmanaged') AS "link_kind!: String",
-            link.modrinth_project_id AS "modrinth_project_id?: String",
-            link.modrinth_version_id AS "modrinth_version_id?: String",
-            link.server_project_id AS "server_project_id?: String",
-            link.content_project_id AS "content_project_id?: String",
-            link.content_version_id AS "content_version_id?: String",
-            link.hosting_server_id AS "hosting_server_id?: String",
-            json(link.hosting_instance_ids) AS "hosting_instance_ids?: String",
-            link.hosting_active_instance_id AS "hosting_active_instance_id?: String",
-            link.shared_instance_id AS "shared_instance_id?: String",
-            link.imported_name AS "imported_name?: String",
-            link.imported_version_number AS "imported_version_number?: String",
-            link.imported_filename AS "imported_filename?: String",
-            '[]' AS "groups!: String",
-            json(overrides.overrides) AS "launch_overrides?: String"
+            i.id,
+            i.path,
+            i.applied_content_set_id,
+            i.install_stage,
+            i.launcher_feature_version,
+            i.update_channel,
+            i.name,
+            i.icon_path,
+            i.symlink_target,
+            i.linked_launcher,
+            i.linked_launcher_root,
+            i.linked_dot_minecraft,
+            i.linked_version_id,
+            i.linked_version_json_path,
+            i.created,
+            i.modified,
+            i.last_played,
+			i.pinned_at,
+            i.submitted_time_played,
+            i.recent_time_played,
+            cs.id AS content_set_id,
+            cs.instance_id AS content_set_instance_id,
+            cs.name AS content_set_name,
+            cs.source_kind AS content_set_source_kind,
+            cs.status AS content_set_status,
+            cs.game_version AS content_set_game_version,
+            cs.protocol_version AS content_set_protocol_version,
+            cs.loader AS content_set_loader,
+            cs.loader_version AS content_set_loader_version,
+            cs.created AS content_set_created,
+            cs.modified AS content_set_modified,
+            COALESCE(link.link_kind, 'unmanaged') AS link_kind,
+            link.modrinth_project_id,
+            link.modrinth_version_id,
+            link.server_project_id,
+            link.content_project_id,
+            link.content_version_id,
+            link.hosting_server_id,
+            json(link.hosting_instance_ids) AS hosting_instance_ids,
+            link.hosting_active_instance_id,
+            link.shared_instance_id,
+            link.imported_name,
+            link.imported_version_number,
+            link.imported_filename,
+            '[]' AS groups,
+            json(overrides.overrides) AS launch_overrides
         FROM instances i
         LEFT JOIN instance_content_sets cs
             ON cs.id = i.applied_content_set_id
@@ -718,8 +876,8 @@ pub(crate) async fn get_instance_launch_context(
             ON overrides.instance_id = i.id
         WHERE i.id = ?
         "#,
-        instance_id,
     )
+    .bind(instance_id)
     .fetch_optional(pool)
     .await?;
 
@@ -740,7 +898,15 @@ pub(crate) async fn list_instances(
     .fetch_all(pool)
     .await?;
 
-    rows.into_iter().map(TryInto::try_into).collect()
+    let mut instances = Vec::with_capacity(rows.len());
+    for row in rows {
+        let mut instance: Instance = row.try_into()?;
+        let fields = get_direct_link_fields(&instance.id, pool).await?;
+        fields.apply_to(&mut instance);
+        instances.push(instance);
+    }
+
+    Ok(instances)
 }
 
 pub(crate) async fn get_instance_link<'e, E>(

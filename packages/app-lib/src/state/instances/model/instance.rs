@@ -15,6 +15,23 @@ pub struct Instance {
     pub name: String,
     pub icon_path: Option<String>,
     pub symlink_target: Option<String>,
+    /// For "directly associated" instances: which external launcher manages
+    /// the linked `.minecraft` (`hmcl`, `pcl2`, `pcl2_ce`, `generic`).
+    #[serde(default)]
+    pub linked_launcher: Option<String>,
+    /// Canonical root selected for the external launcher import scan.
+    #[serde(default)]
+    pub linked_launcher_root: Option<String>,
+    /// Absolute path of the linked `.minecraft` root the instance launches
+    /// from; files are used in place, never copied or written to.
+    #[serde(default)]
+    pub linked_dot_minecraft: Option<String>,
+    /// The actual version JSON stem used as the external version ID.
+    #[serde(default)]
+    pub linked_version_id: Option<String>,
+    /// Canonical path of the actual local version JSON selected at creation.
+    #[serde(default)]
+    pub linked_version_json_path: Option<String>,
     pub created: DateTime<Utc>,
     pub modified: DateTime<Utc>,
     pub last_played: Option<DateTime<Utc>>,

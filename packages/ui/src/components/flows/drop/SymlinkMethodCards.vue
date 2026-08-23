@@ -52,12 +52,51 @@
 							:no-icon-border="true"
 							@click="selectMethod('symlink')"
 						/>
+						<BigOptionButton
+							v-if="directAllowed"
+							:icon="PlugIcon"
+							:title="formatMessage(messages.directTitle)"
+							:description="formatMessage(messages.directDesc)"
+							:selected="method === 'direct'"
+							:no-icon-border="true"
+							@click="selectMethod('direct')"
+						/>
 						<span v-if="unsupported" class="text-xs text-danger">
 							{{ formatMessage(messages.unsupportedWarning) }}
 						</span>
 					</div>
 
-					<div class="flex flex-col gap-2">
+					<div v-if="method === 'direct'" class="flex flex-col gap-2">
+						<div class="flex items-center gap-2">
+							<span class="text-sm font-semibold text-contrast">
+								{{ formatMessage(messages.directPathsLabel) }}
+							</span>
+						</div>
+						<div class="grid grid-cols-1 gap-2">
+							<div
+								class="flex items-center justify-between gap-2 rounded-lg bg-surface-2 px-3 py-2"
+							>
+								<span class="shrink-0 whitespace-nowrap text-sm text-secondary">
+									{{ formatMessage(messages.importPathTooltip) }}
+								</span>
+								<span class="min-w-0 truncate text-sm font-semibold text-contrast">
+									{{ activeInstance?.path || formatMessage(messages.missingPath) }}
+								</span>
+							</div>
+							<div
+								class="flex items-center justify-between gap-2 rounded-lg bg-surface-2 px-3 py-2"
+							>
+								<span class="shrink-0 whitespace-nowrap text-sm text-secondary">
+									{{ formatMessage(messages.directBasePathLabel) }}
+								</span>
+								<span class="min-w-0 truncate text-sm font-semibold text-contrast">
+									{{ activeInstance?.basePath || formatMessage(messages.missingPath) }}
+								</span>
+							</div>
+						</div>
+					</div>
+
+					<div v-if="method !== 'direct'" class="flex flex-col gap-2">
 						<div class="flex items-center gap-2">
 							<span class="text-sm font-semibold text-contrast">
 								{{ formatMessage(messages.statsLabel) }}
@@ -93,7 +132,7 @@
 						class="flex min-w-0 flex-col gap-4"
 						:class="[pageAnimationClass, pageAnim ? 'overflow-hidden' : '']"
 					>
-						<div class="flex flex-col gap-2">
+						<div v-if="method !== 'direct'" class="flex flex-col gap-2">
 							<div class="relative flex items-center gap-2">
 								<span class="text-sm font-semibold text-contrast">
 									{{ formatMessage(messages.loaderLabel) }}
@@ -131,7 +170,7 @@
 							/>
 						</div>
 
-						<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+						<div v-if="method !== 'direct'" class="grid grid-cols-1 gap-3 sm:grid-cols-2">
 							<div class="flex flex-col gap-2">
 								<div class="relative flex items-center gap-2">
 									<span class="text-sm font-semibold text-contrast">
@@ -352,7 +391,7 @@
 </template>
 
 <script setup lang="ts">
-import { CircleAlertIcon, CopyIcon, FolderOpenIcon, LinkIcon } from '@modrinth/assets'
+import { CircleAlertIcon, CopyIcon, FolderOpenIcon, LinkIcon, PlugIcon } from '@modrinth/assets'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import BigOptionButton from '#ui/components/base/BigOptionButton.vue'
@@ -431,6 +470,23 @@ const messages = defineMessages({
 	unsupportedWarning: {
 		id: 'drop.symlink_method.unsupported_warning',
 		defaultMessage: 'Symbolic links are not supported on this system',
+	},
+	directTitle: {
+		id: 'drop.symlink_method.direct_title',
+		defaultMessage: 'Direct link',
+	},
+	directDesc: {
+		id: 'drop.symlink_method.direct_desc',
+		defaultMessage:
+			'Launch directly from the original folder without copying or converting; can still be used alongside HMCL/PCL',
+	},
+	directPathsLabel: {
+		id: 'drop.symlink_method.direct_paths',
+		defaultMessage: 'Location',
+	},
+	directBasePathLabel: {
+		id: 'drop.symlink_method.base_path',
+		defaultMessage: 'Original directory',
 	},
 	gameVersionLabel: {
 		id: 'drop.symlink_method.game_version',
@@ -604,7 +660,7 @@ const isOpen = ref(false)
 const instances = ref<SymlinkMethodInstance[]>([])
 const symlinkCapable = ref<'supported' | 'requires_admin' | 'unsupported'>('supported')
 const activeIndex = ref(0)
-const method = ref<'copy' | 'symlink' | null>(null)
+const method = ref<'copy' | 'symlink' | 'direct' | null>(null)
 const methodSectionRef = ref<HTMLElement | null>(null)
 const methodShake = ref(false)
 const gameVersion = ref('')
@@ -640,6 +696,7 @@ const pageAnimationClass = computed(() => (pageAnim.value ? `page-${pageAnim.val
 const symlinkAllowed = computed(() => symlinkCapable.value !== 'unsupported')
 const requiresAdmin = computed(() => symlinkCapable.value === 'requires_admin')
 const unsupported = computed(() => symlinkCapable.value === 'unsupported')
+const directAllowed = ref(true)
 const symlinkNote = computed(() =>
 	requiresAdmin.value ? formatMessage(messages.requiresAdmin) : undefined,
 )
@@ -743,7 +800,7 @@ const canReset = computed(
 	() => touched.value.gameVersion || touched.value.loader || touched.value.loaderVersion,
 )
 
-function selectMethod(value: 'copy' | 'symlink') {
+function selectMethod(value: 'copy' | 'symlink' | 'direct') {
 	method.value = value
 }
 
@@ -1143,6 +1200,7 @@ function handleConfirm() {
 		triggerMethodShake()
 		return
 	}
+	const chosenMethod = method.value
 	saveCurrentChoices()
 	const choices: SymlinkMethodChoice[] = instances.value.map((instance, index) => {
 		const saved = instanceChoices.value[index]
@@ -1150,7 +1208,8 @@ function handleConfirm() {
 		return {
 			instanceName: instance.name,
 			instancePath: instance.path,
-			symlink: method.value === 'symlink',
+			method: chosenMethod,
+			symlink: chosenMethod === 'symlink',
 			gameVersion:
 				saved?.gameVersion || importPlanDefaultGameVersion(snapshot?.gameVersion) || null,
 			loader: saved?.loader || importPlanDefaultLoader(snapshot?.loader) || null,
@@ -1192,6 +1251,7 @@ function onModalHide() {
 function show(options: {
 	instances: SymlinkMethodInstance[]
 	symlinkCapable: 'supported' | 'requires_admin' | 'unsupported'
+	directAllowed?: boolean
 }) {
 	console.debug('[SymlinkMethodCards] show', options)
 	if (rescanTimer !== null) {
@@ -1202,6 +1262,7 @@ function show(options: {
 	snapshotFlushPending = false
 	instances.value = options.instances
 	symlinkCapable.value = options.symlinkCapable
+	directAllowed.value = options.directAllowed ?? true
 	instanceChoices.value = {}
 	snapshots.value = {}
 	detectedByInstance.value = {}

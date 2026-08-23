@@ -27,7 +27,9 @@ pub use self::home::{
 };
 pub use self::install::get_optimal_jre_key;
 pub(crate) use self::lifecycle::create;
-pub use self::lifecycle::{cache_icon, edit, edit_icon, remove};
+pub use self::lifecycle::{
+    cache_icon, create_with_direct_link, edit, edit_icon, remove,
+};
 pub use self::paths::{get_full_path, get_mod_full_path};
 pub(crate) use self::projects::emit_content_changed;
 pub use self::projects::{

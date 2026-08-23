@@ -2,6 +2,10 @@ mod create_instance;
 pub use self::create_instance::CreateInstance;
 pub(crate) use self::create_instance::create_instance;
 
+mod create_direct_link_instance;
+pub use self::create_direct_link_instance::CreateDirectLinkInstance;
+pub(crate) use self::create_direct_link_instance::create_direct_link_instance;
+
 mod edit_instance;
 pub use self::edit_instance::{
     AppliedContentSetPatch, EditInstance, InstanceLaunchOverridesPatch,

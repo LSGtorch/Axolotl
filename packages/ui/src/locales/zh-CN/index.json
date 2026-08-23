@@ -4352,6 +4352,18 @@
   "drop.symlink_method.unsupported_warning": {
     "message": "此系统不支持符号链接"
   },
+  "drop.symlink_method.direct_title": {
+    "message": "直接关联"
+  },
+  "drop.symlink_method.direct_desc": {
+    "message": "不复制、不转换原有文件结构，直接使用原目录启动，可继续与 HMCL/PCL 混用"
+  },
+  "drop.symlink_method.direct_paths": {
+    "message": "位置信息"
+  },
+  "drop.symlink_method.base_path": {
+    "message": "原目录"
+  },
   "drop.symlink_method.cancel": {
     "message": "取消"
   },

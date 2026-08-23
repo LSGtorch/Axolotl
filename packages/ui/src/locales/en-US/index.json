@@ -1352,6 +1352,9 @@
   "drop.launcher_import.title": {
     "defaultMessage": "Import instances from {launcherName}"
   },
+  "drop.symlink_method.base_path": {
+    "defaultMessage": "Original directory"
+  },
   "drop.symlink_method.cancel": {
     "defaultMessage": "Cancel"
   },
@@ -1372,6 +1375,15 @@
   },
   "drop.symlink_method.detecting": {
     "defaultMessage": "Detecting..."
+  },
+  "drop.symlink_method.direct_desc": {
+    "defaultMessage": "Launch directly from the original folder without copying or converting; can still be used alongside HMCL/PCL"
+  },
+  "drop.symlink_method.direct_paths": {
+    "defaultMessage": "Location"
+  },
+  "drop.symlink_method.direct_title": {
+    "defaultMessage": "Direct link"
   },
   "drop.symlink_method.game_version": {
     "defaultMessage": "Game version"

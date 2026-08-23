@@ -80,6 +80,11 @@ pub(crate) async fn create_instance(
             name: input.name,
             icon_path,
             symlink_target: input.symlink_target,
+            linked_launcher: None,
+            linked_launcher_root: None,
+            linked_dot_minecraft: None,
+            linked_version_id: None,
+            linked_version_json_path: None,
             created: now,
             modified: now,
             last_played: None,
@@ -152,7 +157,7 @@ pub(crate) async fn create_instance(
     result
 }
 
-async fn resolve_instance_path(
+pub(crate) async fn resolve_instance_path(
     name: &str,
     path: Option<&str>,
     state: &State,

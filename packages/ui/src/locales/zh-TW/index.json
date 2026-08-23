@@ -3977,6 +3977,18 @@
   "drop.symlink_method.unsupported_warning": {
     "message": "此系統不支援符號連結"
   },
+  "drop.symlink_method.direct_title": {
+    "message": "直接關聯"
+  },
+  "drop.symlink_method.direct_desc": {
+    "message": "不複製、不轉換原有檔案結構，直接使用原始目錄啟動，可繼續與 HMCL/PCL 混用"
+  },
+  "drop.symlink_method.direct_paths": {
+    "message": "位置資訊"
+  },
+  "drop.symlink_method.base_path": {
+    "message": "原始目錄"
+  },
   "drop.symlink_method.cancel": {
     "message": "取消"
   },
