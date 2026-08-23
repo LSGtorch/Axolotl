@@ -128,16 +128,16 @@ pub struct InstallCreateDirectLinkInstanceRequest {
 pub async fn install_create_direct_link_instance(
     request: InstallCreateDirectLinkInstanceRequest,
 ) -> Result<InstanceMetadata> {
-    Ok(theseus::instance::create_with_direct_link(
-        CreateDirectLinkInstance {
+    Ok(
+        theseus::instance::create_with_direct_link(CreateDirectLinkInstance {
             name: request.name,
             launcher_type: request.launcher_type,
             base_path: request.base_path,
             instance_folder: request.instance_folder,
             instance_path: request.instance_path,
-        },
+        })
+        .await?,
     )
-    .await?)
 }
 
 #[tauri::command]
