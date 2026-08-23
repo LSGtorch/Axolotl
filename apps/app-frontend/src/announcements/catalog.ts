@@ -33,6 +33,31 @@ export const ANNOUNCEMENT_CHANGE_TYPES: readonly AnnouncementChangeType[] = [
 
 export const launcherAnnouncements: readonly LauncherAnnouncement[] = [
 	{
+		id: 'launcher-1.8.13',
+		version: '1.8.13',
+		publishedAt: '2026-08-24',
+		title: {
+			'en-US': 'Axolotl Launcher 1.8.13',
+			'zh-CN': 'Axolotl Launcher 1.8.13',
+		},
+		changes: {
+			added: [
+				{
+					'en-US':
+						'Added direct association import for HMCL/PCL traditional instances: launch externally managed .minecraft folders in place without copying or converting, so Axolotl can share the same client with HMCL/PCL.',
+					'zh-CN':
+						'新增 HMCL/PCL 传统实例的直接关联导入：不复制、不转换原有文件结构，直接使用原目录启动，可与 HMCL/PCL 混用同一客户端。',
+				},
+				{
+					'en-US':
+						'Direct association honors external launcher settings at launch, including PCL version isolation, Java selection and memory modes, plus HMCL per-version JVM arguments.',
+					'zh-CN':
+						'直接关联启动时会读取外部启动器的实例设置，包括 PCL 版本隔离、Java 选择与内存模式，以及 HMCL 的版本级 JVM 参数。',
+				},
+			],
+		},
+	},
+	{
 		id: 'launcher-1.8.12',
 		version: '1.8.12',
 		publishedAt: '2026-08-23',
