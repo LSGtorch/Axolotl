@@ -12,8 +12,8 @@
 	},
 	"plugins": {
 		"updater": {
-			"pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDNGNEE1MkMxOTI0MDA4NzYKUldSMkNFQ1N3VkpLUC9kcEtlZFRWak5FRXJsWUw3YllxWGh6bkg3ZEh3K1ZQa1VNZHl6Y0IvQysK",
-			"endpoints": ["https://github.com/Mystic-Stars/Axolotl/releases/latest/download/latest.json"],
+			"pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM0OEVFMDAzQjFBRDkyNUEKUldSYWtxMnhBK0NPeE1POWdEb2FZUHhsSFNwRFBNV25pb0ptK003cmZBYXE4eHkxT21sUUV1dHAK",
+			"endpoints": ["https://github.com/LSGtorch/Axolotl/releases/latest/download/latest.json"],
 			"windows": {
 				"installMode": "quiet"
 			}
