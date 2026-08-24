@@ -13,6 +13,10 @@ if (manifest.version !== expectedVersion) {
 	throw new Error(`Manifest version ${manifest.version} does not match ${expectedVersion}`)
 }
 
+// Verify against the repository running the workflow so forks validate their
+// own release URLs instead of hardcoding the upstream one.
+const expectedRepo = (process.env.GITHUB_REPOSITORY ?? 'Mystic-Stars/Axolotl').toLowerCase()
+
 const requiredPlatforms = [
 	'darwin-aarch64',
 	'darwin-x86_64',
@@ -34,7 +38,7 @@ for (const platform of requiredPlatforms) {
 		url.protocol === 'https:' &&
 		(source === 'github'
 			? url.hostname === 'github.com' &&
-				pathname.includes('/mystic-stars/axolotl/releases/download/')
+				pathname.includes(`/${expectedRepo}/releases/download/`)
 			: url.hostname === 'cnb.cool' &&
 				pathname.includes(`/axlmc/axolotl/-/releases/download/${tag.toLowerCase()}/`))
 	if (!isExpectedUrl) {
