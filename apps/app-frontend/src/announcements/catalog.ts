@@ -33,6 +33,30 @@ export const ANNOUNCEMENT_CHANGE_TYPES: readonly AnnouncementChangeType[] = [
 
 export const launcherAnnouncements: readonly LauncherAnnouncement[] = [
 	{
+		id: 'launcher-99.99.0',
+		version: '99.99.0',
+		publishedAt: '2026-08-25',
+		title: {
+			'en-US': 'Axolotl Launcher 99.99.0 (test)',
+			'zh-CN': 'Axolotl Launcher 99.99.0（测试版）',
+		},
+		changes: {
+			added: [
+				{
+					'en-US':
+						'Direct association now completes missing libraries, assets, and log configs into the linked .minecraft before launch (sha1 verified), matching HMCL/PCL behavior.',
+					'zh-CN':
+						'直接关联启动前会自动补全缺失的库、资源与日志配置到原目录（带 sha1 校验），与 HMCL/PCL 行为一致。',
+				},
+				{
+					'en-US':
+						'Fixed instance interactions (open folder etc.) for directly associated instances; export/duplicate are rejected with a clear message.',
+					'zh-CN': '修复直接关联实例的交互（打开文件夹等）；导出/复制会给出明确提示。',
+				},
+			],
+		},
+	},
+	{
 		id: 'launcher-1.8.13',
 		version: '1.8.13',
 		publishedAt: '2026-08-24',

@@ -40,6 +40,17 @@ pub struct Instance {
     pub recent_time_played: u64,
 }
 
+impl Instance {
+    /// Whether this instance is "directly associated" with an external
+    /// launcher (HMCL/PCL): it has no profile directory of its own and its
+    /// files live inside the linked `.minecraft`.
+    pub fn is_direct_linked(&self) -> bool {
+        self.linked_dot_minecraft
+            .as_deref()
+            .is_some_and(|linked| !linked.trim().is_empty())
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct DailyPlaytime {
     pub date: String,
