@@ -1430,7 +1430,7 @@ pub(crate) fn extract_linked_natives(
     Ok(())
 }
 
-fn native_download<'a>(
+pub(crate) fn native_download<'a>(
     library: &'a LinkedLibrary,
     java_arch: &str,
 ) -> Option<(String, Option<&'a LibraryDownload>)> {
@@ -1488,7 +1488,7 @@ fn native_classifier_candidates(java_arch: &str) -> Vec<String> {
     candidates
 }
 
-fn classified_artifact_path(
+pub(crate) fn classified_artifact_path(
     name: &str,
     classifier: &str,
 ) -> crate::Result<String> {

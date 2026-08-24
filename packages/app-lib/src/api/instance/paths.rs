@@ -5,18 +5,30 @@ use std::path::PathBuf;
 #[tracing::instrument]
 pub async fn get_full_path(instance_id: &str) -> crate::Result<PathBuf> {
     let state = State::get().await?;
-    let path =
-        crate::state::instances::adapters::sqlite::instance_rows::get_instance_path_by_id(
-            instance_id,
-            &state.pool,
-        )
+    let instance = crate::state::get_instance(instance_id, &state.pool)
         .await?
         .ok_or_else(|| {
             crate::ErrorKind::InputError("Unknown instance".to_string())
         })?;
 
+    // Directly associated instances never have a profile directory under
+    // `profiles`; interactive APIs (open folder, worlds, servers, ...) must
+    // operate on the linked `.minecraft` instead.
+    if let Some(linked) = instance
+        .instance
+        .linked_dot_minecraft
+        .as_deref()
+        .map(str::trim)
+        .filter(|linked| !linked.is_empty())
+    {
+        return Ok(io::canonicalize(linked)?);
+    }
+
     Ok(io::canonicalize(
-        state.directories.instances_dir().join(path),
+        state
+            .directories
+            .instances_dir()
+            .join(&instance.instance.path),
     )?)
 }
 
@@ -26,4 +38,122 @@ pub async fn get_mod_full_path(
     project_path: &str,
 ) -> crate::Result<PathBuf> {
     Ok(get_full_path(instance_id).await?.join(project_path))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::CreateDirectLinkInstance;
+    use std::sync::Arc;
+    use tempfile::TempDir;
+
+    /// The launcher state is a process-wide singleton; initialize it once and
+    /// reuse it so `State::get()` resolves inside these APIs. The state root
+    /// is intentionally leaked (`.keep()`) because the shared state outlives
+    /// this function.
+    async fn global_state() -> Arc<State> {
+        if !State::initialized() {
+            let root = TempDir::new().unwrap().keep();
+            let _ =
+                State::init_for_test(root.to_string_lossy().to_string()).await;
+        }
+        State::get().await.unwrap()
+    }
+
+    async fn create_direct_link_fixture(
+        label: &str,
+    ) -> (TempDir, crate::state::InstanceMetadata) {
+        let state = global_state().await;
+        let minecraft = TempDir::new().unwrap();
+        let version_dir = minecraft.path().join("versions").join(label);
+        std::fs::create_dir_all(&version_dir).unwrap();
+        std::fs::write(
+            version_dir.join(format!("{label}.json")),
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "id": label,
+                "inheritsFrom": "1.20.1",
+                "mainClass": "net.minecraft.client.main.Main"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let instance = crate::state::create_direct_link_instance(
+            CreateDirectLinkInstance {
+                name: None,
+                launcher_type:
+                    crate::api::pack::import::ImportLauncherType::Generic,
+                base_path: minecraft.path().to_path_buf(),
+                instance_folder: format!("versions/{label}"),
+                instance_path: None,
+            },
+            &state,
+        )
+        .await
+        .unwrap();
+        let metadata = crate::state::get_instance(&instance.id, &state.pool)
+            .await
+            .unwrap()
+            .expect("metadata for created fixture");
+        (minecraft, metadata)
+    }
+
+    #[tokio::test]
+    async fn direct_link_instance_resolves_to_linked_dot_minecraft() {
+        let state = global_state().await;
+        let (_minecraft, metadata) =
+            create_direct_link_fixture("paths-demo").await;
+
+        let resolved = get_full_path(&metadata.instance.id).await.unwrap();
+
+        assert_eq!(
+            resolved.to_string_lossy(),
+            metadata.instance.linked_dot_minecraft.as_deref().unwrap(),
+            "interactive APIs must land in the linked `.minecraft`"
+        );
+        assert!(
+            !state
+                .directories
+                .instances_dir()
+                .join(&metadata.instance.path)
+                .exists(),
+            "no profile directory may be created for a direct-link instance"
+        );
+    }
+
+    #[tokio::test]
+    async fn ordinary_instance_still_resolves_to_its_profile_directory() {
+        let state = global_state().await;
+        let metadata = crate::api::instance::create(
+            format!("paths-normal {}", uuid::Uuid::new_v4()),
+            "1.20.1".to_string(),
+            crate::state::ModLoader::Vanilla,
+            None,
+            None,
+            crate::state::InstanceLink::Unmanaged,
+            None,
+        )
+        .await
+        .unwrap();
+
+        std::fs::create_dir_all(
+            state
+                .directories
+                .instances_dir()
+                .join(&metadata.instance.path),
+        )
+        .unwrap();
+
+        let resolved = get_full_path(&metadata.instance.id).await.unwrap();
+        assert_eq!(
+            resolved,
+            io::canonicalize(
+                state
+                    .directories
+                    .instances_dir()
+                    .join(&metadata.instance.path)
+            )
+            .unwrap()
+        );
+    }
 }

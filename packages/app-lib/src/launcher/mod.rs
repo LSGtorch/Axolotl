@@ -46,6 +46,7 @@ use tokio_util::sync::CancellationToken;
 use winreg::{RegKey, enums::HKEY_CURRENT_USER};
 
 mod args;
+mod direct_ensure;
 mod direct_link;
 pub mod download;
 pub mod jvm_args;
@@ -1830,6 +1831,26 @@ pub async fn launch_minecraft(
             instance.id, process.uuid
         ))
         .as_error());
+    }
+
+    // Ensure phase (HMCL/PCL parity): before anything reads from the linked
+    // installation, complete its missing libraries, assets, and logging
+    // config in the standard shared locations. Version JSONs, launcher
+    // private configuration, and game data are never written. Offline mode
+    // forbids network fetches, so it keeps the previous strict behavior.
+    if !offline_mode
+        && let (Some(direct), Some(libraries)) =
+            (&direct_launch, linked_libraries.as_deref())
+    {
+        direct_ensure::ensure_direct_launch_dependencies(
+            &state,
+            direct,
+            libraries,
+            &version_info,
+            &java_version.architecture,
+            minecraft_updated,
+        )
+        .await?;
     }
 
     let natives_dir = if let Some(direct) = &direct_launch {
