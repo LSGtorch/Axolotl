@@ -622,16 +622,35 @@ pub async fn instance_get_linked_modpack_content(
 }
 
 #[tauri::command]
-pub async fn instance_get_full_path(instance_id: &str) -> Result<PathBuf> {
-    Ok(theseus::instance::get_full_path(instance_id).await?)
+pub async fn instance_get_full_path<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    instance_id: &str,
+) -> Result<PathBuf> {
+    let full_path = theseus::instance::get_full_path(instance_id).await?;
+    // The file browser reads through the webview fs plugin, whose scope only
+    // covers Axolotl's own profiles/servers folders. Directly associated
+    // instances resolve to an external installation root, so grant the
+    // webview access to exactly that resolved directory (idempotent; a
+    // repeated grant for in-app roots is a no-op).
+    crate::api::files::ensure_browsable(&app, &full_path);
+    Ok(full_path)
 }
 
 #[tauri::command]
-pub async fn instance_get_mod_full_path(
+pub async fn instance_get_mod_full_path<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     instance_id: &str,
     project_path: &str,
 ) -> Result<PathBuf> {
-    Ok(theseus::instance::get_mod_full_path(instance_id, project_path).await?)
+    let full_path =
+        theseus::instance::get_mod_full_path(instance_id, project_path).await?;
+    // Same fs-plugin scope consideration as `instance_get_full_path`: the
+    // resolved path may live inside an external linked `.minecraft`. Grant the
+    // containing directory so the file itself and its siblings stay readable.
+    if let Some(parent) = full_path.parent() {
+        crate::api::files::ensure_browsable(&app, parent);
+    }
+    Ok(full_path)
 }
 
 #[tauri::command]

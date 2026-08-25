@@ -78,6 +78,25 @@ fn safe_maven_relative_path(relative: &str) -> bool {
         })
 }
 
+/// BMCLAPI's Maven proxy mirrors `libraries.minecraft.net` 1:1 by artifact
+/// path. Appending it and the official Mojang Maven after every primary URL
+/// mirrors HMCL/PCL behaviour, which walk several sources because Mojang's
+/// Maven has lost many legacy artifacts over the years (e.g. `net.java.jinput`
+/// native platform jars returning HTTP 404).
+const BMCLAPI_MAVEN: &str = "https://bmclapi2.bangbang93.com/maven";
+
+/// Appends the BMCLAPI and Mojang Maven locations for `relative_path` to the
+/// candidate chain, skipping URLs already present so declared sources keep
+/// their priority while duplicates never cause a second attempt.
+fn push_maven_fallbacks(urls: &mut Vec<String>, relative_path: &str) {
+    for base in [BMCLAPI_MAVEN, LIBRARIES_MAVEN] {
+        let candidate = format!("{base}/{relative_path}");
+        if !urls.contains(&candidate) {
+            urls.push(candidate);
+        }
+    }
+}
+
 fn declared_download_urls(
     library_name: &str,
     repository: Option<&str>,
@@ -91,19 +110,19 @@ fn declared_download_urls(
     if urls.is_empty() {
         // Old format: resolve through the declaring repository, always ending
         // with Mojang's Maven as the default location.
-        let urls = legacy_library_download_urls(repository, relative_path)
+        let mut urls = legacy_library_download_urls(repository, relative_path)
             .ok_or_else(|| {
                 crate::ErrorKind::LauncherError(format!(
                     "No safe download location is known for required \
                          linked library {library_name}"
                 ))
             })?;
+        // legacy_library_download_urls already ends with the Mojang Maven;
+        // dedup keeps that position while BMCLAPI slots in before it.
+        push_maven_fallbacks(&mut urls, relative_path);
         return Ok(urls);
     }
-    let mojang_default = format!("{LIBRARIES_MAVEN}/{relative_path}");
-    if !urls.iter().any(|url| url == &mojang_default) {
-        urls.push(mojang_default);
-    }
+    push_maven_fallbacks(&mut urls, relative_path);
     Ok(urls)
 }
 
@@ -294,9 +313,15 @@ async fn ensure_file(st: &State, plan: &LinkedFilePlan) -> crate::Result<bool> {
     )
     .await
     .map_err(|error| {
+        // The fetch layer already walked every candidate (mirrors switch
+        // silently on 404s and network errors, like HMCL/PCL); surface the
+        // whole chain so a total failure is diagnosable.
         crate::ErrorKind::LauncherError(format!(
-            "Failed to download required linked dependency {} from {}: {error}",
-            plan.label, primary
+            "Failed to download required linked dependency {} from any of \
+             the {} attempted location(s) [{}]: {error}",
+            plan.label,
+            plan.urls.len(),
+            plan.urls.join(", ")
         ))
     })?;
     Ok(true)
@@ -347,6 +372,10 @@ pub(crate) async fn ensure_linked_assets_from(
             }
             return Ok(());
         };
+        // No BMCLAPI fallback for asset indexes: BMCLAPI only proxies asset
+        // objects, libraries, and version metadata, and has no stable mapping
+        // for `assets/indexes` (the same reason HMCL keeps the declared URL
+        // as the single source here).
         let request = DownloadRequest::new(&index_url, ResourceClass::Metadata)
             .with_integrity(Integrity {
                 size: (asset_index.size > 0).then_some(asset_index.size as u64),
@@ -478,6 +507,9 @@ pub(crate) async fn ensure_linked_log_config(
         );
         return Ok(());
     };
+    // No BMCLAPI fallback for log configs: BMCLAPI has no stable mapping for
+    // `assets/log_configs`, so the declared Mojang URL remains the single
+    // source, like HMCL.
 
     let request =
         DownloadRequest::new(&config_url, ResourceClass::MinecraftLibrary)
@@ -721,17 +753,46 @@ mod tests {
             root.path()
                 .join("libraries/com/example/lib/1.0/lib-1.0.jar")
         );
+        // Declared Mojang URL first; the BMCLAPI fallback is deduped against
+        // nothing here and the Mojang Maven tail is dropped as a duplicate.
         assert_eq!(
             plan.urls,
             vec![
-                "https://libraries.minecraft.net/com/example/lib/1.0/lib-1.0.jar"
+                "https://libraries.minecraft.net/com/example/lib/1.0/lib-1.0.jar",
+                "https://bmclapi2.bangbang93.com/maven/com/example/lib/1.0/lib-1.0.jar",
             ]
         );
         assert_eq!(plan.sha1.as_deref(), Some("abc123"));
     }
 
     #[test]
-    fn legacy_library_plan_falls_back_to_the_mojang_maven() {
+    fn classpath_plan_candidate_chain_keeps_declared_source_first() {
+        let root = tempdir().unwrap();
+        let direct = direct_for(root.path());
+        let library = linked_library(json!({
+            "name": "net.java.jinput:jinput-platform:2.0.5",
+            "downloads": {"artifact": {
+                "path": "net/java/jinput/jinput-platform/2.0.5/jinput-platform-2.0.5.jar",
+                "sha1": "", "size": 0,
+                "url": "https://example.repo.invalid/maven/net/java/jinput/jinput-platform/2.0.5/jinput-platform-2.0.5-natives-home.jar"
+            }}
+        }));
+
+        let plan = linked_classpath_plan(&direct, &library).unwrap().unwrap();
+        // The bug-report shape: declared source keeps priority, then BMCLAPI
+        // and the Mojang Maven follow in a stable, deduplicated order.
+        assert_eq!(
+            plan.urls,
+            vec![
+                "https://example.repo.invalid/maven/net/java/jinput/jinput-platform/2.0.5/jinput-platform-2.0.5-natives-home.jar",
+                "https://bmclapi2.bangbang93.com/maven/net/java/jinput/jinput-platform/2.0.5/jinput-platform-2.0.5.jar",
+                "https://libraries.minecraft.net/net/java/jinput/jinput-platform/2.0.5/jinput-platform-2.0.5.jar",
+            ]
+        );
+    }
+
+    #[test]
+    fn legacy_library_plan_appends_bmclapi_before_the_mojang_maven() {
         let root = tempdir().unwrap();
         let direct = direct_for(root.path());
         // The 1.12.2 LWJGL platform declaration from the bug report shape:
@@ -744,7 +805,8 @@ mod tests {
         assert_eq!(
             plan.urls,
             vec![
-                "https://libraries.minecraft.net/org/lwjgl/lwjgl/lwjgl-platform/2.9.4-nightly-20150209/lwjgl-platform-2.9.4-nightly-20150209.jar"
+                "https://libraries.minecraft.net/org/lwjgl/lwjgl/lwjgl-platform/2.9.4-nightly-20150209/lwjgl-platform-2.9.4-nightly-20150209.jar",
+                "https://bmclapi2.bangbang93.com/maven/org/lwjgl/lwjgl/lwjgl-platform/2.9.4-nightly-20150209/lwjgl-platform-2.9.4-nightly-20150209.jar",
             ]
         );
         assert_eq!(
@@ -771,12 +833,14 @@ mod tests {
                 "https://maven.minecraftforge.net/net/minecraftforge/forge/1.20.1-47.4.0/forge-1.20.1-47.4.0.jar"
             )
         );
-        assert_eq!(
-            plan.urls.last().map(String::as_str),
-            Some(
-                "https://libraries.minecraft.net/net/minecraftforge/forge/1.20.1-47.4.0/forge-1.20.1-47.4.0.jar"
-            )
-        );
+        // The declaring repository keeps priority; BMCLAPI and the official
+        // Mojang Maven both remain available as later candidates.
+        assert!(plan.urls.iter().any(|url| url.starts_with(
+            "https://libraries.minecraft.net/net/minecraftforge/forge/"
+        )));
+        assert!(plan.urls.iter().any(|url| url.starts_with(
+            "https://bmclapi2.bangbang93.com/maven/net/minecraftforge/forge/"
+        )));
     }
 
     #[test]
@@ -860,10 +924,13 @@ mod tests {
             linked_native_plan(&direct, &library, std::env::consts::ARCH)
                 .unwrap()
                 .unwrap();
+        // The classifier jar walks the same mirror chain; its maven path
+        // carries the classifier name.
         assert_eq!(
             plan.urls,
             vec![
-                "https://libraries.minecraft.net/x/native/1/native-1-natives-test.jar"
+                "https://libraries.minecraft.net/x/native/1/native-1-natives-test.jar",
+                "https://bmclapi2.bangbang93.com/maven/x/native/1/native-1-natives-test.jar",
             ]
         );
     }
@@ -1065,44 +1132,64 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn failed_download_error_names_the_library_and_url() {
+    async fn failed_download_error_names_the_library_and_all_tried_urls() {
         let (_state_temp, state) = ensure_test_state().await;
         let root = tempdir().unwrap();
-        let direct = direct_for(root.path());
-        // Server knows nothing about this path: every request 404s.
-        let (base, _hits, server) = spawn_fixture_server(HashMap::new()).await;
+        // Two servers that know nothing about any path: every request 404s.
+        // The fetch layer collapses same-authority candidates into one route,
+        // so each candidate URL needs its own host:port to be attempted.
+        let (first_base, first_hits, first_server) =
+            spawn_fixture_server(HashMap::new()).await;
+        let (second_base, second_hits, second_server) =
+            spawn_fixture_server(HashMap::new()).await;
+        let first = format!("{first_base}/missing/first.jar");
+        let second = format!("{second_base}/missing/second.jar");
 
-        let url = format!("{base}/missing/lwjgl.jar");
-        let library = linked_library(json!({
-            "name": "org.lwjgl.lwjgl:lwjgl-platform:2.9.4-nightly-20150209",
-            "downloads": {"artifact": {
-                "path": "missing/lwjgl.jar", "sha1": "", "size": 0,
-                "url": url
-            }}
-        }));
+        let plan = LinkedFilePlan {
+            label: "net.java.jinput:jinput-platform:2.0.5".to_string(),
+            urls: vec![first.clone(), second.clone()],
+            destination: root.path().join("libraries/missing/first.jar"),
+            sha1: None,
+            size: None,
+            validation: ContentValidation::None,
+        };
 
-        let error = ensure_direct_launch_dependencies(
-            &state,
-            &direct,
-            &[library],
-            &minimal_version_info(),
-            std::env::consts::ARCH,
-            true,
-        )
-        .await
-        .unwrap_err();
+        let error = ensure_file(&state, &plan).await.unwrap_err();
 
         let message = error.to_string();
         assert!(
-            message.contains(
-                "org.lwjgl.lwjgl:lwjgl-platform:2.9.4-nightly-20150209"
-            ),
+            message.contains("net.java.jinput:jinput-platform:2.0.5"),
             "error must name the library: {message}"
         );
-        assert!(message.contains(&url), "error must name the URL: {message}");
+        assert!(
+            message.contains(&first) && message.contains(&second),
+            "error must list every attempted URL: {message}"
+        );
+        assert!(message.contains("2 attempted"), "{message}");
+        // Both candidates must have been tried before giving up.
+        assert!(
+            first_hits
+                .lock()
+                .unwrap()
+                .get("/missing/first.jar")
+                .copied()
+                .unwrap_or(0)
+                >= 1,
+            "the primary URL must be attempted"
+        );
+        assert!(
+            second_hits
+                .lock()
+                .unwrap()
+                .get("/missing/second.jar")
+                .copied()
+                .unwrap_or(0)
+                >= 1,
+            "the fallback URL must be attempted after the primary 404s"
+        );
         // No artifact file may be left behind after failure (the parent
         // directory itself may exist; that is normal fetch behaviour).
-        let artifact = root.path().join("libraries/missing/lwjgl.jar");
+        let artifact = root.path().join("libraries/missing/first.jar");
         assert!(
             !artifact.exists()
                 && std::fs::read_dir(artifact.parent().unwrap())
@@ -1115,7 +1202,82 @@ mod tests {
                     .unwrap_or(true),
             "no partial artifact may be left behind after failure"
         );
-        server.abort();
+        first_server.abort();
+        second_server.abort();
+    }
+
+    #[tokio::test]
+    async fn download_falls_through_failing_candidate_urls_until_one_succeeds()
+    {
+        let (_state_temp, state) = ensure_test_state().await;
+        let root = tempdir().unwrap();
+        let direct = direct_for(root.path());
+
+        let body = b"mirror-served-jar-bytes".to_vec();
+        // Separate authorities per candidate (see the failure-path test): the
+        // primary 404s, the second serves the artifact, the third is never
+        // reached because the walk stops at the first success.
+        let (missing_base, missing_hits, missing_server) =
+            spawn_fixture_server(HashMap::new()).await;
+        let (fallback_base, fallback_hits, fallback_server) =
+            spawn_fixture_server(HashMap::from([(
+                "/fallback/lib-1.0.jar".to_string(),
+                body.clone(),
+            )]))
+            .await;
+        let (never_base, never_hits, never_server) =
+            spawn_fixture_server(HashMap::new()).await;
+
+        let library = linked_library(json!({
+            "name": "com.example:fallback:1.0",
+            "downloads": {"artifact": {
+                "path": "fallback/lib-1.0.jar",
+                "sha1": "", "size": 0,
+                "url": format!("{missing_base}/missing/lib-1.0.jar")
+            }}
+        }));
+        let mut plan =
+            linked_classpath_plan(&direct, &library).unwrap().unwrap();
+        // Replace the production mirror tail with in-process fixture URLs so
+        // the candidate walk never leaves localhost.
+        plan.urls = vec![
+            format!("{missing_base}/missing/lib-1.0.jar"),
+            format!("{fallback_base}/fallback/lib-1.0.jar"),
+            format!("{never_base}/never/lib-1.0.jar"),
+        ];
+
+        let downloaded = ensure_file(&state, &plan).await.unwrap();
+
+        assert!(downloaded, "the missing artifact must be downloaded");
+        let destination = root.path().join("libraries/fallback/lib-1.0.jar");
+        assert_eq!(std::fs::read(&destination).unwrap(), body);
+        assert!(
+            missing_hits
+                .lock()
+                .unwrap()
+                .get("/missing/lib-1.0.jar")
+                .copied()
+                .unwrap_or(0)
+                >= 1,
+            "the failing primary URL must be attempted"
+        );
+        assert!(
+            fallback_hits
+                .lock()
+                .unwrap()
+                .get("/fallback/lib-1.0.jar")
+                .copied()
+                .unwrap_or(0)
+                >= 1,
+            "the working candidate must serve the download"
+        );
+        assert!(
+            never_hits.lock().unwrap().is_empty(),
+            "the walk must stop at the first successful candidate"
+        );
+        missing_server.abort();
+        fallback_server.abort();
+        never_server.abort();
     }
 
     #[tokio::test]

@@ -300,6 +300,30 @@ async fn resolve_instance_identity(
     Ok((row.id, row.path))
 }
 
+/// Resolves the directory holding an instance's worlds, `servers.dat` and
+/// datapacks.
+///
+/// Directly associated instances keep that data inside the external
+/// installation rather than a profile directory under `instances`, mirroring
+/// `api::instance::paths::get_full_path`; PCL version isolation resolves to
+/// the version's own game directory. Unknown records fall back to the legacy
+/// profile path so the error surface stays unchanged.
+async fn resolve_instance_data_dir(
+    instance_id: &str,
+    instance_path: &str,
+    state: &State,
+) -> Result<PathBuf> {
+    if let Some(metadata) =
+        crate::state::get_instance(instance_id, &state.pool).await?
+    {
+        return Ok(crate::state::instances::instance_content_root(
+            &state.directories,
+            &metadata.instance,
+        )?);
+    }
+    Ok(state.directories.instances_dir().join(instance_path))
+}
+
 async fn get_all_worlds_in_instance(
     instance_id: &str,
     instance_dir: &Path,
@@ -366,7 +390,8 @@ pub async fn get_singleplayer_world(
     let state = State::get().await?;
     let (instance_id, instance_path) =
         resolve_instance_identity(instance, &state).await?;
-    let instance_dir = state.directories.instances_dir().join(instance_path);
+    let instance_dir =
+        resolve_instance_data_dir(&instance_id, &instance_path, &state).await?;
     let mut world =
         read_singleplayer_world(get_world_dir(&instance_dir, world)).await?;
 
@@ -827,7 +852,8 @@ pub async fn add_server_to_instance(
     let state = State::get().await?;
     let (instance_id, instance_path) =
         resolve_instance_identity(instance_id, &state).await?;
-    let instance_dir = state.directories.instances_dir().join(instance_path);
+    let instance_dir =
+        resolve_instance_data_dir(&instance_id, &instance_path, &state).await?;
     let mut servers = servers_data::read(&instance_dir).await?;
     let insert_index = servers
         .iter()
@@ -879,9 +905,10 @@ pub async fn edit_server_in_instance(
     pack_status: ServerPackStatus,
 ) -> Result<()> {
     let state = State::get().await?;
-    let (_, instance_path) =
+    let (instance_id, instance_path) =
         resolve_instance_identity(instance_id, &state).await?;
-    let instance_dir = state.directories.instances_dir().join(instance_path);
+    let instance_dir =
+        resolve_instance_data_dir(&instance_id, &instance_path, &state).await?;
     let mut servers = servers_data::read(&instance_dir).await?;
     let server =
         servers
@@ -907,7 +934,8 @@ pub async fn remove_server_from_instance(
     let state = State::get().await?;
     let (_, instance_path) =
         resolve_instance_identity(instance_id, &state).await?;
-    let instance_dir = state.directories.instances_dir().join(instance_path);
+    let instance_dir =
+        resolve_instance_data_dir(&instance_id, &instance_path, &state).await?;
     let mut servers = servers_data::read(&instance_dir).await?;
     if servers.get(index).as_ref().is_none_or(|x| x.hidden) {
         return Err(ErrorKind::InputError(format!(

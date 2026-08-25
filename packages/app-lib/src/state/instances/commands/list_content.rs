@@ -1,6 +1,6 @@
 use super::sync_content_files::{
     fetch_content_file_updates, installed_modrinth_version_id,
-    modrinth_update_enabled, project_type_for_file,
+    instance_content_root, modrinth_update_enabled, project_type_for_file,
     sync_instance_content_files,
 };
 use crate::State;
@@ -1767,7 +1767,7 @@ async fn content_files_to_content_items(
         &state.api_semaphore,
     )
     .await?;
-    let instance_path = state.directories.instances_dir().join(&instance.path);
+    let instance_path = instance_content_root(&state.directories, instance)?;
     let paths = files
         .iter()
         .map(|(path, _)| instance_path.join(path))
@@ -1788,10 +1788,13 @@ async fn content_files_to_content_items(
                 .collect()
         })
         .await?;
+    // Same join-replacement trick as the content scan: the absolute resolved
+    // root is passed as the "instance path" so backups are read from the
+    // linked installation of directly associated instances.
     let content_backups =
         crate::state::instances::adapters::filesystem::scan_content_backups(
-            &state.directories.instances_dir(),
-            &instance.path,
+            &instance_path,
+            &instance_path.to_string_lossy(),
         )?;
     let mut items = files
         .iter()

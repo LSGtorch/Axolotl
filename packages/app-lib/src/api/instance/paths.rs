@@ -122,6 +122,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn direct_link_file_browser_lists_linked_content() {
+        let _state = global_state().await;
+        let (minecraft, metadata) =
+            create_direct_link_fixture("paths-browse").await;
+
+        // The file browser lists directories relative to the resolved root.
+        std::fs::create_dir_all(minecraft.path().join("mods")).unwrap();
+        std::fs::write(
+            minecraft.path().join("mods/browse-fixture.jar"),
+            b"browse fixture",
+        )
+        .unwrap();
+
+        let root = get_full_path(&metadata.instance.id).await.unwrap();
+        let listed = root.join("mods").read_dir().unwrap();
+        let names = listed
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            names,
+            vec!["browse-fixture.jar".to_string()],
+            "the browser root must expose the linked installation's content"
+        );
+    }
+
+    #[tokio::test]
     async fn ordinary_instance_still_resolves_to_its_profile_directory() {
         let state = global_state().await;
         let metadata = crate::api::instance::create(

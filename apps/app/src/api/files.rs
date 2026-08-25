@@ -13,6 +13,28 @@ use theseus::instance::get_full_path;
 
 const STUDIO_FILES_CHANGED_EVENT: &str = "studio-files-changed";
 
+/// Grants the webview fs-plugin scope access to a resolved instance root that
+/// lies outside Axolotl's own `profiles`/`servers` folders — the case for
+/// directly associated (HMCL/PCL) installations whose `.minecraft` is browsed
+/// in place.
+///
+/// The grant covers exactly this resolved (canonicalized) directory, never a
+/// parent, so traversal stays bounded to the instance root; repeated calls are
+/// idempotent and failures only degrade browsing, never launch.
+pub(crate) fn ensure_browsable<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    root: &std::path::Path,
+) {
+    use tauri_plugin_fs::FsExt;
+    if let Err(error) = app.fs_scope().allow_directory(root, true) {
+        tracing::warn!(
+            %error,
+            path = %root.display(),
+            "Failed to grant the webview access to an instance directory"
+        );
+    }
+}
+
 #[derive(Default)]
 pub struct StudioWatchers {
     watchers: Mutex<HashMap<String, StudioWatcher>>,

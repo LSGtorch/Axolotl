@@ -20,8 +20,9 @@ use crate::launcher::quick_play_version::{
 use crate::server_address::{ServerAddress, parse_server_address};
 use crate::state::server_join_log::JoinLogEntry;
 use crate::state::{
-    CacheBehaviour, Credentials, InstanceInstallStage, InstanceLaunchContext,
-    InstanceLink, JavaVersion, MemorySettings, ProcessMetadata, WindowSize,
+    CacheBehaviour, Credentials, Instance, InstanceInstallStage,
+    InstanceLaunchContext, InstanceLink, JavaVersion, MemorySettings,
+    ProcessMetadata, WindowSize,
 };
 use crate::util::io;
 use crate::util::rpc::RpcServerBuilder;
@@ -1312,6 +1313,33 @@ async fn select_linked_java(candidates: Vec<PathBuf>) -> Option<JavaVersion> {
     }
 
     None
+}
+
+/// Resolves the game directory a directly associated instance actually plays
+/// from: the shared `.minecraft` for HMCL/generic dialects, `versions/<id>`
+/// for PCL/PCL-CE version isolation. `None` when the instance is not directly
+/// associated or its linked metadata is incomplete.
+///
+/// Content browsing (mods/worlds listing) uses this so it reads the same
+/// folders the launch does. Unlike the launch path, an unreadable version
+/// chain degrades to the linked `.minecraft` root instead of failing: browsing
+/// must keep working when only the dialect resolution breaks.
+pub(crate) fn linked_game_dir(instance: &Instance) -> Option<PathBuf> {
+    let direct = match DirectLinkedLaunch::from_instance(instance) {
+        Ok(Some(direct)) => direct,
+        Ok(None) | Err(_) => return None,
+    };
+    match direct.resolve() {
+        Ok(resolved) => Some(resolved.game_dir),
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                "Falling back to the shared linked `.minecraft` root; the \
+                 linked version chain could not be resolved"
+            );
+            Some(direct.dot_minecraft.clone())
+        }
+    }
 }
 
 fn link_project_and_version(

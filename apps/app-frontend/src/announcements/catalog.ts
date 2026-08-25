@@ -33,6 +33,29 @@ export const ANNOUNCEMENT_CHANGE_TYPES: readonly AnnouncementChangeType[] = [
 
 export const launcherAnnouncements: readonly LauncherAnnouncement[] = [
 	{
+		id: 'launcher-99.99.1',
+		version: '99.99.1',
+		publishedAt: '2026-08-26',
+		title: {
+			'en-US': 'Axolotl Launcher 99.99.1 (test)',
+			'zh-CN': 'Axolotl Launcher 99.99.1（测试版）',
+		},
+		changes: {
+			fixed: [
+				{
+					'en-US':
+						'Directly associated instances now scan content and browse files from the linked .minecraft instead of a missing profile directory.',
+					'zh-CN': '直接关联实例的内容扫描与文件浏览现在指向关联的原目录，不再显示为空。',
+				},
+				{
+					'en-US':
+						'Library completion falls back to the BMCLAPI mirror when Mojang returns 404 for old artifacts.',
+					'zh-CN': '补全库时若 Mojang 官方源 404，自动回退 BMCLAPI 镜像。',
+				},
+			],
+		},
+	},
+	{
 		id: 'launcher-99.99.0',
 		version: '99.99.0',
 		publishedAt: '2026-08-25',

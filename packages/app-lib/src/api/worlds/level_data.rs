@@ -9,7 +9,8 @@ use url::Url;
 
 use super::{
     SingleplayerGameMode, get_world_dir, get_world_session_lock,
-    resolve_instance_identity, try_get_world_session_lock,
+    resolve_instance_data_dir, resolve_instance_identity,
+    try_get_world_session_lock,
 };
 use crate::util::io;
 use crate::{Error, ErrorKind, Result, State};
@@ -465,9 +466,10 @@ pub async fn get_world_level_data(
     world: &str,
 ) -> Result<WorldLevelData> {
     let state = State::get().await?;
-    let (_, instance_path) =
+    let (instance_id, instance_path) =
         resolve_instance_identity(instance, &state).await?;
-    let instance_dir = state.directories.instances_dir().join(instance_path);
+    let instance_dir =
+        resolve_instance_data_dir(&instance_id, &instance_path, &state).await?;
     let world_dir = get_world_dir(&instance_dir, world);
 
     let locked = try_get_world_session_lock(&world_dir).await?.is_none();
