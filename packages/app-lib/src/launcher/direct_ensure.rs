@@ -85,11 +85,17 @@ fn safe_maven_relative_path(relative: &str) -> bool {
 /// native platform jars returning HTTP 404).
 const BMCLAPI_MAVEN: &str = "https://bmclapi2.bangbang93.com/maven";
 
-/// Appends the BMCLAPI and Mojang Maven locations for `relative_path` to the
-/// candidate chain, skipping URLs already present so declared sources keep
-/// their priority while duplicates never cause a second attempt.
+/// Maven Central retains legacy Minecraft artifacts that both Mojang's Maven
+/// and BMCLAPI have dropped over the years (e.g. `net.java.jinput` platform
+/// jars); it is the final fallback of the candidate chain.
+const MAVEN_CENTRAL_MAVEN: &str = "https://repo1.maven.org/maven2";
+
+/// Appends the BMCLAPI, Mojang Maven and Maven Central locations for
+/// `relative_path` to the candidate chain, skipping URLs already present so
+/// declared sources keep their priority while duplicates never cause a
+/// second attempt.
 fn push_maven_fallbacks(urls: &mut Vec<String>, relative_path: &str) {
-    for base in [BMCLAPI_MAVEN, LIBRARIES_MAVEN] {
+    for base in [BMCLAPI_MAVEN, LIBRARIES_MAVEN, MAVEN_CENTRAL_MAVEN] {
         let candidate = format!("{base}/{relative_path}");
         if !urls.contains(&candidate) {
             urls.push(candidate);
@@ -754,19 +760,21 @@ mod tests {
                 .join("libraries/com/example/lib/1.0/lib-1.0.jar")
         );
         // Declared Mojang URL first; the BMCLAPI fallback is deduped against
-        // nothing here and the Mojang Maven tail is dropped as a duplicate.
+        // the Mojang Maven tail (dropped as a duplicate) and Maven Central
+        // stays as the final archival fallback.
         assert_eq!(
             plan.urls,
             vec![
                 "https://libraries.minecraft.net/com/example/lib/1.0/lib-1.0.jar",
                 "https://bmclapi2.bangbang93.com/maven/com/example/lib/1.0/lib-1.0.jar",
+                "https://repo1.maven.org/maven2/com/example/lib/1.0/lib-1.0.jar",
             ]
         );
         assert_eq!(plan.sha1.as_deref(), Some("abc123"));
     }
 
     #[test]
-    fn classpath_plan_candidate_chain_keeps_declared_source_first() {
+    fn jinput_platform_candidate_chain_has_four_sources_in_order() {
         let root = tempdir().unwrap();
         let direct = direct_for(root.path());
         let library = linked_library(json!({
@@ -779,14 +787,16 @@ mod tests {
         }));
 
         let plan = linked_classpath_plan(&direct, &library).unwrap().unwrap();
-        // The bug-report shape: declared source keeps priority, then BMCLAPI
-        // and the Mojang Maven follow in a stable, deduplicated order.
+        // The bug-report shape: declared source keeps priority, then BMCLAPI,
+        // the Mojang Maven, and Maven Central (the archival home of this
+        // legacy artifact) follow in a stable, deduplicated order.
         assert_eq!(
             plan.urls,
             vec![
                 "https://example.repo.invalid/maven/net/java/jinput/jinput-platform/2.0.5/jinput-platform-2.0.5-natives-home.jar",
                 "https://bmclapi2.bangbang93.com/maven/net/java/jinput/jinput-platform/2.0.5/jinput-platform-2.0.5.jar",
                 "https://libraries.minecraft.net/net/java/jinput/jinput-platform/2.0.5/jinput-platform-2.0.5.jar",
+                "https://repo1.maven.org/maven2/net/java/jinput/jinput-platform/2.0.5/jinput-platform-2.0.5.jar",
             ]
         );
     }
@@ -807,6 +817,7 @@ mod tests {
             vec![
                 "https://libraries.minecraft.net/org/lwjgl/lwjgl/lwjgl-platform/2.9.4-nightly-20150209/lwjgl-platform-2.9.4-nightly-20150209.jar",
                 "https://bmclapi2.bangbang93.com/maven/org/lwjgl/lwjgl/lwjgl-platform/2.9.4-nightly-20150209/lwjgl-platform-2.9.4-nightly-20150209.jar",
+                "https://repo1.maven.org/maven2/org/lwjgl/lwjgl/lwjgl-platform/2.9.4-nightly-20150209/lwjgl-platform-2.9.4-nightly-20150209.jar",
             ]
         );
         assert_eq!(
@@ -925,12 +936,13 @@ mod tests {
                 .unwrap()
                 .unwrap();
         // The classifier jar walks the same mirror chain; its maven path
-        // carries the classifier name.
+        // carries the classifier name and Maven Central completes it.
         assert_eq!(
             plan.urls,
             vec![
                 "https://libraries.minecraft.net/x/native/1/native-1-natives-test.jar",
                 "https://bmclapi2.bangbang93.com/maven/x/native/1/native-1-natives-test.jar",
+                "https://repo1.maven.org/maven2/x/native/1/native-1-natives-test.jar",
             ]
         );
     }
@@ -1407,5 +1419,142 @@ mod tests {
             body
         );
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn download_walks_404_sources_until_maven_central_succeeds() {
+        let (_state_temp, state) = ensure_test_state().await;
+        let root = tempdir().unwrap();
+        let direct = direct_for(root.path());
+
+        let body = b"jinput-platform-2.0.5-bytes".to_vec();
+        // Candidate order mirrors the production chain: declared source,
+        // BMCLAPI, Mojang Maven, then Maven Central serving the artifact.
+        // Each candidate needs its own authority so the fetch layer
+        // attempts it separately.
+        let (declared_base, declared_hits, declared_server) =
+            spawn_fixture_server(HashMap::new()).await;
+        let (bmclapi_base, bmclapi_hits, bmclapi_server) =
+            spawn_fixture_server(HashMap::new()).await;
+        let (mojang_base, mojang_hits, mojang_server) =
+            spawn_fixture_server(HashMap::new()).await;
+        let central_path = format!(
+            "/net/java/jinput/jinput-platform/2.0.5/jinput-platform-2.0.5.jar"
+        );
+        let (central_base, central_hits, central_server) =
+            spawn_fixture_server(HashMap::from([(
+                central_path.clone(),
+                body.clone(),
+            )]))
+            .await;
+        let declared_path = "/declared/missing.jar";
+        let bmclapi_path = "/bmclapi/missing.jar";
+        let mojang_path = "/mojang/missing.jar";
+
+        let library = linked_library(json!({
+            "name": "net.java.jinput:jinput-platform:2.0.5",
+            "downloads": {"artifact": {
+                "path": "net/java/jinput/jinput-platform/2.0.5/jinput-platform-2.0.5.jar",
+                "sha1": "", "size": 0,
+                "url": format!("{declared_base}{declared_path}")
+            }}
+        }));
+        let mut plan =
+            linked_classpath_plan(&direct, &library).unwrap().unwrap();
+        assert_eq!(
+            plan.urls.len(),
+            4,
+            "candidate chain must be declared + BMCLAPI + Mojang + Maven Central"
+        );
+        // Replace the production mirror tail with in-process fixture URLs so
+        // the candidate walk never leaves localhost.
+        plan.urls = vec![
+            format!("{declared_base}{declared_path}"),
+            format!("{bmclapi_base}{bmclapi_path}"),
+            format!("{mojang_base}{mojang_path}"),
+            format!("{central_base}{central_path}"),
+        ];
+
+        let downloaded = ensure_file(&state, &plan).await.unwrap();
+
+        assert!(downloaded, "the missing artifact must be downloaded");
+        let destination = root.path().join(
+            "libraries/net/java/jinput/jinput-platform/2.0.5/\
+             jinput-platform-2.0.5.jar",
+        );
+        assert_eq!(std::fs::read(&destination).unwrap(), body);
+        // The three failing sources must all have been tried before the
+        // Maven Central candidate served the artifact.
+        for (hits, path) in [
+            (&declared_hits, declared_path),
+            (&bmclapi_hits, bmclapi_path),
+            (&mojang_hits, mojang_path),
+        ] {
+            assert!(
+                hits.lock().unwrap().get(path).copied().unwrap_or(0) >= 1,
+                "the failing {path} candidate must be attempted"
+            );
+        }
+        assert!(
+            central_hits
+                .lock()
+                .unwrap()
+                .get(&central_path)
+                .copied()
+                .unwrap_or(0)
+                >= 1,
+            "the Maven Central candidate must serve the artifact"
+        );
+        declared_server.abort();
+        bmclapi_server.abort();
+        mojang_server.abort();
+        central_server.abort();
+    }
+
+    #[tokio::test]
+    async fn total_failure_error_lists_the_full_four_source_chain() {
+        let (_state_temp, state) = ensure_test_state().await;
+        let root = tempdir().unwrap();
+        // Four servers that know nothing about any path: every request 404s.
+        // The fetch layer collapses same-authority candidates into one route,
+        // so each candidate URL needs its own host:port to be attempted.
+        let mut servers = Vec::new();
+        let mut urls = Vec::new();
+        for index in 0..4 {
+            let (base, _hits, server) =
+                spawn_fixture_server(HashMap::new()).await;
+            urls.push(format!("{base}/missing/source-{index}.jar"));
+            servers.push(server);
+        }
+
+        let plan = LinkedFilePlan {
+            label: "net.java.jinput:jinput-platform:2.0.5".to_string(),
+            urls,
+            destination: root.path().join("libraries/missing/source-0.jar"),
+            sha1: None,
+            size: None,
+            validation: ContentValidation::None,
+        };
+
+        let error = ensure_file(&state, &plan).await.unwrap_err();
+
+        let message = error.to_string();
+        assert!(
+            message.contains("net.java.jinput:jinput-platform:2.0.5"),
+            "error must name the library: {message}"
+        );
+        for url in &plan.urls {
+            assert!(
+                message.contains(url),
+                "error must list every attempted URL: {message}"
+            );
+        }
+        assert!(
+            message.contains("4 attempted"),
+            "error must count all four sources: {message}"
+        );
+        for server in servers {
+            server.abort();
+        }
     }
 }

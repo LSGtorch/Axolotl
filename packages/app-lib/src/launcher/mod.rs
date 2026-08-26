@@ -2187,6 +2187,14 @@ pub async fn launch_minecraft(
         .set_activity(&format!("Playing {}", instance.name), true)
         .await;
 
+    // The launcher log must land where the log browser reads it. Directly
+    // associated instances run from the linked game directory and have no
+    // profile folder, so the relative profile path would point at a ghost
+    // `profiles/<path>/logs`; the absolute game dir joins onto the real
+    // `<game>/logs` instead.
+    let logs_folder = state
+        .directories
+        .instance_logs_dir(&instance_path.to_string_lossy());
     // Create Minecraft child by inserting it into the state
     // This also spawns the process and prepares the subsequent processes
     state
@@ -2197,7 +2205,7 @@ pub async fn launch_minecraft(
             &instance.name,
             command,
             post_exit_hook,
-            state.directories.instance_logs_dir(&instance.path),
+            logs_folder,
             version_info.logging.is_some(),
             main_class_keep_alive,
             rpc_server,

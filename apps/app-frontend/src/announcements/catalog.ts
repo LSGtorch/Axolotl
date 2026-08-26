@@ -33,6 +33,30 @@ export const ANNOUNCEMENT_CHANGE_TYPES: readonly AnnouncementChangeType[] = [
 
 export const launcherAnnouncements: readonly LauncherAnnouncement[] = [
 	{
+		id: 'launcher-99.99.2',
+		version: '99.99.2',
+		publishedAt: '2026-08-27',
+		title: {
+			'en-US': 'Axolotl Launcher 99.99.2 (test)',
+			'zh-CN': 'Axolotl Launcher 99.99.2（测试版）',
+		},
+		changes: {
+			fixed: [
+				{
+					'en-US':
+						'Logs and crash reports of directly associated instances now resolve from the linked .minecraft, and the log viewer works for both normal and PCL-isolated instances.',
+					'zh-CN':
+						'直接关联实例的日志与崩溃报告现在从关联的原目录读取，日志查看功能恢复正常（含 PCL 隔离实例）。',
+				},
+				{
+					'en-US':
+						'Library completion adds a Maven Central fallback for old artifacts missing from both Mojang and BMCLAPI.',
+					'zh-CN': '补全库新增 Maven Central 兜底源，解决 Mojang 与 BMCLAPI 都没有的老构件。',
+				},
+			],
+		},
+	},
+	{
 		id: 'launcher-99.99.1',
 		version: '99.99.1',
 		publishedAt: '2026-08-26',
