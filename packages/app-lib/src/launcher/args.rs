@@ -1,6 +1,8 @@
 //! Minecraft CLI argument logic
 use crate::instance::QuickPlayType;
-use crate::launcher::direct_link::DirectLinkedLaunch;
+use crate::launcher::direct_link::{
+    DirectLinkedLaunch, is_native_only_library,
+};
 use crate::launcher::local_version::LinkedLibrary;
 use crate::launcher::quick_play_version::QuickPlayServerVersion;
 use crate::launcher::{QuickPlayVersion, parse_rules};
@@ -108,21 +110,13 @@ pub fn get_linked_class_paths(
             if !library.library.include_in_classpath {
                 return None;
             }
-            // A native-only declaration has no main artifact to place on the
-            // classpath. Its selected classifier is handled by native extraction.
-            let downloads = library.library.downloads.as_ref();
-            let native_only = downloads
-                .and_then(|downloads| downloads.artifact.as_ref())
-                .is_none()
-                && (library.library.natives.is_some()
-                    || downloads
-                        .and_then(|downloads| downloads.classifiers.as_ref())
-                        .is_some_and(|classifiers| {
-                            classifiers
-                                .keys()
-                                .any(|classifier| classifier.starts_with("native"))
-                        }));
-            if native_only {
+            // A natives-only declaration (e.g. the 1.12.2
+            // `net.java.jinput:jinput-platform:2.0.5`) publishes no plain jar
+            // anywhere, so it must never become a classpath entry. This
+            // mirrors HMCL's `DefaultLauncher.getClasspath`, which contributes
+            // natives libraries only through native extraction; the same
+            // predicate keeps the ensure stage from planning the plain jar.
+            if is_native_only_library(&library.library) {
                 return None;
             }
 

@@ -29,7 +29,7 @@ use daedalus::minecraft::{
 };
 use futures::prelude::*;
 
-use super::direct_link::DirectLinkedLaunch;
+use super::direct_link::{DirectLinkedLaunch, is_native_only_library};
 use super::download::{
     LIBRARIES_MAVEN, legacy_library_download_urls, legacy_library_sha1,
     minecraft_library_mirrors,
@@ -132,14 +132,25 @@ fn declared_download_urls(
     Ok(urls)
 }
 
-/// Plan for the classpath artifact of a linked library. Returns `None` when
-/// the library cannot be located at all (the caller reports it later while
-/// building the classpath, exactly as before).
+/// Plan for the classpath artifact of a linked library. Returns `None` when no
+/// plain jar must be fetched: natives-only declarations (a `natives` mapping
+/// without `downloads.artifact`, e.g. `net.java.jinput:jinput-platform:2.0.5`)
+/// have no plain jar on any repository and only their classifier jar is
+/// planned, by [`linked_native_plan`]; local-hint libraries without a declared
+/// URL are expected to ship with the installation (the caller still reports
+/// genuinely missing artifacts while building the classpath, exactly as
+/// before).
 pub(crate) fn linked_classpath_plan(
     direct: &DirectLinkedLaunch,
     library: &LinkedLibrary,
 ) -> crate::Result<Option<LinkedFilePlan>> {
     let lib = &library.library;
+    // Natives-only libraries ship no plain jar anywhere, so planning one
+    // would 404 on every mirror and abort the launch; the vanilla launcher
+    // never downloads it either.
+    if is_native_only_library(lib) {
+        return Ok(None);
+    }
     let destination = direct.library_path(library)?;
     let relative = library.classpath_relative_path()?;
     let relative = relative.to_string_lossy().replace('\\', "/");
@@ -607,7 +618,9 @@ pub(crate) async fn ensure_direct_launch_dependencies(
 
 #[cfg(test)]
 mod tests {
-    use super::super::direct_link::LinkedLauncherDialect;
+    use super::super::direct_link::{
+        LinkedLauncherDialect, extract_linked_natives,
+    };
     use super::*;
     use crate::state::{DirectoryInfo, test_state};
     use serde_json::json;
@@ -774,22 +787,29 @@ mod tests {
     }
 
     #[test]
-    fn jinput_platform_candidate_chain_has_four_sources_in_order() {
+    fn declared_artifact_candidate_chain_has_four_sources_in_order() {
         let root = tempdir().unwrap();
         let direct = direct_for(root.path());
+        // A natives library that DOES declare a usable `downloads.artifact`
+        // keeps its plain-jar plan: the artifact exists, so the declared
+        // source keeps priority, then BMCLAPI, the Mojang Maven, and Maven
+        // Central (the archival home of this legacy artifact) follow in a
+        // stable, deduplicated order.
         let library = linked_library(json!({
             "name": "net.java.jinput:jinput-platform:2.0.5",
-            "downloads": {"artifact": {
-                "path": "net/java/jinput/jinput-platform/2.0.5/jinput-platform-2.0.5.jar",
-                "sha1": "", "size": 0,
-                "url": "https://example.repo.invalid/maven/net/java/jinput/jinput-platform/2.0.5/jinput-platform-2.0.5-natives-home.jar"
-            }}
+            "natives": {"linux": "natives-linux", "osx": "natives-osx", "windows": "natives-windows"},
+            "downloads": {
+                "artifact": {
+                    "path": "net/java/jinput/jinput-platform/2.0.5/jinput-platform-2.0.5.jar",
+                    "sha1": "", "size": 0,
+                    "url": "https://example.repo.invalid/maven/net/java/jinput/jinput-platform/2.0.5/jinput-platform-2.0.5-natives-home.jar"
+                },
+                "classifiers": {
+                    "natives-windows": {"path": "net/java/jinput/jinput-platform/2.0.5/jinput-platform-2.0.5-natives-windows.jar", "sha1": "ccc", "size": 7, "url": "https://libraries.minecraft.net/net/java/jinput/jinput-platform/2.0.5/jinput-platform-2.0.5-natives-windows.jar"}
+                }
+            }
         }));
-
         let plan = linked_classpath_plan(&direct, &library).unwrap().unwrap();
-        // The bug-report shape: declared source keeps priority, then BMCLAPI,
-        // the Mojang Maven, and Maven Central (the archival home of this
-        // legacy artifact) follow in a stable, deduplicated order.
         assert_eq!(
             plan.urls,
             vec![
@@ -881,6 +901,114 @@ mod tests {
 
         let error = linked_classpath_plan(&direct, &library).unwrap_err();
         assert!(error.to_string().contains("evil:escape:1"));
+    }
+
+    #[test]
+    fn natives_only_library_has_no_plain_jar_classpath_plan() {
+        let root = tempdir().unwrap();
+        let direct = direct_for(root.path());
+        // The real 1.12.2 declaration: `natives` plus `downloads.classifiers`
+        // and no `downloads.artifact` — the plain jar exists in no repository.
+        let library = linked_library(json!({
+            "name": "net.java.jinput:jinput-platform:2.0.5",
+            "natives": {"linux": "natives-linux", "osx": "natives-osx", "windows": "natives-windows"},
+            "downloads": {"classifiers": {
+                "natives-linux": {"path": "net/java/jinput/jinput-platform/2.0.5/jinput-platform-2.0.5-natives-linux.jar", "sha1": "aaa", "size": 5, "url": "https://libraries.minecraft.net/net/java/jinput/jinput-platform/2.0.5/jinput-platform-2.0.5-natives-linux.jar"},
+                "natives-osx": {"path": "net/java/jinput/jinput-platform/2.0.5/jinput-platform-2.0.5-natives-osx.jar", "sha1": "bbb", "size": 6, "url": "https://libraries.minecraft.net/net/java/jinput/jinput-platform/2.0.5/jinput-platform-2.0.5-natives-osx.jar"},
+                "natives-windows": {"path": "net/java/jinput/jinput-platform/2.0.5/jinput-platform-2.0.5-natives-windows.jar", "sha1": "ccc", "size": 7, "url": "https://libraries.minecraft.net/net/java/jinput/jinput-platform/2.0.5/jinput-platform-2.0.5-natives-windows.jar"}
+            }}
+        }));
+
+        // Planning the plain jar would 404 on every mirror and abort the
+        // launch; the vanilla launcher never downloads it either.
+        assert!(linked_classpath_plan(&direct, &library).unwrap().is_none());
+    }
+
+    #[test]
+    fn natives_only_library_still_plans_its_platform_classifier() {
+        let root = tempdir().unwrap();
+        let direct = direct_for(root.path());
+        let natives_os =
+            serde_json::to_value(daedalus::minecraft::Os::native().get_os())
+                .unwrap();
+        let classifier = format!("natives-{}", natives_os.as_str().unwrap());
+        // Each classifier carries the url+sha1 the ensure stage needs;
+        // natives-windows is the one selected on Windows, natives-linux here.
+        let mut classifiers = serde_json::Map::new();
+        for os in ["linux", "osx", "windows"] {
+            let classifier = format!("natives-{os}");
+            classifiers.insert(
+                classifier.clone(),
+                json!({
+                    "path": format!(
+                        "net/java/jinput/jinput-platform/2.0.5/\
+                         jinput-platform-2.0.5-{classifier}.jar"
+                    ),
+                    "sha1": sha1_hex(classifier.as_bytes()),
+                    "size": 5,
+                    "url": format!(
+                        "https://libraries.minecraft.net/net/java/jinput/\
+                         jinput-platform/2.0.5/\
+                         jinput-platform-2.0.5-{classifier}.jar"
+                    ),
+                }),
+            );
+        }
+        let library = linked_library(json!({
+            "name": "net.java.jinput:jinput-platform:2.0.5",
+            "natives": {"linux": "natives-linux", "osx": "natives-osx", "windows": "natives-windows"},
+            "downloads": {"classifiers": classifiers}
+        }));
+
+        let plan =
+            linked_native_plan(&direct, &library, std::env::consts::ARCH)
+                .unwrap()
+                .expect("the platform classifier must still be planned");
+        assert_eq!(
+            plan.label,
+            format!("net.java.jinput:jinput-platform:2.0.5:{classifier}")
+        );
+        let declared_url = format!(
+            "https://libraries.minecraft.net/net/java/jinput/\
+             jinput-platform/2.0.5/jinput-platform-2.0.5-{classifier}.jar"
+        );
+        assert_eq!(
+            plan.urls.first().map(String::as_str),
+            Some(declared_url.as_str())
+        );
+        assert_eq!(
+            plan.sha1.as_deref(),
+            Some(sha1_hex(classifier.as_bytes()).as_str())
+        );
+        assert_eq!(plan.validation, ContentValidation::Jar);
+        assert!(plan.destination.to_string_lossy().ends_with(
+            format!("jinput-platform-2.0.5-{classifier}.jar").as_str()
+        ));
+    }
+
+    #[test]
+    fn natives_library_with_a_real_artifact_keeps_its_classpath_plan() {
+        let root = tempdir().unwrap();
+        let direct = direct_for(root.path());
+        // The `com.mojang:text2speech` shape: a `natives` mapping AND a
+        // published `downloads.artifact`. Only artifacts missing everywhere
+        // may be skipped, so the plain jar keeps its plan.
+        let library = linked_library(json!({
+            "name": "com.mojang:text2speech:1.11.3",
+            "natives": {"windows": "natives-windows"},
+            "downloads": {
+                "artifact": {"path": "com/mojang/text2speech/1.11.3/text2speech-1.11.3.jar", "sha1": "abc", "size": 10, "url": "https://libraries.minecraft.net/com/mojang/text2speech/1.11.3/text2speech-1.11.3.jar"},
+                "classifiers": {"natives-windows": {"path": "com/mojang/text2speech/1.11.3/text2speech-1.11.3-natives-windows.jar", "sha1": "ddd", "size": 1, "url": "https://libraries.minecraft.net/com/mojang/text2speech/1.11.3/text2speech-1.11.3-natives-windows.jar"}}
+            }
+        }));
+
+        let plan = linked_classpath_plan(&direct, &library).unwrap().unwrap();
+        assert_eq!(
+            plan.urls.first().map(String::as_str),
+            Some(
+                "https://libraries.minecraft.net/com/mojang/text2speech/1.11.3/text2speech-1.11.3.jar"
+            )
+        );
     }
 
     #[test]
@@ -1556,5 +1684,142 @@ mod tests {
         for server in servers {
             server.abort();
         }
+    }
+
+    #[tokio::test]
+    async fn natives_only_library_is_ensured_as_classifier_and_never_classpathed()
+     {
+        use std::io::Write as _;
+        let (_state_temp, state) = ensure_test_state().await;
+        let root = tempdir().unwrap();
+        let direct = direct_for(root.path());
+
+        let natives_os =
+            serde_json::to_value(daedalus::minecraft::Os::native().get_os())
+                .unwrap();
+        let classifier = format!("natives-{}", natives_os.as_str().unwrap());
+        // A tiny native archive served for the platform classifier; the plain
+        // jar of this library exists in no repository, so it is never served.
+        let mut archive = std::io::Cursor::new(Vec::new());
+        {
+            let mut zip = zip::ZipWriter::new(&mut archive);
+            zip.start_file(
+                "libjinput.so",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+            zip.write_all(b"natives").unwrap();
+            zip.finish().unwrap();
+        }
+        let body = archive.into_inner();
+
+        let plain_relative =
+            "net/java/jinput/jinput-platform/2.0.5/jinput-platform-2.0.5.jar";
+        let classifier_path = format!(
+            "/net/java/jinput/jinput-platform/2.0.5/\
+             jinput-platform-2.0.5-{classifier}.jar"
+        );
+        let (base, hits, server) = spawn_fixture_server(HashMap::from([(
+            classifier_path,
+            body.clone(),
+        )]))
+        .await;
+
+        let mut classifiers = serde_json::Map::new();
+        for os in ["linux", "osx", "windows"] {
+            let classifier = format!("natives-{os}");
+            let relative = format!(
+                "net/java/jinput/jinput-platform/2.0.5/\
+                 jinput-platform-2.0.5-{classifier}.jar"
+            );
+            classifiers.insert(
+                classifier.clone(),
+                json!({
+                    "path": relative,
+                    "sha1": sha1_hex(&body),
+                    "size": body.len(),
+                    "url": format!("{base}/{relative}"),
+                }),
+            );
+        }
+
+        let library = linked_library(json!({
+            "name": "net.java.jinput:jinput-platform:2.0.5",
+            "natives": {"linux": "natives-linux", "osx": "natives-osx", "windows": "natives-windows"},
+            "downloads": {"classifiers": classifiers}
+        }));
+
+        ensure_direct_launch_dependencies(
+            &state,
+            &direct,
+            std::slice::from_ref(&library),
+            &minimal_version_info(),
+            std::env::consts::ARCH,
+            true,
+        )
+        .await
+        .unwrap();
+
+        let libraries_dir = root.path().join("libraries");
+        let plain_jar = libraries_dir.join(plain_relative);
+        assert!(
+            !plain_jar.exists(),
+            "no plain jar may be fetched for a natives-only library"
+        );
+        assert!(
+            !hits
+                .lock()
+                .unwrap()
+                .contains_key(&format!("/{plain_relative}")),
+            "the nonexistent plain jar must never be requested"
+        );
+        let classifier_jar = libraries_dir
+            .join("net/java/jinput/jinput-platform/2.0.5")
+            .join(format!("jinput-platform-2.0.5-{classifier}.jar"));
+        assert_eq!(
+            std::fs::read(&classifier_jar).unwrap(),
+            body,
+            "the platform classifier jar must be downloaded"
+        );
+
+        // Native extraction consumes the ensured classifier jar, like on any
+        // normal launch.
+        let target = root.path().join("axolotl-cache");
+        extract_linked_natives(
+            &direct,
+            std::slice::from_ref(&library),
+            &target,
+            std::env::consts::ARCH,
+            true,
+        )
+        .unwrap();
+        assert!(target.join("libjinput.so").is_file());
+
+        // The classpath assembles without the natives-only library: its plain
+        // jar neither exists nor belongs there (HMCL getClasspath semantics).
+        let launcher_jar = root.path().join("main.jar");
+        std::fs::write(&launcher_jar, b"main").unwrap();
+        let classpath = super::super::args::get_linked_class_paths(
+            &direct,
+            std::slice::from_ref(&library),
+            &[&launcher_jar],
+            std::env::consts::ARCH,
+            true,
+        )
+        .unwrap();
+        assert!(
+            !classpath.contains("jinput-platform"),
+            "the natives-only library must not appear on the classpath: \
+             {classpath}"
+        );
+        assert!(
+            classpath.contains(
+                dunce::canonicalize(&launcher_jar)
+                    .unwrap()
+                    .to_string_lossy()
+                    .as_ref()
+            )
+        );
+        server.abort();
     }
 }

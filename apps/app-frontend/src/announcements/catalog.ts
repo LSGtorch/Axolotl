@@ -33,6 +33,25 @@ export const ANNOUNCEMENT_CHANGE_TYPES: readonly AnnouncementChangeType[] = [
 
 export const launcherAnnouncements: readonly LauncherAnnouncement[] = [
 	{
+		id: 'launcher-99.99.3',
+		version: '99.99.3',
+		publishedAt: '2026-08-28',
+		title: {
+			'en-US': 'Axolotl Launcher 99.99.3 (test)',
+			'zh-CN': 'Axolotl Launcher 99.99.3（测试版）',
+		},
+		changes: {
+			fixed: [
+				{
+					'en-US':
+						'Natives-only libraries such as jinput-platform 2.0.5 no longer abort the launch: their plain jar is not required anywhere and only the platform classifier jar is downloaded and extracted.',
+					'zh-CN':
+						'修复 jinput-platform 2.0.5 等 natives-only 库导致的启动阻断：不再要求不存在的普通 jar，只下载并解压对应平台的分类 jar。',
+				},
+			],
+		},
+	},
+	{
 		id: 'launcher-99.99.2',
 		version: '99.99.2',
 		publishedAt: '2026-08-27',

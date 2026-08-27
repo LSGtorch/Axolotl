@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
 use daedalus::minecraft::{
-    AssetIndex, LibraryDownload, Os, VersionInfo, VersionType,
+    AssetIndex, Library, LibraryDownload, Os, VersionInfo, VersionType,
 };
 
 use super::local_version::{
@@ -1428,6 +1428,25 @@ pub(crate) fn extract_linked_natives(
         extract_native_archive(&archive, target, excludes)?;
     }
     Ok(())
+}
+
+/// Whether a library declares only native classifier jars and no main
+/// artifact. Vanilla publishes no plain jar for such libraries (e.g. the
+/// 1.12.2 `net.java.jinput:jinput-platform:2.0.5`, which only ships
+/// `natives-<os>` classifiers), so neither the vanilla launcher nor HMCL ever
+/// downloads or class-paths one; the selected classifier is handled by native
+/// extraction instead.
+pub(crate) fn is_native_only_library(library: &Library) -> bool {
+    let downloads = library.downloads.as_ref();
+    downloads
+        .and_then(|downloads| downloads.artifact.as_ref())
+        .is_none()
+        && (library.natives.is_some()
+            || downloads
+                .and_then(|downloads| downloads.classifiers.as_ref())
+                .is_some_and(|classifiers| {
+                    classifiers.keys().any(|key| key.starts_with("native"))
+                }))
 }
 
 pub(crate) fn native_download<'a>(
