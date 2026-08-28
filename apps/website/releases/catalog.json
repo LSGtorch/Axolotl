@@ -1,6 +1,27 @@
 {
-  "updated_at": "2026-08-27T15:57:37.609Z",
+  "updated_at": "2026-08-28T08:02:31.060Z",
   "announcements": [
+    {
+      "id": "launcher-99.99.4",
+      "version": "99.99.4",
+      "publishedAt": "2026-08-28",
+      "title": {
+        "en-US": "Axolotl Launcher 99.99.4 (test)",
+        "zh-CN": "Axolotl Launcher 99.99.4（测试版）"
+      },
+      "changes": {
+        "fixed": [
+          {
+            "en-US": "Directly associated instances no longer display a loader version; the loader is managed by the external launcher.",
+            "zh-CN": "直接关联实例不再显示加载器版本号（加载器由外部启动器管理）。"
+          },
+          {
+            "en-US": "Direct association is now a one-click import without loader or game version selection; description updated to mention other launchers in general.",
+            "zh-CN": "直接关联改为一键导入，不再要求选择加载器/游戏版本；描述文案改为通用“其他启动器”。"
+          }
+        ]
+      }
+    },
     {
       "id": "launcher-99.99.3",
       "version": "99.99.3",
