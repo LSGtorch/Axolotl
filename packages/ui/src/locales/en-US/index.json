@@ -1377,7 +1377,7 @@
     "defaultMessage": "Detecting..."
   },
   "drop.symlink_method.direct_desc": {
-    "defaultMessage": "Launch directly from the original folder without copying or converting; can still be used alongside HMCL/PCL"
+    "defaultMessage": "Launch the original folder in place without changing its structure; stays compatible with other launchers"
   },
   "drop.symlink_method.direct_paths": {
     "defaultMessage": "Location"
@@ -4510,5 +4510,8 @@
   },
   "version.supplementary-resources.type": {
     "defaultMessage": "Type"
+  },
+  "drop.symlink_method.import_now": {
+    "defaultMessage": "Import"
   }
 }

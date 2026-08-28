@@ -3981,7 +3981,7 @@
     "message": "直接關聯"
   },
   "drop.symlink_method.direct_desc": {
-    "message": "不複製、不轉換原有檔案結構，直接使用原始目錄啟動，可繼續與 HMCL/PCL 混用"
+    "message": "不改變原有檔案結構，直接使用原始目錄啟動，可與其他啟動器混用"
   },
   "drop.symlink_method.direct_paths": {
     "message": "位置資訊"
@@ -4093,5 +4093,8 @@
   },
   "project.environment.tag.unknown": {
     "defaultMessage": "未知"
+  },
+  "drop.symlink_method.import_now": {
+    "message": "直接匯入"
   }
 }

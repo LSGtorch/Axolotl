@@ -4356,7 +4356,7 @@
     "message": "直接关联"
   },
   "drop.symlink_method.direct_desc": {
-    "message": "不复制、不转换原有文件结构，直接使用原目录启动，可继续与 HMCL/PCL 混用"
+    "message": "不改变原有文件结构，直接使用原目录启动，可与其他启动器混用"
   },
   "drop.symlink_method.direct_paths": {
     "message": "位置信息"
@@ -4512,5 +4512,8 @@
     "defaultMessage": "将数据包安装到存档"
   },
   "app.translation-settings.provider.deepl": "DeepL 翻译",
-  "app.settings.updates.miawa": "柠泽镜像"
+  "app.settings.updates.miawa": "柠泽镜像",
+  "drop.symlink_method.import_now": {
+    "message": "直接导入"
+  }
 }

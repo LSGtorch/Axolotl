@@ -478,7 +478,7 @@ const messages = defineMessages({
 	directDesc: {
 		id: 'drop.symlink_method.direct_desc',
 		defaultMessage:
-			'Launch directly from the original folder without copying or converting; can still be used alongside HMCL/PCL',
+			'Launch the original folder in place without changing its structure; stays compatible with other launchers',
 	},
 	directPathsLabel: {
 		id: 'drop.symlink_method.direct_paths',
@@ -487,6 +487,10 @@ const messages = defineMessages({
 	directBasePathLabel: {
 		id: 'drop.symlink_method.base_path',
 		defaultMessage: 'Original directory',
+	},
+	importNow: {
+		id: 'drop.symlink_method.import_now',
+		defaultMessage: 'Import',
 	},
 	gameVersionLabel: {
 		id: 'drop.symlink_method.game_version',
@@ -907,11 +911,14 @@ const statRows = computed(() =>
 	})),
 )
 
-const confirmLabel = computed(() =>
-	instances.value.length > 1 && activeIndex.value < instances.value.length - 1
+const confirmLabel = computed(() => {
+	if (method.value === 'direct' && !(instances.value.length > 1 && activeIndex.value < instances.value.length - 1)) {
+		return formatMessage(messages.importNow)
+	}
+	return instances.value.length > 1 && activeIndex.value < instances.value.length - 1
 		? formatMessage(messages.next)
-		: formatMessage(messages.confirm),
-)
+		: formatMessage(messages.confirm)
+})
 
 function cancelPlan(index: number) {
 	const requestId = requestIds.value[index]

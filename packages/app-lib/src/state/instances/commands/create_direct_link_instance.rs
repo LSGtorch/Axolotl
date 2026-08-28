@@ -104,7 +104,10 @@ pub(crate) async fn create_direct_link_instance(
         game_version: resolved.game_version,
         protocol_version: None,
         loader: resolved.loader,
-        loader_version: resolved.loader_version.clone(),
+        // The loader is installed and managed by the external launcher; the
+        // version parsed from the version JSON is not a reliable display value
+        // for directly associated instances, so it is intentionally nulled.
+        loader_version: None,
         revision: 0,
         created: now,
         modified: now,
@@ -131,7 +134,7 @@ pub(crate) async fn create_direct_link_instance(
         &LoaderComponent::from_legacy_projection(
             instance_id.clone(),
             resolved.loader,
-            resolved.loader_version,
+            None,
         ),
         &mut tx,
     )
@@ -260,10 +263,10 @@ mod tests {
         .expect("metadata row");
         assert_eq!(metadata.applied_content_set.loader, ModLoader::Forge);
         assert_eq!(metadata.applied_content_set.game_version, "1.20.1");
-        assert_eq!(
-            metadata.applied_content_set.loader_version.as_deref(),
-            Some("47.4.0")
-        );
+        // Directly associated instances intentionally project no loader
+        // version: the loader is installed and managed by the external
+        // launcher, so the parsed value is not shown.
+        assert_eq!(metadata.applied_content_set.loader_version, None);
 
         assert!(
             !state
