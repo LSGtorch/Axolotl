@@ -31,7 +31,7 @@ use base64::Engine;
 use base64::prelude::BASE64_STANDARD;
 use chrono::Utc;
 use daedalus as d;
-use daedalus::minecraft::{LoggingSide, VersionInfo};
+use daedalus::minecraft::{LoggingSide, RuleAction, VersionInfo};
 use daedalus::modded::{LoaderVersion, Manifest};
 use regex::Regex;
 use serde::Deserialize;
@@ -177,9 +177,8 @@ fn fallback_high_performance_gpu_environment() -> Vec<(String, String)> {
     .collect()
 }
 
-// All nones -> disallowed
-// 1+ true -> allowed
-// 1+ false -> disallowed
+/// Mojang/HMCL ordered rule semantics: an empty list allows, a non-empty list
+/// starts disallowed, and each matching rule replaces the previous decision.
 #[tracing::instrument]
 pub fn parse_rules(
     rules: &[d::minecraft::Rule],
@@ -191,20 +190,14 @@ pub fn parse_rules(
         return true;
     }
 
-    let x = rules
-        .iter()
-        .map(|x| {
-            parse_rule(x, java_version, quick_play_type, minecraft_updated)
-        })
-        .collect::<Vec<Option<bool>>>();
-
-    !(x.iter().any(|x| x == &Some(false)) || x.iter().all(|x| x.is_none()))
+    rules.iter().fold(false, |allowed, rule| {
+        parse_rule(rule, java_version, quick_play_type, minecraft_updated)
+            .unwrap_or(allowed)
+    })
 }
 
-// if anything is disallowed, it should NOT be included
-// if anything is not disallowed, it shouldn't factor in final result
-// if anything is not allowed, it should NOT be included
-// if anything is allowed, it should be included
+/// Returns this rule's action only when every declared OS and feature
+/// restriction matches. OS and features on the same rule are conjunctive.
 #[tracing::instrument]
 pub fn parse_rule(
     rule: &d::minecraft::Rule,
@@ -212,50 +205,31 @@ pub fn parse_rule(
     quick_play_type: &QuickPlayType,
     minecraft_updated: bool,
 ) -> Option<bool> {
-    use d::minecraft::{Rule, RuleAction};
+    let os_matches = rule.os.as_ref().is_none_or(|os| {
+        crate::util::platform::os_rule(os, java_version, minecraft_updated)
+    });
+    let features_match = rule.features.as_ref().is_none_or(|features| {
+        let facts = [
+            (features.is_demo_user, false),
+            (features.has_custom_resolution, true),
+            (features.has_quick_plays_support, true),
+            (
+                features.is_quick_play_singleplayer,
+                matches!(quick_play_type, QuickPlayType::Singleplayer(_)),
+            ),
+            (
+                features.is_quick_play_multiplayer,
+                matches!(quick_play_type, QuickPlayType::Server(..)),
+            ),
+            (features.is_quick_play_realms, false),
+        ];
+        facts.into_iter().all(|(expected, actual)| {
+            expected.is_none_or(|expected| expected == actual)
+        })
+    });
 
-    let res = match rule {
-        Rule { os: Some(os), .. } => {
-            crate::util::platform::os_rule(os, java_version, minecraft_updated)
-        }
-        Rule {
-            features: Some(features),
-            ..
-        } => {
-            !features.is_demo_user.unwrap_or(true)
-                || features.has_custom_resolution.unwrap_or(false)
-                || !features.has_quick_plays_support.unwrap_or(true)
-                || (features.is_quick_play_singleplayer.unwrap_or(false)
-                    && matches!(
-                        quick_play_type,
-                        QuickPlayType::Singleplayer(_)
-                    ))
-                || (features.is_quick_play_multiplayer.unwrap_or(false)
-                    && matches!(quick_play_type, QuickPlayType::Server(..)))
-                || !features.is_quick_play_realms.unwrap_or(true)
-        }
-        _ => match rule.action {
-            RuleAction::Allow => return Some(true),
-            RuleAction::Disallow => return Some(false),
-        },
-    };
-
-    match rule.action {
-        RuleAction::Allow => {
-            if res {
-                Some(true)
-            } else {
-                None
-            }
-        }
-        RuleAction::Disallow => {
-            if res {
-                Some(false)
-            } else {
-                None
-            }
-        }
-    }
+    (os_matches && features_match)
+        .then_some(matches!(rule.action, RuleAction::Allow))
 }
 
 macro_rules! processor_rules {
@@ -2778,5 +2752,103 @@ mod offline_skin_resource_pack_tests {
         .unwrap();
 
         assert_eq!(options, "resourcePacks:[\"vanilla\"]");
+    }
+}
+
+#[cfg(test)]
+mod linked_rule_tests {
+    use super::*;
+    use d::minecraft::{FeatureRule, OsRule, Rule};
+
+    fn rule(
+        action: RuleAction,
+        os: Option<OsRule>,
+        features: Option<FeatureRule>,
+    ) -> Rule {
+        Rule {
+            action,
+            os,
+            features,
+        }
+    }
+
+    #[test]
+    fn ordered_rules_use_the_last_matching_action() {
+        let rules = [
+            rule(RuleAction::Allow, None, None),
+            rule(RuleAction::Disallow, None, None),
+            rule(RuleAction::Allow, None, None),
+        ];
+        assert!(parse_rules(
+            &rules,
+            std::env::consts::ARCH,
+            &QuickPlayType::None,
+            true
+        ));
+        assert!(!parse_rules(
+            &rules[..2],
+            std::env::consts::ARCH,
+            &QuickPlayType::None,
+            true
+        ));
+        assert!(parse_rules(
+            &[],
+            std::env::consts::ARCH,
+            &QuickPlayType::None,
+            true
+        ));
+    }
+
+    #[test]
+    fn os_and_features_on_one_rule_are_conjunctive() {
+        let matching_os = OsRule {
+            name: Some(d::minecraft::Os::native_arch(std::env::consts::ARCH)),
+            version: None,
+            arch: Some(std::env::consts::ARCH.to_string()),
+        };
+        let custom_resolution = FeatureRule {
+            is_demo_user: None,
+            has_custom_resolution: Some(true),
+            has_quick_plays_support: None,
+            is_quick_play_singleplayer: None,
+            is_quick_play_multiplayer: None,
+            is_quick_play_realms: None,
+        };
+        let matching_rule = rule(
+            RuleAction::Allow,
+            Some(matching_os),
+            Some(custom_resolution),
+        );
+        assert!(parse_rules(
+            &[matching_rule],
+            std::env::consts::ARCH,
+            &QuickPlayType::None,
+            true
+        ));
+
+        let mismatched = rule(
+            RuleAction::Allow,
+            Some(OsRule {
+                name: Some(d::minecraft::Os::native_arch(
+                    std::env::consts::ARCH,
+                )),
+                version: None,
+                arch: Some("definitely-not-this-architecture".to_string()),
+            }),
+            Some(FeatureRule {
+                is_demo_user: None,
+                has_custom_resolution: Some(true),
+                has_quick_plays_support: None,
+                is_quick_play_singleplayer: None,
+                is_quick_play_multiplayer: None,
+                is_quick_play_realms: None,
+            }),
+        );
+        assert!(!parse_rules(
+            &[mismatched],
+            std::env::consts::ARCH,
+            &QuickPlayType::None,
+            true
+        ));
     }
 }
