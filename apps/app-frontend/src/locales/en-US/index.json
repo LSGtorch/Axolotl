@@ -1511,6 +1511,12 @@
   "app.drop.instance-imported-text": {
     "message": "{name} imported successfully."
   },
+  "app.drop.instance-direct-linked-text": {
+    "message": "{name} is now directly linked and can still be used alongside HMCL/PCL."
+  },
+  "app.drop.instance-direct-linked-title": {
+    "message": "Instance linked"
+  },
   "app.drop.instance-imported-title": {
     "message": "Instance imported"
   },

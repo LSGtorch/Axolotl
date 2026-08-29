@@ -1565,6 +1565,12 @@
   "app.drop.instance-imported-text": {
     "message": "{name} 导入成功。"
   },
+  "app.drop.instance-direct-linked-text": {
+    "message": "{name} 已直接关联，可继续与 HMCL/PCL 混用。"
+  },
+  "app.drop.instance-direct-linked-title": {
+    "message": "已直接关联"
+  },
   "app.drop.instance-imported-title": {
     "message": "实例已导入"
   },

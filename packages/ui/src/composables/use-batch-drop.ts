@@ -46,6 +46,8 @@ export interface BatchDropItem {
 	installState?: BatchDropInstallState
 	installError?: string
 	symlink?: boolean
+	/** Import method chosen for this instance ('direct' bypasses the install job) */
+	method?: 'copy' | 'symlink' | 'direct'
 	gameVersion?: string | null
 	loader?: string | null
 	loaderVersion?: string | null

@@ -131,10 +131,15 @@ export interface SymlinkMethodInstance {
 	compatibleMode?: boolean
 }
 
+export type SymlinkImportMethod = 'copy' | 'symlink' | 'direct'
+
 export interface SymlinkMethodChoice {
 	instanceName: string
 	instancePath?: string
-	symlink: boolean
+	/** Which import method the user picked */
+	method: SymlinkImportMethod
+	/** @deprecated legacy flag kept for compatibility; true when method is 'symlink' */
+	symlink?: boolean
 	gameVersion?: string | null
 	loader?: string | null
 	loaderVersion?: string | null

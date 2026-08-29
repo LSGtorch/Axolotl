@@ -1445,6 +1445,21 @@
   "drop.symlink_method.copy_title": {
     "defaultMessage": "Copy files"
   },
+  "drop.symlink_method.base_path": {
+    "defaultMessage": "Original directory"
+  },
+  "drop.symlink_method.direct_desc": {
+    "defaultMessage": "Launch the original folder in place without changing its structure; stays compatible with other launchers"
+  },
+  "drop.symlink_method.direct_paths": {
+    "defaultMessage": "Location"
+  },
+  "drop.symlink_method.direct_title": {
+    "defaultMessage": "Direct link"
+  },
+  "drop.symlink_method.import_now": {
+    "defaultMessage": "Import"
+  },
   "drop.symlink_method.custom": {
     "defaultMessage": "Custom"
   },

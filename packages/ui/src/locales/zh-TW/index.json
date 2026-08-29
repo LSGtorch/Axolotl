@@ -3965,6 +3965,21 @@
   "drop.symlink_method.copy_title": {
     "message": "複製檔案"
   },
+  "drop.symlink_method.base_path": {
+    "message": "原始目錄"
+  },
+  "drop.symlink_method.direct_desc": {
+    "message": "不改變原有檔案結構，直接使用原始目錄啟動，可與其他啟動器混用"
+  },
+  "drop.symlink_method.direct_paths": {
+    "message": "位置資訊"
+  },
+  "drop.symlink_method.direct_title": {
+    "message": "直接關聯"
+  },
+  "drop.symlink_method.import_now": {
+    "message": "直接匯入"
+  },
   "drop.symlink_method.copy_desc": {
     "message": "複製到 Axolotl 目錄"
   },
