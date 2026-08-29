@@ -34,6 +34,25 @@ export const ANNOUNCEMENT_CHANGE_TYPES: readonly AnnouncementChangeType[] = [
 export const launcherAnnouncements: readonly LauncherAnnouncement[] = [
 
 	{
+		id: 'launcher-99.99.5',
+		version: '99.99.5',
+		publishedAt: '2026-08-29',
+		title: {
+			'en-US': 'Axolotl Launcher 99.99.5 (test)',
+			'zh-CN': 'Axolotl Launcher 99.99.5（测试版）',
+		},
+		changes: {
+			added: [
+				{
+					'en-US':
+						'Synced all upstream changes (1.9.x): Forge/server support, install notification cancellation, download pipeline and native-library fixes, game directory override, and more.',
+					'zh-CN':
+						'同步全部上游更新（1.9.x）：Forge/服务端支持、安装通知可取消、下载链路与原生库修复、游戏目录覆盖等。',
+				},
+			],
+		},
+	},
+	{
 		id: 'launcher-1.8.13',
 		version: '1.8.13',
 		publishedAt: '2026-08-24',
