@@ -549,12 +549,22 @@ mod tests {
         write_archive(&classified, &[("lwjgl.dll", b"wrong")]);
         let library: Library = serde_json::from_value(serde_json::json!({
             "name": "org.lwjgl:lwjgl:3.2.2",
-            "natives": {"windows": "natives-windows"},
-            "downloads": {"classifiers": {"natives-windows": {
-                "sha1": "05359f3aa50d36352815fc662ea73e1c00d22170",
-                "size": 279593,
-                "url": "https://libraries.minecraft.net/native.jar"
-            }}}
+            "natives": {
+                "windows": "natives-windows",
+                "linux": "natives-linux"
+            },
+            "downloads": {"classifiers": {
+                "natives-windows": {
+                    "sha1": "05359f3aa50d36352815fc662ea73e1c00d22170",
+                    "size": 279593,
+                    "url": "https://libraries.minecraft.net/native.jar"
+                },
+                "natives-linux": {
+                    "sha1": "05359f3aa50d36352815fc662ea73e1c00d22170",
+                    "size": 279593,
+                    "url": "https://libraries.minecraft.net/native.jar"
+                }
+            }}
         }))
         .unwrap();
 

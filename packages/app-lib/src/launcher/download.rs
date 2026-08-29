@@ -2911,13 +2911,33 @@ mod tests {
         let natives_root = directory.path().join("natives");
         let libraries_dir = directory.path().join("libraries");
         let caches_dir = directory.path().join("caches");
+        // No sha1-addressed cache entry exists for this library and it
+        // declares no classifier downloads, so per fork semantics resolution
+        // falls back to the classified artifact under the libraries directory.
         let archive = libraries_dir.join(
             "org/lwjgl/lwjgl-platform/3.2.1/lwjgl-platform-3.2.1-natives-windows.jar",
         );
         std::fs::create_dir_all(archive.parent().unwrap()).unwrap();
         write_native_archive(&archive, &[("lwjgl.dll", b"from-libraries")]);
+        // The classifier resolves per host OS; provide the Linux-named twin so
+        // the fixture also restores when the test runs on a Linux host.
+        let linux_archive = libraries_dir.join(
+            "org/lwjgl/lwjgl-platform/3.2.1/lwjgl-platform-3.2.1-natives-linux.jar",
+        );
+        write_native_archive(
+            &linux_archive,
+            &[("lwjgl.dll", b"from-libraries")],
+        );
 
-        let libraries = [modern_native_library("deadbeef")];
+        let library: Library = serde_json::from_value(serde_json::json!({
+            "name": "org.lwjgl:lwjgl-platform:3.2.1",
+            "natives": {
+                "linux": "natives-linux",
+                "windows": "natives-windows"
+            }
+        }))
+        .unwrap();
+        let libraries = [library];
         prepare_test_natives(
             &natives_root,
             &libraries_dir,

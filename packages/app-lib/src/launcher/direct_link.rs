@@ -1610,9 +1610,7 @@ fn normalize_architecture(java_arch: &str) -> &str {
     }
 }
 
-pub(crate) fn linked_linked_architecture_width(
-    java_arch: &str,
-) -> &'static str {
+pub(crate) fn linked_architecture_width(java_arch: &str) -> &'static str {
     match normalize_architecture(java_arch)
         .to_ascii_lowercase()
         .as_str()
