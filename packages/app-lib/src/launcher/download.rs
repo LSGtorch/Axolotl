@@ -465,7 +465,7 @@ async fn download_minecraft_file_with_candidates(
     Ok(result)
 }
 
-fn minecraft_library_mirrors(url: &str) -> Vec<String> {
+pub(crate) fn minecraft_library_mirrors(url: &str) -> Vec<String> {
     const MACHINA_LWJGL_RELEASE: &str = "https://github.com/MinecraftMachina/lwjgl/releases/download/2.9.4-20150209-mmachina.2/";
     const MOJANG_LWJGL_PATH: &str = "https://libraries.minecraft.net/org/lwjgl/lwjgl/lwjgl-platform/2.9.4-nightly-20150209/";
 
@@ -477,7 +477,7 @@ fn minecraft_library_mirrors(url: &str) -> Vec<String> {
 }
 
 const LAUNCHER_META_MAVEN: &str = "https://launcher-meta.modrinth.com/maven";
-const LIBRARIES_MAVEN: &str = "https://libraries.minecraft.net";
+pub(crate) const LIBRARIES_MAVEN: &str = "https://libraries.minecraft.net";
 const FABRIC_MAVEN: &str = "https://maven.fabricmc.net";
 const FORGE_MAVEN: &str = "https://maven.minecraftforge.net";
 const NEOFORGE_MAVEN: &str = "https://maven.neoforged.net/releases";
@@ -485,7 +485,7 @@ const QUILT_MAVEN: &str = "https://maven.quiltmc.org/repository/release";
 const SPONGE_MAVEN: &str = "https://repo.spongepowered.org/maven";
 const MAVEN_CENTRAL: &str = "https://repo.maven.apache.org/maven2";
 
-fn legacy_library_download_urls(
+pub(crate) fn legacy_library_download_urls(
     repository: Option<&str>,
     artifact_path: &str,
 ) -> Option<Vec<String>> {

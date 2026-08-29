@@ -7,6 +7,12 @@ use crate::install::{
     InstallProgressReporter,
 };
 use crate::instance::QuickPlayType;
+use crate::launcher::direct_link::{
+    DirectLinkedLaunch, LinkedLauncherDialect, apply_hmcl_settings,
+    conservative_launch_facts, extract_linked_natives, hmcl_java_candidates,
+    hmcl_with_global_fallback, merged_to_version_info, pcl_available_memory_gb,
+    pcl_ram_profile,
+};
 use crate::launcher::download::{LocalRuntimeSource, download_log_config};
 use crate::launcher::quick_play_version::{
     QuickPlayServerVersion, QuickPlayVersion,
@@ -14,8 +20,9 @@ use crate::launcher::quick_play_version::{
 use crate::server_address::{ServerAddress, parse_server_address};
 use crate::state::server_join_log::JoinLogEntry;
 use crate::state::{
-    CacheBehaviour, Credentials, InstanceInstallStage, InstanceLaunchContext,
-    InstanceLink, JavaVersion, MemorySettings, ProcessMetadata, WindowSize,
+    CacheBehaviour, Credentials, Instance, InstanceInstallStage,
+    InstanceLaunchContext, InstanceLink, JavaVersion, MemorySettings,
+    ProcessMetadata, WindowSize,
 };
 use crate::util::io;
 use crate::util::rpc::RpcServerBuilder;
@@ -40,6 +47,7 @@ use tokio_util::sync::CancellationToken;
 use winreg::{RegKey, enums::HKEY_CURRENT_USER};
 
 mod args;
+mod direct_ensure;
 mod direct_link;
 mod natives;
 
@@ -1311,6 +1319,81 @@ pub async fn read_protocol_version_from_jar(
     Ok(data.protocol_version)
 }
 
+/// Selects a Java runtime from the HMCL private settings of a directly
+/// associated instance, if one is configured and usable.
+async fn select_hmcl_java(
+    direct: &DirectLinkedLaunch,
+    settings: &crate::launcher::local_version::HmclVersionSettings,
+) -> Option<JavaVersion> {
+    select_linked_java(hmcl_java_candidates(settings, &direct.dot_minecraft))
+        .await
+}
+
+/// Selects a Java runtime from the PCL/PCL-CE per-instance Java preference of
+/// a directly associated instance (see
+/// `PclLaunchSettings::java_candidates`).
+async fn select_pcl_java(
+    direct: &DirectLinkedLaunch,
+    settings: &direct_link::PclLaunchSettings,
+) -> Option<JavaVersion> {
+    select_linked_java(settings.java_candidates(
+        &direct.version_dir(),
+        direct.launcher_root.as_deref(),
+    ))
+    .await
+}
+
+/// Verifies linked-launcher Java candidates in order and returns the first
+/// usable one.
+async fn select_linked_java(candidates: Vec<PathBuf>) -> Option<JavaVersion> {
+    for candidate in candidates {
+        match crate::api::jre::check_jre(candidate).await {
+            Ok(java) => {
+                tracing::info!(
+                    java = %java.path,
+                    "Using the Java runtime configured by the linked launcher"
+                );
+                return Some(java);
+            }
+            Err(error) => {
+                tracing::debug!(
+                    %error,
+                    "Skipping unusable linked-launcher Java candidate"
+                );
+            }
+        }
+    }
+
+    None
+}
+
+/// Resolves the game directory a directly associated instance actually plays
+/// from: the shared `.minecraft` for HMCL/generic dialects, `versions/<id>`
+/// for PCL/PCL-CE version isolation. `None` when the instance is not directly
+/// associated or its linked metadata is incomplete.
+///
+/// Content browsing (mods/worlds listing) uses this so it reads the same
+/// folders the launch does. Unlike the launch path, an unreadable version
+/// chain degrades to the linked `.minecraft` root instead of failing: browsing
+/// must keep working when only the dialect resolution breaks.
+pub(crate) fn linked_game_dir(instance: &Instance) -> Option<PathBuf> {
+    let direct = match DirectLinkedLaunch::from_instance(instance) {
+        Ok(Some(direct)) => direct,
+        Ok(None) | Err(_) => return None,
+    };
+    match direct.resolve() {
+        Ok(resolved) => Some(resolved.game_dir),
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                "Falling back to the shared linked `.minecraft` root; the \
+                 linked version chain could not be resolved"
+            );
+            Some(direct.dot_minecraft.clone())
+        }
+    }
+}
+
 fn link_project_and_version(
     link: &InstanceLink,
 ) -> (Option<&String>, Option<&String>) {
@@ -1378,40 +1461,153 @@ pub async fn launch_minecraft(
 
     let state = State::get().await?;
 
-    let instance_path = get_instance_full_path(
-        &instance.path,
-        instance.game_dir_override.as_deref(),
-    )
-    .await?;
-    let offline_skin_pack =
+    let direct_launch = DirectLinkedLaunch::from_instance(instance)?;
+    let mut resolved_linked = direct_launch
+        .as_ref()
+        .map(DirectLinkedLaunch::resolve)
+        .transpose()?;
+    // PCL/PCL-CE may isolate a version under versions/<id>; HMCL and generic
+    // linked installations launch from the shared .minecraft root.
+    let instance_path = if let Some(resolved) = &resolved_linked {
+        io::canonicalize(&resolved.game_dir)?
+    } else {
+        get_instance_full_path(
+            &instance.path,
+            instance.game_dir_override.as_deref(),
+        )
+        .await?
+    };
+    let offline_skin_pack = if direct_launch.is_some() {
+        // Writing the offline skin pack would modify the linked folder.
+        crate::minecraft_skins::OfflineSkinPackOptions {
+            enabled_pack_id: None,
+        }
+    } else {
         crate::minecraft_skins::prepare_offline_skin_resource_pack(
             credentials,
             &instance_path,
             &content_set.game_version,
         )
-        .await?;
+        .await?
+    };
 
     let cache_behaviour = offline_mode.then_some(CacheBehaviour::CacheOnly);
-    let (minecraft, version_index) = resolve_minecraft_manifest_with_cache(
-        &content_set.game_version,
-        &state,
-        cache_behaviour,
-    )
-    .await?;
-    let version = &minecraft.versions[version_index];
-    let minecraft_updated = version_index
-        <= minecraft
-            .versions
-            .iter()
-            .position(|x| x.id == "22w16a")
-            .unwrap_or(0);
+    let mut linked_libraries = None;
 
-    let loader_version = if offline_mode {
-        if let Some(loader_version) = installed_offline_loader_version(
-            content_set.loader,
-            content_set.loader_version.as_deref(),
-        ) {
-            Some(loader_version)
+    // PCL/PCL-CE expose per-instance launch preferences (Java, memory, custom
+    // arguments) in their own config files; load them once for this launch.
+    let pcl_launch = direct_launch
+        .as_ref()
+        .filter(|direct| {
+            matches!(
+                direct.dialect,
+                LinkedLauncherDialect::Pcl | LinkedLauncherDialect::PclCe
+            )
+        })
+        .map(DirectLinkedLaunch::pcl_launch_settings);
+
+    let (
+        version_info,
+        minecraft_updated,
+        version_jar,
+        launch_version_id,
+        launch_version_type,
+        quick_play_version,
+        hmcl_settings,
+        launch_release_time,
+    ) = if let Some(direct) = &direct_launch {
+        // The dialect-specific resolver has already folded the linked manifest;
+        // no version metadata is downloaded and no repair pass runs.
+        let mut merged = resolved_linked
+            .take()
+            .expect("direct launch resolution accompanies direct metadata")
+            .merged;
+        linked_libraries = Some(merged.libraries.clone());
+
+        // Best-effort reuse of the shared metadata manifest for behaviors
+        // keyed on the vanilla release order (Quick Play support, pre-1.13
+        // library rules); unknown base versions fall back conservatively.
+        let (minecraft_updated, quick_play_version) =
+            match resolve_minecraft_manifest_with_cache(
+                &content_set.game_version,
+                &state,
+                cache_behaviour,
+            )
+            .await
+            {
+                Ok((minecraft, version_index)) => (
+                    version_index
+                        <= minecraft
+                            .versions
+                            .iter()
+                            .position(|x| x.id == "22w16a")
+                            .unwrap_or(0),
+                    QuickPlayVersion::find_version(
+                        version_index,
+                        &minecraft.versions,
+                    ),
+                ),
+                Err(error) => {
+                    tracing::warn!(
+                        %error,
+                        version = %content_set.game_version,
+                        "Linked version not found in Minecraft metadata; \
+                         using conservative launch defaults"
+                    );
+                    conservative_launch_facts(&merged)
+                }
+            };
+
+        let version_jar = merged
+            .jar
+            .clone()
+            .unwrap_or_else(|| content_set.game_version.clone());
+        let hmcl_settings = std::mem::take(&mut merged.hmcl_settings);
+        let version_info = merged_to_version_info(merged)?;
+        let launch_version_type = version_info.type_.clone();
+
+        (
+            version_info,
+            minecraft_updated,
+            version_jar,
+            direct.version_id.clone(),
+            launch_version_type,
+            quick_play_version,
+            hmcl_settings,
+            // Unused: the options.txt language pass never runs for directly
+            // associated instances.
+            chrono::DateTime::<Utc>::MIN_UTC,
+        )
+    } else {
+        let (minecraft, version_index) = resolve_minecraft_manifest_with_cache(
+            &content_set.game_version,
+            &state,
+            cache_behaviour,
+        )
+        .await?;
+        let version = &minecraft.versions[version_index];
+        let minecraft_updated = version_index
+            <= minecraft
+                .versions
+                .iter()
+                .position(|x| x.id == "22w16a")
+                .unwrap_or(0);
+
+        let loader_version = if offline_mode {
+            if let Some(loader_version) = installed_offline_loader_version(
+                content_set.loader,
+                content_set.loader_version.as_deref(),
+            ) {
+                Some(loader_version)
+            } else {
+                get_loader_version_from_profile_with_cache(
+                    &content_set.game_version,
+                    content_set.loader,
+                    content_set.loader_version.as_deref(),
+                    cache_behaviour,
+                )
+                .await?
+            }
         } else {
             get_loader_version_from_profile_with_cache(
                 &content_set.game_version,
@@ -1420,83 +1616,123 @@ pub async fn launch_minecraft(
                 cache_behaviour,
             )
             .await?
+        };
+
+        if content_set.loader != ModLoader::Vanilla && loader_version.is_none()
+        {
+            return Err(crate::ErrorKind::LauncherError(format!(
+                "No loader version selected for {}",
+                content_set.loader.as_str()
+            ))
+            .into());
         }
-    } else {
-        get_loader_version_from_profile_with_cache(
-            &content_set.game_version,
-            content_set.loader,
-            content_set.loader_version.as_deref(),
-            cache_behaviour,
-        )
-        .await?
-    };
 
-    if content_set.loader != ModLoader::Vanilla && loader_version.is_none() {
-        return Err(crate::ErrorKind::LauncherError(format!(
-            "No loader version selected for {}",
-            content_set.loader.as_str()
-        ))
-        .into());
-    }
+        let version_jar =
+            loader_version.as_ref().map_or(version.id.clone(), |it| {
+                format!("{}-{}", version.id.clone(), it.id.clone())
+            });
 
-    let version_jar =
-        loader_version.as_ref().map_or(version.id.clone(), |it| {
-            format!("{}-{}", version.id.clone(), it.id.clone())
-        });
-
-    let mut version_info = if offline_mode {
-        download::load_local_version_info(
-            &state,
-            version,
-            content_set.loader,
-            loader_version.as_ref(),
-        )
-        .await?
-    } else {
-        download::download_version_info(
-            &state,
-            version,
-            content_set.loader,
-            loader_version.as_ref(),
-            None,
-            None,
-            None,
-        )
-        .await?
-    };
-    if version_info.logging.is_none() {
-        let requires_logging_info = version_index
-            <= minecraft
-                .versions
-                .iter()
-                .position(|x| x.id == "13w39a")
-                .unwrap_or(0);
-        if requires_logging_info && !offline_mode {
-            version_info = download::download_version_info(
+        let mut version_info = if offline_mode {
+            download::load_local_version_info(
                 &state,
                 version,
                 content_set.loader,
                 loader_version.as_ref(),
-                Some(true),
+            )
+            .await?
+        } else {
+            download::download_version_info(
+                &state,
+                version,
+                content_set.loader,
+                loader_version.as_ref(),
                 None,
+                None,
+                None,
+            )
+            .await?
+        };
+        if version_info.logging.is_none() {
+            let requires_logging_info = version_index
+                <= minecraft
+                    .versions
+                    .iter()
+                    .position(|x| x.id == "13w39a")
+                    .unwrap_or(0);
+            if requires_logging_info && !offline_mode {
+                version_info = download::download_version_info(
+                    &state,
+                    version,
+                    content_set.loader,
+                    loader_version.as_ref(),
+                    Some(true),
+                    None,
+                    None,
+                )
+                .await?;
+            }
+        }
+
+        let quick_play_version =
+            QuickPlayVersion::find_version(version_index, &minecraft.versions);
+        let launch_version_id = version.id.clone();
+        let launch_release_time = version.release_time;
+
+        (
+            version_info,
+            minecraft_updated,
+            version_jar,
+            launch_version_id,
+            version.type_.clone(),
+            quick_play_version,
+            crate::launcher::local_version::HmclVersionSettings::default(),
+            launch_release_time,
+        )
+    };
+
+    if direct_launch.is_none() {
+        if offline_mode {
+            download::ensure_local_log_config(&state, &version_info)?;
+        } else {
+            let _ = download_log_config(
+                &state,
+                None,
+                &version_info,
+                None,
+                false,
                 None,
             )
             .await?;
         }
     }
 
-    if offline_mode {
-        download::ensure_local_log_config(&state, &version_info)?;
-    } else {
-        let _ =
-            download_log_config(&state, None, &version_info, None, false, None)
-                .await?;
-    }
-
     let java_version = if let Some(java) =
         context.launch_overrides.java_path.as_ref()
     {
         crate::api::jre::check_jre(std::path::PathBuf::from(java)).await?
+    } else if direct_launch
+        .as_ref()
+        .is_some_and(|direct| direct.dialect == LinkedLauncherDialect::Hmcl)
+        && let Some(java) = select_hmcl_java(
+            direct_launch.as_ref().expect("checked above"),
+            &hmcl_settings,
+        )
+        .await
+    {
+        // The linked launcher configured its own Java runtime for this
+        // version; prefer it over Axolotl's discovery.
+        java
+    } else if let (Some(direct), Some(pcl)) =
+        (direct_launch.as_ref(), pcl_launch.as_ref())
+        && matches!(
+            direct.dialect,
+            LinkedLauncherDialect::Pcl | LinkedLauncherDialect::PclCe
+        )
+        && let Some(java) = select_pcl_java(direct, pcl).await
+    {
+        // The linked PCL/PCL-CE instance selected its own Java runtime;
+        // prefer it over Axolotl's discovery.
+        java
     } else {
         let key = required_java_major(&version_info);
 
@@ -1530,6 +1766,12 @@ pub async fn launch_minecraft(
     // pruning unsupported tuning flags and falling back down the chain as
     // needed. A `None` keeps the args passed in untouched.
     let mut resolved_java_args = java_args.to_vec();
+    // Custom JVM arguments from the linked launcher enter the same GC
+    // compatibility pipeline below: unsupported tuning flags are pruned
+    // against the actual JVM instead of reaching it unvalidated.
+    if let Some(pcl) = &pcl_launch {
+        resolved_java_args.extend(pcl.extra_jvm_args());
+    }
     if let Some(gc_intent) = gc_intent {
         tracing::info!(
             java = %java_version.path,
@@ -1545,6 +1787,58 @@ pub async fn launch_minecraft(
             tracing::info!(?report, "GC arguments adjusted for this JVM");
         }
         *gc_report = Some(report);
+    }
+
+    // Apply the mappable linked-launcher private settings for directly
+    // associated instances on top of the resolved launch configuration.
+    let mut effective_memory = *memory;
+    let mut effective_resolution = *resolution;
+    // Extra game arguments appended after the vanilla game arguments.
+    let mut extra_game_args: Vec<String> = Vec::new();
+    if let Some(direct) = direct_launch.as_ref()
+        && direct.dialect == LinkedLauncherDialect::Hmcl
+    {
+        let hmcl_effective = hmcl_with_global_fallback(
+            &hmcl_settings,
+            direct.launcher_root.as_deref(),
+        );
+        extra_game_args.extend(apply_hmcl_settings(
+            &hmcl_effective,
+            &mut effective_memory,
+            &mut effective_resolution,
+            &mut resolved_java_args,
+            Some(java_version.parsed_version),
+        ));
+    } else if let (Some(direct), Some(pcl)) =
+        (direct_launch.as_ref(), pcl_launch.as_ref())
+        && matches!(
+            direct.dialect,
+            LinkedLauncherDialect::Pcl | LinkedLauncherDialect::PclCe
+        )
+    {
+        // PCL's RAM estimate needs the mod presence of the resolved game
+        // directory and the bitness of the JVM chosen above.
+        let (modable, opti_fine) =
+            pcl_ram_profile(version_info.libraries.as_slice());
+        let is_32_bit_java =
+            crate::launcher::direct_link::linked_architecture_width(
+                &java_version.architecture,
+            ) == "32";
+        if let Some(maximum) = pcl.resolve_ram_mb(
+            &instance_path,
+            modable,
+            opti_fine,
+            pcl_available_memory_gb(),
+            is_32_bit_java,
+        ) {
+            tracing::info!(
+                maximum,
+                "Using the memory allocation configured by the linked PCL \
+                 instance"
+            );
+            effective_memory.maximum = maximum;
+        }
+        extra_game_args.extend(pcl.extra_game_args());
     }
 
     let settings = crate::state::Settings::get(&state.pool).await?;
@@ -1579,19 +1873,24 @@ pub async fn launch_minecraft(
             Vec::new()
         };
 
-    let vanilla_client_path = state
-        .directories
-        .version_dir(&version_jar)
-        .join(format!("{version_jar}.jar"));
-    let client_path = match crate::api::instance::assemble_for_launch(
-        &instance_path,
-        &content_set.game_version,
-        &vanilla_client_path,
-    )
-    .await?
-    {
-        Some(assembled) => assembled,
-        None => vanilla_client_path,
+    let client_path = if let Some(direct) = &direct_launch {
+        // The game jar lives inside the linked installation.
+        direct.client_jar(&version_jar)
+    } else {
+        let vanilla_client_path = state
+            .directories
+            .version_dir(&version_jar)
+            .join(format!("{version_jar}.jar"));
+        match crate::api::instance::assemble_for_launch(
+            &instance_path,
+            &content_set.game_version,
+            &vanilla_client_path,
+        )
+        .await?
+        {
+            Some(assembled) => assembled,
+            None => vanilla_client_path,
+        }
     };
 
     let args = version_info.arguments.clone().unwrap_or_default();
@@ -1629,39 +1928,87 @@ pub async fn launch_minecraft(
         .as_error());
     }
 
-    let natives_dir = state.directories.version_natives_dir(&version_jar);
-    if !natives_dir.exists() {
-        io::create_dir_all(&natives_dir).await?;
-    }
-    if offline_mode {
-        natives::prepare_native_libraries(
-            &state.directories.natives_dir(),
-            &state.directories.libraries_dir(),
-            &state.directories.caches_dir(),
-            version_info.libraries.as_slice(),
-            &version_jar,
-            &java_version.architecture,
-            minecraft_updated,
-        )
-        .await?;
-    } else {
-        download::download_libraries(
+    // Ensure phase (HMCL/PCL parity): before anything reads from the linked
+    // installation, complete its missing libraries, assets, and logging
+    // config in the standard shared locations. Version JSONs, launcher
+    // private configuration, and game data are never written. Offline mode
+    // forbids network fetches, so it keeps the previous strict behavior.
+    if !offline_mode
+        && let (Some(direct), Some(libraries)) =
+            (&direct_launch, linked_libraries.as_deref())
+    {
+        direct_ensure::ensure_direct_launch_dependencies(
             &state,
-            None,
-            version_info.libraries.as_slice(),
-            &version_jar,
-            None,
-            0.0,
+            direct,
+            libraries,
+            &version_info,
             &java_version.architecture,
-            false,
             minecraft_updated,
-            None,
         )
         .await?;
     }
 
-    let quick_play_version =
-        QuickPlayVersion::find_version(version_index, &minecraft.versions);
+    let natives_dir = if let Some(direct) = &direct_launch {
+        state
+            .directories
+            .version_natives_dir(&direct.natives_cache_key())
+    } else {
+        state.directories.version_natives_dir(&version_jar)
+    };
+    // Linked native archives can change outside Axolotl, so rebuild only the
+    // Axolotl-owned linked cache on every launch. Never mutate linked folders.
+    if direct_launch.is_some() && natives_dir.exists() {
+        io::remove_dir_all(&natives_dir).await?;
+    }
+    if !natives_dir.exists() {
+        io::create_dir_all(&natives_dir).await?;
+    }
+    if let (Some(direct), Some(libraries)) =
+        (direct_launch.clone(), linked_libraries.clone())
+    {
+        // Linked instances rebuild the Axolotl-owned natives cache on every
+        // launch; the managed restore path below must never touch them.
+        let target = natives_dir.clone();
+        let java_arch = java_version.architecture.clone();
+        tokio::task::spawn_blocking(move || {
+            extract_linked_natives(
+                &direct,
+                &libraries,
+                &target,
+                &java_arch,
+                minecraft_updated,
+            )
+        })
+        .await??;
+    } else if direct_launch.is_none() {
+        if offline_mode {
+            natives::prepare_native_libraries(
+                &state.directories.natives_dir(),
+                &state.directories.libraries_dir(),
+                &state.directories.caches_dir(),
+                version_info.libraries.as_slice(),
+                &version_jar,
+                &java_version.architecture,
+                minecraft_updated,
+            )
+            .await?;
+        } else {
+            download::download_libraries(
+                &state,
+                None,
+                version_info.libraries.as_slice(),
+                &version_jar,
+                None,
+                0.0,
+                &java_version.architecture,
+                false,
+                minecraft_updated,
+                None,
+            )
+            .await?;
+        }
+    }
+
     tracing::debug!(
         "Found QuickPlayVersion for {}: {quick_play_version:?}",
         content_set.game_version
@@ -1729,23 +2076,47 @@ pub async fn launch_minecraft(
 
     let rpc_server = RpcServerBuilder::new().launch().await?;
 
+    let launch_libraries_dir = if let Some(direct) = &direct_launch {
+        direct.libraries_dir()
+    } else {
+        state.directories.libraries_dir()
+    };
+    let launch_log_configs_dir = if let Some(direct) = &direct_launch {
+        direct.log_configs_dir()
+    } else {
+        state.directories.log_configs_dir()
+    };
+    let class_paths = if let (Some(direct), Some(libraries)) =
+        (&direct_launch, linked_libraries.as_deref())
+    {
+        args::get_linked_class_paths(
+            direct,
+            libraries,
+            &[&main_class_path, &client_path],
+            &java_version.architecture,
+            minecraft_updated,
+        )?
+    } else {
+        args::get_class_paths(
+            &launch_libraries_dir,
+            version_info.libraries.as_slice(),
+            &[&main_class_path, &client_path],
+            &java_version.architecture,
+            minecraft_updated,
+        )?
+    };
+
     command.args(
         args::get_jvm_arguments(
             args.get(&d::minecraft::ArgumentType::Jvm)
                 .map(|x| x.as_slice()),
             &natives_dir,
-            &state.directories.libraries_dir(),
-            &state.directories.log_configs_dir(),
-            &args::get_class_paths(
-                &state.directories.libraries_dir(),
-                version_info.libraries.as_slice(),
-                &[&main_class_path, &client_path],
-                &java_version.architecture,
-                minecraft_updated,
-            )?,
+            &launch_libraries_dir,
+            &launch_log_configs_dir,
+            &class_paths,
             &main_class_path,
             &version_jar,
-            *memory,
+            effective_memory,
             resolved_java_args.clone(),
             &java_version.architecture,
             &quick_play_type,
@@ -1782,6 +2153,13 @@ pub async fn launch_minecraft(
             ));
     }
 
+    let launch_assets_dir = if let Some(direct) = &direct_launch {
+        // Use the assets of the linked installation in place.
+        direct.assets_dir()
+    } else {
+        state.directories.assets_dir()
+    };
+
     command
         .arg("com.modrinth.theseus.MinecraftLaunch")
         .arg(version_info.main_class.clone())
@@ -1791,12 +2169,12 @@ pub async fn launch_minecraft(
                     .map(|x| x.as_slice()),
                 version_info.minecraft_arguments.as_deref(),
                 credentials,
-                &version.id,
+                &launch_version_id,
                 &version_info.asset_index.id,
                 &instance_path,
-                &state.directories.assets_dir(),
-                &version.type_,
-                *resolution,
+                &launch_assets_dir,
+                &launch_version_type,
+                effective_resolution,
                 &java_version.architecture,
                 &quick_play_type,
                 quick_play_version,
@@ -1805,6 +2183,9 @@ pub async fn launch_minecraft(
             .into_iter()
             .map(encode_game_argument),
         )
+        // Linked-launcher game arguments (PCL VersionAdvanceGame, HMCL
+        // auto-connect server) ride at the tail of the vanilla arguments.
+        .args(extra_game_args)
         .current_dir(instance_path.clone());
 
     // CARGO-set DYLD_LIBRARY_PATH breaks Minecraft on macOS during testing on playground
@@ -1822,13 +2203,15 @@ pub async fn launch_minecraft(
 
     // Overwrites the minecraft options.txt file with the settings from the profile
     // Uses 'a:b' syntax which is not quite yaml
+    // Directly associated instances never write into the linked folder.
     let options_path = instance_path.join("options.txt");
     let options_existed = options_path.exists();
 
-    if !mc_set_options.is_empty()
-        || offline_skin_pack.enabled_pack_id.is_some()
-        || options_existed
-        || !settings.locale.is_empty()
+    if direct_launch.is_none()
+        && (!mc_set_options.is_empty()
+            || offline_skin_pack.enabled_pack_id.is_some()
+            || options_existed
+            || !settings.locale.is_empty())
     {
         let (mut options_string, input_encoding) = if options_existed {
             io::read_any_encoding_to_string(&options_path).await?
@@ -1852,7 +2235,7 @@ pub async fn launch_minecraft(
 
         let language_options = language::game_language_options(
             &settings.locale,
-            version.release_time,
+            launch_release_time,
             &options_string,
             instance_path.join("saves").exists(),
         );
@@ -1901,6 +2284,14 @@ pub async fn launch_minecraft(
         .set_activity(&format!("Playing {}", instance.name), true)
         .await;
 
+    // The launcher log must land where the log browser reads it. Directly
+    // associated instances run from the linked game directory and have no
+    // profile folder, so the relative profile path would point at a ghost
+    // `profiles/<path>/logs`; the absolute game dir joins onto the real
+    // `<game>/logs` instead.
+    let logs_folder = state
+        .directories
+        .instance_logs_dir(&instance_path.to_string_lossy());
     // Create Minecraft child by inserting it into the state
     // This also spawns the process and prepares the subsequent processes
     state
@@ -1911,9 +2302,7 @@ pub async fn launch_minecraft(
             &instance.name,
             command,
             post_exit_hook,
-            state
-                .directories
-                .game_logs_dir(&state.directories.instance_game_dir(&instance)),
+            logs_folder,
             version_info.logging.is_some(),
             main_class_keep_alive,
             rpc_server,
