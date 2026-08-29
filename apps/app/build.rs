@@ -347,6 +347,7 @@ fn main() {
                     .commands(&[
                         "install_get_modpack_preview",
                         "install_create_instance",
+                        "install_create_direct_link_instance",
                         "install_create_modpack_instance",
                         "install_import_instance",
                         "install_start_import_plan",
