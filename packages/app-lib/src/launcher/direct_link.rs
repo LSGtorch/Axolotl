@@ -9,11 +9,12 @@ use chrono::{DateTime, Utc};
 use daedalus::minecraft::{
     AssetIndex, Library, LibraryDownload, Os, VersionInfo, VersionType,
 };
+use daedalus::modded::normalize_loader_libraries;
 
 use super::local_version::{
     HmclVersionSettings, LinkedLibrary, MergedVersion, load_version_for_dialect,
 };
-use crate::state::{Instance, MemorySettings, WindowSize};
+use crate::state::{Instance, MemorySettings, ModLoader, WindowSize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinkedLauncherDialect {
@@ -203,6 +204,46 @@ impl DirectLinkedLaunch {
                 .join(library.classpath_relative_path()?))
         }
     }
+}
+
+/// Applies the managed-install loader normalization to a directly linked
+/// merge, reusing the shared `daedalus::modded::normalize_loader_libraries`
+/// rule without duplicating its coordinates.
+///
+/// Only Cleanroom-linked versions are affected: the rule drops the legacy
+/// Mojang conflicts (the LWJGL 2 binding `org.lwjgl.lwjgl:lwjgl`, JNA
+/// platform, and Mojang ICU bundle) from the merged list. The merged list
+/// drives the direct ensure pass, native extraction, the launch classpath,
+/// and the `VersionInfo` projection, so normalizing it before those
+/// consumers run covers direct ensure, classpath, and launch at once. The
+/// Cleanroom LWJGL 3 line, `com.cleanroommc:lwjglxx`, and all other
+/// libraries are untouched. Returns the removed coordinates for logging.
+pub(crate) fn normalize_merged_loader_libraries(
+    loader: ModLoader,
+    merged: &mut MergedVersion,
+) -> Vec<String> {
+    if loader != ModLoader::Cleanroom {
+        return Vec::new();
+    }
+
+    // The linked list wraps daedalus libraries with community-launcher
+    // fields; evaluate the shared rule against a plain projection, then
+    // drop the same coordinates from the linked list in place.
+    let mut projection: Vec<Library> = merged
+        .libraries
+        .iter()
+        .map(|library| library.library.clone())
+        .collect();
+    let removed =
+        normalize_loader_libraries("cleanroom", &merged.id, &mut projection);
+    if !removed.is_empty() {
+        let removed_names: std::collections::HashSet<&str> =
+            removed.iter().map(String::as_str).collect();
+        merged.libraries.retain(|library| {
+            !removed_names.contains(library.library.name.as_str())
+        });
+    }
+    removed
 }
 
 pub(crate) fn merged_to_version_info(
@@ -2577,5 +2618,123 @@ mod tests {
             Some(17),
         );
         assert_eq!(java_args, ["-XX:MetaspaceSize=512M"]);
+    }
+
+    fn resolve_linked_fixture(
+        root: &Path,
+        version_id: &str,
+        libraries: serde_json::Value,
+    ) -> MergedVersion {
+        let directory = root.join("versions").join(version_id);
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(
+            directory.join(format!("{version_id}.json")),
+            serde_json::to_vec(
+                &json!({ "id": version_id, "libraries": libraries }),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        DirectLinkedLaunch {
+            dot_minecraft: root.to_path_buf(),
+            launcher_root: None,
+            version_id: version_id.to_string(),
+            version_json: None,
+            dialect: LinkedLauncherDialect::Generic,
+        }
+        .resolve()
+        .unwrap()
+        .merged
+    }
+
+    fn cleanroom_mixed_fixture() -> serde_json::Value {
+        // The reported 1.12.2 + Cleanroom 0.6.11-alpha direct-link failure:
+        // the vanilla parent contributes the LWJGL 2 binding
+        // (`org.lwjgl.lwjgl:lwjgl`) while Cleanroom contributes the LWJGL 3
+        // line; both must never share a classpath.
+        json!([
+            {"name": "com.cleanroommc:cleanroom:0.6.11-alpha"},
+            {"name": "org.lwjgl.lwjgl:lwjgl:2.9.4-nightly-20150209"},
+            {"name": "org.lwjgl.lwjgl:lwjgl_util:2.9.4-nightly-20150209"},
+            {"name": "org.lwjgl.lwjgl:lwjgl-platform:2.9.4-nightly-20150209", "natives": {"windows": "natives-windows"}},
+            {"name": "org.lwjgl:lwjgl:3.4.1-unsafe"},
+            {"name": "org.lwjgl:lwjgl:3.4.1-unsafe", "natives": {"windows": "natives-windows"}},
+            {"name": "com.cleanroommc:lwjglxx:1.1.22"},
+            {"name": "net.java.dev.jna:jna:5.19.1"},
+            {"name": "net.java.dev.jna:platform:3.4.0"},
+            {"name": "com.ibm.icu:icu4j-core-mojang:51.2"}
+        ])
+    }
+
+    #[test]
+    fn cleanroom_linked_merge_drops_legacy_conflicts_at_launch_normalization() {
+        let root = tempfile::tempdir().unwrap();
+        let mut merged = resolve_linked_fixture(
+            root.path(),
+            "1.12.2",
+            cleanroom_mixed_fixture(),
+        );
+
+        let removed = normalize_merged_loader_libraries(
+            ModLoader::Cleanroom,
+            &mut merged,
+        );
+        assert_eq!(
+            removed,
+            [
+                "org.lwjgl.lwjgl:lwjgl:2.9.4-nightly-20150209",
+                "net.java.dev.jna:platform:3.4.0",
+                "com.ibm.icu:icu4j-core-mojang:51.2"
+            ]
+        );
+
+        let names = merged
+            .libraries
+            .iter()
+            .map(|library| library.library.name.as_str())
+            .collect::<Vec<_>>();
+        for removed in &removed {
+            assert!(!names.contains(&removed.as_str()), "{removed}");
+        }
+        for kept in [
+            "com.cleanroommc:cleanroom:0.6.11-alpha",
+            "org.lwjgl.lwjgl:lwjgl_util:2.9.4-nightly-20150209",
+            "org.lwjgl.lwjgl:lwjgl-platform:2.9.4-nightly-20150209",
+            "org.lwjgl:lwjgl:3.4.1-unsafe",
+            "com.cleanroommc:lwjglxx:1.1.22",
+            "net.java.dev.jna:jna:5.19.1",
+        ] {
+            assert!(names.contains(&kept), "{kept}");
+        }
+        assert_eq!(names.len(), 7);
+    }
+
+    #[test]
+    fn non_cleanroom_loaders_leave_linked_libraries_untouched() {
+        for loader in [ModLoader::Vanilla, ModLoader::Forge] {
+            let root = tempfile::tempdir().unwrap();
+            let mut merged = resolve_linked_fixture(
+                root.path(),
+                "1.12.2",
+                cleanroom_mixed_fixture(),
+            );
+            let original = merged
+                .libraries
+                .iter()
+                .map(|library| library.library.name.clone())
+                .collect::<Vec<_>>();
+
+            let removed =
+                normalize_merged_loader_libraries(loader, &mut merged);
+            assert!(removed.is_empty(), "{loader:?}");
+            assert_eq!(
+                merged
+                    .libraries
+                    .iter()
+                    .map(|library| library.library.name.clone())
+                    .collect::<Vec<_>>(),
+                original
+            );
+        }
     }
 }

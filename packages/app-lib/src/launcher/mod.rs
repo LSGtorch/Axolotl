@@ -10,7 +10,8 @@ use crate::instance::QuickPlayType;
 use crate::launcher::direct_link::{
     DirectLinkedLaunch, LinkedLauncherDialect, apply_hmcl_settings,
     conservative_launch_facts, extract_linked_natives, hmcl_java_candidates,
-    hmcl_with_global_fallback, merged_to_version_info, pcl_available_memory_gb,
+    hmcl_with_global_fallback, merged_to_version_info,
+    normalize_merged_loader_libraries, pcl_available_memory_gb,
     pcl_ram_profile,
 };
 use crate::launcher::download::{LocalRuntimeSource, download_log_config};
@@ -1496,6 +1497,22 @@ pub async fn launch_minecraft(
             .take()
             .expect("direct launch resolution accompanies direct metadata")
             .merged;
+        // Same loader normalization the managed install path applies. The
+        // merged list drives the ensure pass, native extraction, the launch
+        // classpath, and the VersionInfo projection below, so dropping the
+        // Cleanroom conflicts (vanilla LWJGL 2 binding, JNA platform, Mojang
+        // ICU) here covers direct ensure, classpath, and launch at once; the
+        // Cleanroom LWJGL 3 line and lwjglxx are never affected.
+        for removed_library in
+            normalize_merged_loader_libraries(content_set.loader, &mut merged)
+        {
+            tracing::info!(
+                loader = content_set.loader.as_str(),
+                version = %merged.id,
+                removed_library,
+                "Removed loader-incompatible library from linked version profile"
+            );
+        }
         linked_libraries = Some(merged.libraries.clone());
 
         // Best-effort reuse of the shared metadata manifest for behaviors
