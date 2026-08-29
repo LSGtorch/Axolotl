@@ -561,7 +561,7 @@ pub(crate) async fn persist_resolved_plan_dependency_edges(
         .chain(plan.dependencies.iter())
         .collect::<Vec<_>>();
 
-    let mut tx = state.pool.begin().await?;
+    let mut tx = state.pool.begin_with("BEGIN IMMEDIATE").await?;
     for (index, dependency) in plan.dependencies.iter().enumerate() {
         let Some(parent) = dependency
             .dependent_on_version_id
@@ -2314,24 +2314,7 @@ async fn record_project_file_atomic_with_pending_completion(
 async fn begin_content_write(
     pool: &sqlx::SqlitePool,
 ) -> crate::Result<sqlx::Transaction<'static, sqlx::Sqlite>> {
-    let started = std::time::Instant::now();
-    let result = pool.begin_with("BEGIN IMMEDIATE").await;
-    match result {
-        Ok(tx) => Ok(tx),
-        Err(error) => {
-            let elapsed = started.elapsed();
-            let trace = std::backtrace::Backtrace::force_capture()
-                .to_string()
-                .lines()
-                .take(14)
-                .collect::<Vec<_>>()
-                .join(" | ");
-            eprintln!(
-                "[PROBE-BEGIN] begin_content_write failed after {elapsed:?}: {error}\n  {trace}"
-            );
-            Err(error.into())
-        }
-    }
+    Ok(pool.begin_with("BEGIN IMMEDIATE").await?)
 }
 
 pub(crate) async fn toggle_disable_project(

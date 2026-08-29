@@ -662,7 +662,7 @@ pub(crate) async fn upsert_instance_file_from_parts(
     input: UpsertInstanceFile<'_>,
     pool: &SqlitePool,
 ) -> crate::Result<InstanceFile> {
-    let mut tx = pool.begin().await?;
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let file =
         upsert_instance_file_from_parts_in_transaction(input, &mut tx).await?;
     tx.commit().await?;
@@ -726,7 +726,7 @@ pub(crate) async fn rename_instance_file(
     enabled: bool,
     pool: &SqlitePool,
 ) -> crate::Result<Option<InstanceFile>> {
-    let mut tx = pool.begin().await?;
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
 
     let file = rename_instance_file_in_transaction(
         instance_id,
@@ -1106,7 +1106,7 @@ pub(crate) async fn upsert_content_entry_from_parts(
     input: UpsertContentEntry<'_>,
     pool: &SqlitePool,
 ) -> crate::Result<ContentEntry> {
-    let mut tx = pool.begin().await?;
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let entry =
         upsert_content_entry_from_parts_in_transaction(input, &mut tx).await?;
     tx.commit().await?;
@@ -1230,7 +1230,7 @@ pub(crate) async fn upsert_content_provider_ref(
     origin: bool,
     pool: &SqlitePool,
 ) -> crate::Result<()> {
-    let mut tx = pool.begin().await?;
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     upsert_content_provider_ref_in_transaction(
         content_entry_id,
         provider_ref,

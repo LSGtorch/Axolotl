@@ -3145,14 +3145,7 @@ async fn apply_upgrade_content(
     );
     #[cfg(debug_assertions)]
     let mut completed_mutations = 0_usize;
-    #[cfg(test)]
-    let mut probe_step = 0_usize;
     for mutation in staged {
-        #[cfg(test)]
-        {
-            probe_step += 1;
-            eprintln!("[PROBE] apply step {probe_step}: mutation target={}", mutation.target_path);
-        }
         let changed_after_staging = match mutation.existing_path.as_deref() {
             Some(path) => {
                 source_file_changed(path, source_files, instance_id).await?
@@ -3167,9 +3160,7 @@ async fn apply_upgrade_content(
         }
         let relative_path = match mutation.download {
             StagedUpgradeDownload::Modrinth(download) => {
-                #[cfg(test)]
-                eprintln!("[PROBE] apply step {probe_step}: apply_downloaded_project_version_at_path");
-                let r = crate::state::instances::commands::apply_downloaded_project_version_at_path(
+                crate::state::instances::commands::apply_downloaded_project_version_at_path(
                     instance_id,
                     &mutation.target_path,
                     download,
@@ -3177,14 +3168,9 @@ async fn apply_upgrade_content(
                     mutation.ownership,
                     state,
                 )
-                .await;
-                #[cfg(test)]
-                eprintln!("[PROBE] apply step {probe_step}: download apply done: {:?}", r.is_ok());
-                r?
+                .await?
             }
             StagedUpgradeDownload::CurseForge(download) => {
-                #[cfg(test)]
-                eprintln!("[PROBE] apply step {probe_step}: apply_staged_curseforge_upgrade_file");
                 crate::api::curseforge::apply_staged_curseforge_upgrade_file(
                     instance_id,
                     download,
@@ -3261,11 +3247,6 @@ async fn apply_upgrade_content(
         .map(|item| (item.content_id.as_str(), item.relative_path.as_str()))
         .collect::<HashMap<_, _>>();
     for item in &execution.items {
-        #[cfg(test)]
-        {
-            probe_step += 1;
-            eprintln!("[PROBE] apply step {probe_step}: item path={}", item.relative_path);
-        }
         let path = item.relative_path.as_str();
         if external_paths.contains(path)
             || source_file_changed(path, source_files, instance_id).await?
