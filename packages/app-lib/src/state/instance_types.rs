@@ -84,6 +84,7 @@ pub enum ModLoader {
     Cleanroom,
     LiteLoader,
     LegacyFabric,
+    Babric,
 }
 
 impl ModLoader {
@@ -98,6 +99,7 @@ impl ModLoader {
             Self::Cleanroom => "cleanroom",
             Self::LiteLoader => "lite_loader",
             Self::LegacyFabric => "legacy_fabric",
+            Self::Babric => "babric",
         }
     }
 
@@ -114,6 +116,7 @@ impl ModLoader {
             Self::Cleanroom => "cleanroom",
             Self::LiteLoader => "lite_loader",
             Self::LegacyFabric => "legacy_fabric",
+            Self::Babric => "babric",
         }
     }
 
@@ -128,6 +131,7 @@ impl ModLoader {
             "cleanroom" => Ok(Self::Cleanroom),
             "lite_loader" | "liteloader" => Ok(Self::LiteLoader),
             "legacy_fabric" | "legacyfabric" => Ok(Self::LegacyFabric),
+            "babric" => Ok(Self::Babric),
             other => Err(crate::ErrorKind::InputError(format!(
                 "Unsupported loader {other}"
             ))
@@ -185,6 +189,7 @@ impl ProjectType {
                 "cleanroom",
                 "lite_loader",
                 "legacy_fabric",
+                "babric",
             ]
             .contains(&&**x)
         }) {

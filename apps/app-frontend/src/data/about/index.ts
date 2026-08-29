@@ -5,6 +5,7 @@ export interface TeamMember {
 	name: string
 	avatar: string
 	url?: string
+	experience?: string
 }
 
 export interface Contributor {

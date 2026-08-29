@@ -1,4 +1,5 @@
 use crate::api::Result;
+use crate::api::files::local_instance_icon_path;
 use chrono::NaiveDate;
 use dashmap::DashMap;
 use path_util::SafeRelativeUtf8UnixPathBuf;
@@ -37,10 +38,34 @@ pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
             instance_refresh_content,
             instance_plan_content_updates,
             instance_apply_content_update_plan,
+            instance_plan_upgrade,
+            instance_get_upgrade_plan,
+            instance_update_upgrade_resolution,
+            instance_update_upgrade_resolutions,
+            instance_reset_upgrade_resolution,
+            instance_select_upgrade_solution,
+            instance_resolve_custom_upgrade_solution,
+            instance_execute_upgrade,
+            instance_get_post_upgrade_notice,
+            instance_dismiss_post_upgrade_notice,
             instance_get_dependencies_as_content_items,
             instance_get_linked_modpack_info,
             instance_get_linked_modpack_content,
             instance_get_optimal_jre_key,
+            instance_list_core_components,
+            instance_add_core_jar_mod,
+            instance_replace_core_jar,
+            instance_move_core_component,
+            instance_set_core_component_enabled,
+            instance_remove_core_component,
+            instance_restore_core_component,
+            instance_preview_core_jar,
+            instance_install_mcarchive_modloader,
+            instance_import_mcarchive_modloader,
+            instance_install_mcarchive_content,
+            instance_import_mcarchive_content,
+            instance_install_planet_minecraft_content,
+            instance_import_planet_minecraft_content,
             instance_get_full_path,
             instance_get_mod_full_path,
             instance_check_installed,
@@ -110,6 +135,7 @@ pub struct Instance {
     pub game_resolution: Option<WindowSize>,
     pub hooks: Hooks,
     pub symlink_target: Option<String>,
+    pub game_dir_override: Option<String>,
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -215,6 +241,13 @@ pub struct EditInstance {
     )]
     pub game_resolution: Option<Option<WindowSize>>,
     pub hooks: Option<Hooks>,
+
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "serde_with::rust::double_option"
+    )]
+    pub game_dir_override: Option<Option<String>>,
 }
 
 impl From<InstanceMetadata> for Instance {
@@ -252,6 +285,7 @@ impl From<InstanceMetadata> for Instance {
             game_resolution: metadata.launch_overrides.game_resolution,
             hooks: metadata.launch_overrides.hooks,
             symlink_target: metadata.instance.symlink_target,
+            game_dir_override: metadata.instance.game_dir_override,
         }
     }
 }
@@ -403,7 +437,27 @@ fn edit_to_core(edit_instance: EditInstance) -> Result<CoreEditInstance> {
         submitted_time_played: None,
         recent_time_played: None,
         symlink_target: None,
+        game_dir_override: edit_instance.game_dir_override,
     })
+}
+
+const LOCAL_INSTANCE_ICON_MAX_DIMENSION: u32 = 256;
+
+async fn instance_from_metadata(
+    metadata: InstanceMetadata,
+) -> Result<Instance> {
+    let mut instance = Instance::from(metadata);
+    if instance.icon_path.is_none() {
+        if let Ok(Some(local_icon)) = local_instance_icon_path(
+            &instance.id,
+            LOCAL_INSTANCE_ICON_MAX_DIMENSION,
+        )
+        .await
+        {
+            instance.icon_path = Some(local_icon);
+        }
+    }
+    Ok(instance)
 }
 
 #[tauri::command]
@@ -414,9 +468,10 @@ pub async fn instance_remove(instance_id: &str) -> Result<()> {
 
 #[tauri::command]
 pub async fn instance_get(instance_id: &str) -> Result<Option<Instance>> {
-    Ok(theseus::instance::get(instance_id)
-        .await?
-        .map(Instance::from))
+    let Some(metadata) = theseus::instance::get(instance_id).await? else {
+        return Ok(None);
+    };
+    Ok(Some(instance_from_metadata(metadata).await?))
 }
 
 #[tauri::command]
@@ -424,20 +479,20 @@ pub async fn instance_get_many(
     instance_ids: Vec<String>,
 ) -> Result<Vec<Instance>> {
     let ids = instance_ids.iter().map(|x| &**x).collect::<Vec<&str>>();
-    Ok(theseus::instance::get_many(&ids)
-        .await?
-        .into_iter()
-        .map(Instance::from)
-        .collect())
+    let mut instances = Vec::with_capacity(ids.len());
+    for metadata in theseus::instance::get_many(&ids).await? {
+        instances.push(instance_from_metadata(metadata).await?);
+    }
+    Ok(instances)
 }
 
 #[tauri::command]
 pub async fn instance_list() -> Result<Vec<Instance>> {
-    Ok(theseus::instance::list()
-        .await?
-        .into_iter()
-        .map(Instance::from)
-        .collect())
+    let mut instances = Vec::new();
+    for metadata in theseus::instance::list().await? {
+        instances.push(instance_from_metadata(metadata).await?);
+    }
+    Ok(instances)
 }
 
 #[tauri::command]
@@ -445,9 +500,8 @@ pub async fn instance_set_pinned(
     instance_id: String,
     pinned: bool,
 ) -> Result<Instance> {
-    Ok(Instance::from(
-        theseus::instance::set_pinned(&instance_id, pinned).await?,
-    ))
+    let metadata = theseus::instance::set_pinned(&instance_id, pinned).await?;
+    instance_from_metadata(metadata).await
 }
 
 #[tauri::command]
@@ -584,6 +638,118 @@ pub async fn instance_apply_content_update_plan(
 }
 
 #[tauri::command]
+pub async fn instance_plan_upgrade(
+    instance_id: &str,
+    target_environment: theseus::data::InstanceUpgradeEnvironment,
+) -> Result<theseus::data::InstanceUpgradePlan> {
+    Ok(theseus::instance::plan_instance_upgrade(
+        instance_id,
+        target_environment,
+    )
+    .await?)
+}
+
+#[tauri::command]
+pub async fn instance_get_upgrade_plan(
+    plan_id: &str,
+) -> Result<theseus::data::InstanceUpgradePlan> {
+    Ok(theseus::instance::get_instance_upgrade_plan(plan_id).await?)
+}
+
+#[tauri::command]
+pub async fn instance_update_upgrade_resolution(
+    plan_id: &str,
+    resolution: theseus::data::InstanceUpgradeResolution,
+) -> Result<theseus::data::InstanceUpgradePlan> {
+    Ok(theseus::instance::update_instance_upgrade_resolution(
+        plan_id, resolution,
+    )
+    .await?)
+}
+
+#[tauri::command]
+pub async fn instance_update_upgrade_resolutions(
+    plan_id: &str,
+    resolutions: Vec<theseus::data::InstanceUpgradeResolution>,
+) -> Result<theseus::data::InstanceUpgradeResolutionBatchResult> {
+    Ok(theseus::instance::update_instance_upgrade_resolutions(
+        plan_id,
+        resolutions,
+    )
+    .await?)
+}
+
+#[tauri::command]
+pub async fn instance_reset_upgrade_resolution(
+    plan_id: &str,
+    content_id: &str,
+) -> Result<theseus::data::InstanceUpgradePlan> {
+    Ok(theseus::instance::reset_instance_upgrade_resolution(
+        plan_id, content_id,
+    )
+    .await?)
+}
+
+#[tauri::command]
+pub async fn instance_select_upgrade_solution(
+    plan_id: &str,
+    choice: theseus::data::InstanceUpgradeSolutionChoice,
+) -> Result<theseus::data::InstanceUpgradePlan> {
+    Ok(
+        theseus::instance::select_instance_upgrade_solution(plan_id, choice)
+            .await?,
+    )
+}
+
+#[tauri::command]
+pub async fn instance_resolve_custom_upgrade_solution(
+    plan_id: &str,
+    fixed_constraints: Vec<theseus::data::InstanceUpgradeFixedConstraint>,
+) -> Result<theseus::data::InstanceUpgradePlan> {
+    Ok(theseus::instance::resolve_custom_instance_upgrade_solution(
+        plan_id,
+        fixed_constraints,
+    )
+    .await?)
+}
+
+#[tauri::command]
+pub async fn instance_execute_upgrade(
+    plan_id: &str,
+    create_full_backup: bool,
+    shared_upgrade_mode: theseus::install::SharedUpgradeMode,
+    display_names: Option<theseus::install::InstanceUpgradeDisplayNames>,
+) -> Result<theseus::install::InstallJobSnapshot> {
+    Ok(theseus::instance::execute_instance_upgrade(
+        plan_id,
+        create_full_backup,
+        shared_upgrade_mode,
+        display_names.unwrap_or_default(),
+    )
+    .await?)
+}
+
+#[tauri::command]
+pub async fn instance_get_post_upgrade_notice(
+    instance_id: &str,
+) -> Result<Option<theseus::data::InstancePostUpgradeNotice>> {
+    Ok(
+        theseus::instance::get_instance_post_upgrade_notice(instance_id)
+            .await?,
+    )
+}
+
+#[tauri::command]
+pub async fn instance_dismiss_post_upgrade_notice(
+    instance_id: &str,
+) -> Result<()> {
+    Ok(
+        theseus::instance::dismiss_instance_post_upgrade_notice(instance_id)
+            .await?,
+    )
+}
+
+#[tauri::command]
 pub async fn instance_get_dependencies_as_content_items(
     dependencies: Vec<Dependency>,
     cache_behaviour: Option<CacheBehaviour>,
@@ -661,6 +827,177 @@ pub async fn instance_get_optimal_jre_key(
 }
 
 #[tauri::command]
+pub async fn instance_list_core_components(
+    instance_id: &str,
+) -> Result<Vec<theseus::data::CoreComponent>> {
+    Ok(theseus::instance::list_core_components(instance_id).await?)
+}
+
+#[tauri::command]
+pub async fn instance_add_core_jar_mod(
+    instance_id: &str,
+    source_path: PathBuf,
+    target_game_version: String,
+    source: Option<theseus::data::CoreComponentSource>,
+) -> Result<theseus::data::CoreComponent> {
+    Ok(theseus::instance::add_core_jar_mod(
+        instance_id,
+        source_path,
+        target_game_version,
+        source,
+    )
+    .await?)
+}
+
+#[tauri::command]
+pub async fn instance_replace_core_jar(
+    instance_id: &str,
+    source_path: PathBuf,
+    target_game_version: String,
+    source: Option<theseus::data::CoreComponentSource>,
+) -> Result<theseus::data::CoreComponent> {
+    Ok(theseus::instance::replace_core_jar(
+        instance_id,
+        source_path,
+        target_game_version,
+        source,
+    )
+    .await?)
+}
+
+#[tauri::command]
+pub async fn instance_move_core_component(
+    instance_id: &str,
+    component_id: &str,
+    direction: i32,
+) -> Result<Vec<theseus::data::CoreComponent>> {
+    Ok(theseus::instance::move_core_component(
+        instance_id,
+        component_id,
+        direction,
+    )
+    .await?)
+}
+
+#[tauri::command]
+pub async fn instance_set_core_component_enabled(
+    instance_id: &str,
+    component_id: &str,
+    enabled: bool,
+) -> Result<theseus::data::CoreComponent> {
+    Ok(theseus::instance::set_core_component_enabled(
+        instance_id,
+        component_id,
+        enabled,
+    )
+    .await?)
+}
+
+#[tauri::command]
+pub async fn instance_remove_core_component(
+    instance_id: &str,
+    component_id: &str,
+) -> Result<()> {
+    theseus::instance::remove_core_component(instance_id, component_id).await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn instance_restore_core_component(
+    instance_id: &str,
+    component_id: &str,
+) -> Result<theseus::data::CoreComponent> {
+    Ok(
+        theseus::instance::restore_core_component(instance_id, component_id)
+            .await?,
+    )
+}
+
+#[tauri::command]
+pub async fn instance_preview_core_jar(
+    instance_id: &str,
+) -> Result<Option<theseus::data::CoreJarPreview>> {
+    Ok(theseus::instance::preview_core_jar(instance_id).await?)
+}
+
+#[tauri::command]
+pub async fn instance_install_mcarchive_modloader(
+    instance_id: &str,
+    game_version: &str,
+) -> Result<theseus::instance::McArchiveCoreInstallResult> {
+    Ok(theseus::instance::install_mcarchive_modloader(
+        instance_id,
+        game_version,
+    )
+    .await?)
+}
+
+#[tauri::command]
+pub async fn instance_import_mcarchive_modloader(
+    instance_id: &str,
+    game_version: &str,
+    source_path: PathBuf,
+) -> Result<theseus::instance::McArchiveCoreInstallResult> {
+    Ok(theseus::instance::import_mcarchive_modloader(
+        instance_id,
+        game_version,
+        source_path,
+    )
+    .await?)
+}
+
+#[tauri::command]
+pub async fn instance_install_mcarchive_content(
+    instance_id: &str,
+    request: theseus::instance::McArchiveContentInstallRequest,
+) -> Result<theseus::instance::McArchiveContentInstallResult> {
+    Ok(
+        theseus::instance::install_mcarchive_content(instance_id, request)
+            .await?,
+    )
+}
+
+#[tauri::command]
+pub async fn instance_import_mcarchive_content(
+    instance_id: &str,
+    request: theseus::instance::McArchiveContentInstallRequest,
+    source_path: PathBuf,
+) -> Result<theseus::instance::McArchiveContentInstallResult> {
+    Ok(theseus::instance::import_mcarchive_content(
+        instance_id,
+        request,
+        source_path,
+    )
+    .await?)
+}
+
+#[tauri::command]
+pub async fn instance_install_planet_minecraft_content(
+    instance_id: &str,
+    request: theseus::instance::PlanetMinecraftContentInstallRequest,
+) -> Result<theseus::instance::PlanetMinecraftContentInstallResult> {
+    Ok(theseus::instance::install_planet_minecraft_content(
+        instance_id,
+        request,
+    )
+    .await?)
+}
+
+#[tauri::command]
+pub async fn instance_import_planet_minecraft_content(
+    instance_id: &str,
+    request: theseus::instance::PlanetMinecraftContentInstallRequest,
+    source_path: PathBuf,
+) -> Result<theseus::instance::PlanetMinecraftContentInstallResult> {
+    Ok(theseus::instance::import_planet_minecraft_content(
+        instance_id,
+        request,
+        source_path,
+    )
+    .await?)
+}
+
+#[tauri::command]
 pub async fn instance_check_installed(
     instance_id: &str,
     project_id: &str,
@@ -681,6 +1018,10 @@ pub async fn instance_check_installed(
                         project_id: id,
                         ..
                     } => project_id == format!("curseforge:{}", id.get()),
+                    theseus::data::ContentProviderRef::McArchive {
+                        project_id: id,
+                        ..
+                    } => project_id == format!("mcarchive:{id}"),
                 })
         }))
     } else {

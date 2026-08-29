@@ -24,11 +24,10 @@ pub async fn get_full_path(instance_id: &str) -> crate::Result<PathBuf> {
         return Ok(io::canonicalize(linked)?);
     }
 
+    // `instance_game_dir` honours a per-instance `game_dir_override` before
+    // falling back to the profile directory.
     Ok(io::canonicalize(
-        state
-            .directories
-            .instances_dir()
-            .join(&instance.instance.path),
+        state.directories.instance_game_dir(&instance.instance),
     )?)
 }
 
@@ -159,6 +158,7 @@ mod tests {
             None,
             None,
             crate::state::InstanceLink::Unmanaged,
+            None,
             None,
         )
         .await

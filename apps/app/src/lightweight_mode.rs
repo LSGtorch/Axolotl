@@ -376,6 +376,8 @@ fn destroy_lightweight_host_window(app: &AppHandle) {
 
 fn create_main_window(app: &AppHandle, route: &str) -> Result<(), String> {
     if app.get_webview_window(MAIN_WINDOW_LABEL).is_none() {
+        // Only reassigned on non-macOS platforms to strip window decorations.
+        #[cfg_attr(target_os = "macos", allow(unused_mut))]
         let mut builder = WebviewWindowBuilder::new(
             app,
             MAIN_WINDOW_LABEL,

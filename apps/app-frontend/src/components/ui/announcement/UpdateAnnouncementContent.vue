@@ -133,7 +133,7 @@ async function openChangelog() {
 				v-for="(category, index) in categoryRows"
 				:key="category.type"
 				class="announcement-category grid grid-cols-1 gap-2 py-4 sm:grid-cols-[7rem_minmax(0,1fr)] sm:gap-5"
-				:class="{ 'announcement-category-first pt-0': index === 0 }"
+				:class="{ 'border-t-0 pt-0': index === 0 }"
 			>
 				<h3 class="m-0 flex items-center gap-2 text-sm font-semibold text-secondary">
 					<span
@@ -172,10 +172,6 @@ async function openChangelog() {
 .announcement-category {
 	border-top: 1px solid
 		var(--settings-divider, color-mix(in srgb, var(--surface-4) 55%, transparent));
-}
-
-.announcement-category-first {
-	border-top: 0;
 }
 
 .announcement-notes {

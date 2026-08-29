@@ -52,6 +52,17 @@ pub(crate) use self::apply_content_install::*;
 
 mod check_content_updates;
 
+mod instance_upgrade;
+pub(crate) use self::instance_upgrade::{
+    ReadOnlyUpgradeSource, UpgradePlanRuntimeValidation,
+    create_instance_upgrade_plan_with_source,
+    recompute_instance_upgrade_plan_from_source,
+    scan_instance_upgrade_source_files, validate_instance_upgrade_plan_source,
+};
+
+mod post_upgrade_notice;
+pub(crate) use self::post_upgrade_notice::*;
+
 mod apply_content_update;
 pub(crate) use self::apply_content_update::*;
 

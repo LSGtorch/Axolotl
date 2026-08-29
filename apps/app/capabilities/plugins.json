@@ -2,9 +2,7 @@
 	"identifier": "plugins",
 	"description": "",
 	"local": true,
-	"windows": [
-		"main"
-	],
+	"windows": ["main"],
 	"permissions": [
 		"dialog:allow-open",
 		"dialog:allow-confirm",
@@ -37,12 +35,6 @@
 					"url": "https://api.mclo.gs/*"
 				},
 				{
-					"url": "https://api.logshare.cn/*"
-				},
-				{
-					"url": "https://logshare.cn/*"
-				},
-				{
 					"url": "https://fill.papermc.io/*"
 				},
 				{
@@ -56,6 +48,12 @@
 				},
 				{
 					"url": "https://meta.fabricmc.net/*"
+				},
+				{
+					"url": "https://files.minecraftforge.net/*"
+				},
+				{
+					"url": "https://maven.minecraftforge.net/*"
 				},
 				{
 					"url": "https://api.purpurmc.org/*"
@@ -76,7 +74,7 @@
 					"url": "https://mod.mcimirror.top/*"
 				},
 				{
-					"url": "https://mod.telepao.com/*"
+					"url": "https://mod.tianpao.top/*"
 				}
 			]
 		},
@@ -155,6 +153,7 @@
 		"content-search:default",
 		"content-favorites:default",
 		"curseforge:default",
+		"mcarchive:default",
 		"datapacks:default",
 		"files:default",
 		"settings:default",
@@ -170,6 +169,7 @@
 		"drop:default",
 		"terracotta:default",
 		"multiplayer:default",
-		"servers:default"
+		"servers:default",
+		"planet-minecraft:default"
 	]
 }

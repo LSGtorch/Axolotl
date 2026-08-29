@@ -1,5 +1,10 @@
 <script setup lang="ts">
-import { isServerTypeSupported, listServerTypes, type ServerTypeId } from '@modrinth/server'
+import {
+	isServerTypeSupported,
+	listServerTypes,
+	type ServerTypeDefinition,
+	type ServerTypeId,
+} from '@modrinth/server'
 import { Combobox, type ComboboxOption, defineMessages, Toggle, useVIntl } from '@modrinth/ui'
 import { computed } from 'vue'
 
@@ -16,7 +21,24 @@ const messages = defineMessages({
 	showSnapshots: { id: 'app.servers.wizard.show-snapshots', defaultMessage: 'Show snapshots' },
 })
 
-const serverTypeOptions = listServerTypes().filter((type) => isServerTypeSupported(type.id))
+const typeLabels = defineMessages({
+	vanilla: { id: 'app.servers.type.vanilla', defaultMessage: 'Vanilla' },
+	fabric: { id: 'app.servers.type.fabric', defaultMessage: 'Fabric' },
+	paper: { id: 'app.servers.type.paper', defaultMessage: 'Paper' },
+	forge: { id: 'app.servers.type.forge', defaultMessage: 'Forge' },
+})
+
+/** Display order for the wizard's type picker; Forge sits right after Fabric. */
+const SERVER_TYPE_ORDER: ServerTypeId[] = ['vanilla', 'fabric', 'forge', 'paper']
+
+function serverTypeLabel(type: ServerTypeDefinition): string {
+	const message = typeLabels[type.id as keyof typeof typeLabels]
+	return message ? formatMessage(message) : type.label
+}
+
+const serverTypeOptions = listServerTypes()
+	.filter((type) => isServerTypeSupported(type.id))
+	.sort((a, b) => SERVER_TYPE_ORDER.indexOf(a.id) - SERVER_TYPE_ORDER.indexOf(b.id))
 
 const gameVersionOptions = computed<ComboboxOption<string>[]>(() =>
 	ctx.availableGameVersions.value.map((version) => ({ value: version, label: version })),
@@ -79,7 +101,9 @@ const monogramStyles = computed<Record<string, string>>(() =>
 				>
 					{{ SERVER_TYPE_META[type.id].monogram }}
 				</span>
-				<span class="min-w-0 truncate font-semibold text-contrast">{{ type.label }}</span>
+				<span class="min-w-0 truncate font-semibold text-contrast">{{
+					serverTypeLabel(type)
+				}}</span>
 			</button>
 		</div>
 

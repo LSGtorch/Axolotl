@@ -295,7 +295,7 @@ async function onJavaDownloaded(job) {
 	<DownloadJavaModal ref="downloadJavaModal" @downloaded="onJavaDownloaded" />
 	<InstalledJavaModal ref="installedJavaModal" @changed="reloadDefaults" />
 
-	<div class="settings-page">
+	<div class="settings-page flex flex-col gap-6">
 		<div
 			v-for="(javaVersion, index) in supportedJavaVersions"
 			:key="`java-${javaVersion}`"
@@ -469,15 +469,10 @@ async function onJavaDownloaded(job) {
 </template>
 
 <style scoped>
-.settings-page {
-	display: flex;
-	flex-direction: column;
-	gap: var(--gap-xl);
-}
-
 .settings-page > div {
 	padding: var(--gap-lg);
-	border: 1px solid var(--settings-card-border, color-mix(in srgb, var(--surface-4) 72%, transparent));
+	border: 1px solid
+		var(--settings-card-border, color-mix(in srgb, var(--surface-4) 72%, transparent));
 	border-radius: var(--radius-md);
 	background: var(--surface-2);
 }

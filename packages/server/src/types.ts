@@ -13,6 +13,12 @@ export interface ServerTypeDefinition {
 	label: string
 	installMode: ServerInstallMode
 	needsLoaderVersion: boolean
+	/**
+	 * Whether the launcher can actually create and boot this server type today.
+	 * `installer` types flip this on as their installer run step lands; types
+	 * still in planning stay `false` so the UI hides them until they work.
+	 */
+	implemented: boolean
 }
 
 export interface ServerJarDownload {

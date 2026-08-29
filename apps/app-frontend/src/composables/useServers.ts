@@ -2,9 +2,26 @@ import { computeServerStatus, type ServerStatus } from '@modrinth/server'
 import { injectNotificationManager } from '@modrinth/ui'
 import { computed, reactive, ref } from 'vue'
 
-import { serverEventListener, type ServerInfoData, servers } from '@/helpers/servers'
+import { serverEventListener, type ServerExitReason, type ServerInfoData, servers } from '@/helpers/servers'
 
 const LOG_CAPACITY = 5000
+
+/** Reacts to a classified server self-exit, e.g. opening the EULA dialog. */
+type ServerExitReasonHandler = (serverId: string, reason: ServerExitReason) => void
+let exitReasonHandler: ServerExitReasonHandler | null = null
+
+/**
+ * Registers the single handler invoked when a server exits with a classified
+ * reason. Returns a disposer that only clears the handler while it is still
+ * the registered one.
+ */
+export function setServerExitReasonHandler(handler: ServerExitReasonHandler | null) {
+	const registered = handler
+	exitReasonHandler = handler
+	return () => {
+		if (exitReasonHandler === registered) exitReasonHandler = null
+	}
+}
 
 const serverList = ref<ServerInfoData[]>([])
 const logLines = reactive<Record<string, string[]>>({})
@@ -37,8 +54,11 @@ async function ensureListener() {
 		listenerPromise = serverEventListener((serverId, payload) => {
 			if (payload.event === 'log') {
 				void appendLog(serverId, payload.line)
-			} else if (payload.event === 'started' || payload.event === 'stopped') {
+			} else if (payload.event === 'started') {
 				void refresh()
+			} else if (payload.event === 'stopped') {
+				void refresh()
+				if (payload.reason) exitReasonHandler?.(serverId, payload.reason)
 			}
 		})
 	}
@@ -88,6 +108,7 @@ export function useServers() {
 	}
 
 	async function startServer(serverId: string) {
+		await ensureListener()
 		logLines[serverId] = []
 		const ok = await run(() => servers.start(serverId))
 		if (ok) await refresh()

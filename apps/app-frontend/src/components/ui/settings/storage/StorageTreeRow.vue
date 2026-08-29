@@ -105,16 +105,20 @@ const openActionLabel = computed(() => formatMessage(storageMessages.openAction)
 </script>
 
 <template>
-	<div class="tree-row" :class="{ clickable: hasChildren, 'is-expanded': expanded }">
+	<div class="tree-row hover:bg-surface-2" :class="{ clickable: hasChildren, 'is-expanded': expanded }">
 		<!-- 左侧树层级与名称部分 -->
-		<div class="tree-main-col">
+		<div class="flex h-full min-w-0 flex-1 items-center">
 			<!-- 根据 depth 生成层级缩进和导轨线 -->
 			<div class="indent-guides" aria-hidden="true">
 				<span v-for="i in depth" :key="i" class="guide-line" />
 			</div>
 
 			<!-- 展开/折叠 箭头（装饰性，由原生的 <summary> 负责展开） -->
-			<span v-if="hasChildren" class="chevron-btn chevron-icon" aria-hidden="true">
+			<span
+				v-if="hasChildren"
+				class="chevron-icon inline-flex h-5 w-5 shrink-0 items-center justify-center p-0 text-secondary"
+				aria-hidden="true"
+			>
 				<ChevronRightIcon class="size-3.5" />
 			</span>
 			<span v-else class="chevron-placeholder" aria-hidden="true" />
@@ -123,7 +127,7 @@ const openActionLabel = computed(() => formatMessage(storageMessages.openAction)
 			<button
 				v-tooltip="openActionLabel"
 				type="button"
-				class="node-type-btn"
+				class="node-type-btn mr-1.5 inline-flex cursor-pointer items-center justify-center rounded border-0 bg-transparent p-0 text-secondary hover:bg-surface-3 hover:text-contrast"
 				:aria-label="`${displayLabel}: ${openActionLabel}`"
 				@click.stop="emit('action', node)"
 			>
@@ -143,17 +147,17 @@ const openActionLabel = computed(() => formatMessage(storageMessages.openAction)
 		</div>
 
 		<!-- 右侧数据与进度列 -->
-		<div class="tree-meta-col">
+		<div class="ml-4 flex shrink-0 items-center gap-4">
 			<div class="storage-size">
 				{{ actualSizeText }}
 				<span v-if="node.size.symlink > 0" class="text-secondary"> + {{ symlinkSizeText }} </span>
 			</div>
 
-			<div class="storage-percent">{{ percent }}%</div>
+			<div class="w-9 max-sm:hidden text-right text-xs tabular-nums text-secondary">{{ percent }}%</div>
 
 			<progress
 				v-tooltip="progressTooltip"
-				class="storage-progress"
+				class="storage-progress h-1 w-24 shrink-0 appearance-none overflow-hidden rounded-full border-0 bg-surface-3"
 				:value="totalShare"
 				:max="1"
 				:aria-label="progressLabel"
@@ -178,19 +182,6 @@ const openActionLabel = computed(() => formatMessage(storageMessages.openAction)
 
 .tree-row.clickable {
 	cursor: pointer;
-}
-
-.tree-row:hover {
-	background-color: var(--surface-2);
-}
-
-/* 左侧层级结构列 */
-.tree-main-col {
-	display: flex;
-	align-items: center;
-	min-width: 0;
-	flex: 1;
-	height: 100%;
 }
 
 /* 竖向缩进线容器 */
@@ -226,17 +217,6 @@ const openActionLabel = computed(() => formatMessage(storageMessages.openAction)
 }
 
 /* 折叠/展开 箭头图标 */
-.chevron-btn {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	width: 1.25rem;
-	height: 1.25rem;
-	flex-shrink: 0;
-	padding: 0;
-	color: var(--color-secondary);
-}
-
 .chevron-icon {
 	transition: transform 0.15s ease;
 }
@@ -251,28 +231,10 @@ const openActionLabel = computed(() => formatMessage(storageMessages.openAction)
 }
 
 /* 文件/文件夹打开按钮 */
-.node-type-btn {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	padding: 0;
-	margin-right: 0.375rem;
-	border: 0;
-	border-radius: 0.25rem;
-	background: transparent;
-	color: var(--color-secondary);
-	cursor: pointer;
-}
-
 .node-type-icon {
 	width: 1.125rem;
 	height: 1.125rem;
 	flex-shrink: 0;
-}
-
-.node-type-btn:hover {
-	background: var(--surface-3);
-	color: var(--color-contrast);
 }
 
 .node-type-btn:focus-visible {
@@ -303,15 +265,6 @@ const openActionLabel = computed(() => formatMessage(storageMessages.openAction)
 	flex-shrink: 0;
 }
 
-/* 右侧数据列组合 */
-.tree-meta-col {
-	display: flex;
-	align-items: center;
-	gap: 1rem;
-	flex-shrink: 0;
-	margin-left: 1rem;
-}
-
 .storage-size {
 	font-size: 0.8125rem;
 	font-variant-numeric: tabular-nums;
@@ -321,27 +274,7 @@ const openActionLabel = computed(() => formatMessage(storageMessages.openAction)
 	min-width: 5rem;
 }
 
-.storage-percent {
-	font-size: 0.75rem;
-	font-variant-numeric: tabular-nums;
-	color: var(--color-secondary);
-	text-align: right;
-	width: 2.25rem;
-}
-
 /* 原生 <progress> 作为共享占用进度条 */
-.storage-progress {
-	appearance: none;
-	-webkit-appearance: none;
-	width: 6rem;
-	height: 0.25rem;
-	flex-shrink: 0;
-	border: 0;
-	border-radius: 9999px;
-	background: var(--surface-3);
-	overflow: hidden;
-}
-
 .storage-progress::-webkit-progress-bar {
 	background: var(--surface-3);
 	border-radius: 9999px;
@@ -359,12 +292,6 @@ const openActionLabel = computed(() => formatMessage(storageMessages.openAction)
 
 @media (max-width: 900px) {
 	.storage-progress {
-		display: none;
-	}
-}
-
-@media (max-width: 640px) {
-	.storage-percent {
 		display: none;
 	}
 }

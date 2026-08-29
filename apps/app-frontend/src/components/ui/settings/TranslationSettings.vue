@@ -575,7 +575,7 @@ async function clearCache() {
 	<div v-if="loading" class="flex min-h-48 items-center justify-center">
 		<SpinnerIcon class="size-6 animate-spin text-secondary" />
 	</div>
-	<div v-else class="settings-page">
+	<div v-else class="flex flex-col gap-6">
 		<SettingsSection>
 			<template #header>
 				<h2
@@ -662,7 +662,7 @@ async function clearCache() {
 				<template #label>{{ formatMessage(messages.aiModel) }}</template>
 				<template #control>
 					<div
-						class="translation-model-combobox w-full"
+						class="translation-model-combobox relative w-full"
 						:class="{ 'has-model-icon': settings.ai_model_id }"
 					>
 						<AIIcon
@@ -769,16 +769,6 @@ async function clearCache() {
 </template>
 
 <style scoped>
-.settings-page {
-	display: flex;
-	flex-direction: column;
-	gap: var(--gap-xl);
-}
-
-.translation-model-combobox {
-	position: relative;
-}
-
 .translation-model-combobox.has-model-icon :deep(input) {
 	padding-left: 2.75rem !important;
 }

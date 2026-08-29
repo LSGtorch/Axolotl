@@ -53,9 +53,9 @@ function retrySave() {
 </script>
 
 <template>
-	<div class="settings-page">
+	<div class="flex flex-col gap-3">
 		<header class="settings-page-header">
-			<h2 id="settings-target-language" tabindex="-1" class="settings-page-title">
+			<h2 id="settings-target-language" tabindex="-1" class="m-0 text-lg font-semibold text-contrast">
 				{{ formatMessage(commonSettingsMessages.language) }}
 			</h2>
 			<SettingsSaveStatus :status="saveStatus" :retry="retrySave" />
@@ -87,19 +87,6 @@ function retrySave() {
 </template>
 
 <style scoped>
-.settings-page {
-	display: flex;
-	flex-direction: column;
-	gap: var(--gap-md);
-}
-
-.settings-page-title {
-	margin: 0;
-	font-size: 1.125rem;
-	font-weight: 600;
-	color: var(--color-contrast);
-}
-
 .settings-page-header {
 	display: flex;
 	align-items: center;
@@ -112,7 +99,8 @@ function retrySave() {
 	flex-direction: column;
 	gap: var(--gap-lg);
 	padding: var(--gap-lg);
-	border: 1px solid var(--settings-card-border, color-mix(in srgb, var(--surface-4) 72%, transparent));
+	border: 1px solid
+		var(--settings-card-border, color-mix(in srgb, var(--surface-4) 72%, transparent));
 	border-radius: var(--radius-md);
 	background: var(--surface-2);
 }

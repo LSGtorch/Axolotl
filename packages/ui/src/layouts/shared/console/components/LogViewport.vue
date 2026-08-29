@@ -2,11 +2,11 @@
 	<div
 		ref="viewportRef"
 		class="log-viewport font-mono"
-		:class="{ 'log-viewport-wrap': wrap }"
+		:class="{ 'log-viewport-wrap': wrap, 'overflow-x-hidden': wrap }"
 		:style="{ fontSize: fontSize + 'px' }"
 		@scroll="handleScroll"
 	>
-		<div v-if="lines.length === 0" class="log-viewport-empty">
+		<div v-if="lines.length === 0" class="flex items-center justify-center h-full">
 			<EmptyState
 				v-if="emptyStateType === 'instance'"
 				:heading="formatMessage(consoleMessages.emptyInstanceTitle)"
@@ -19,7 +19,7 @@
 			/>
 		</div>
 
-		<div v-else class="log-viewport-spacer relative" :style="{ height: totalHeight + 'px' }">
+		<div v-else class="log-viewport-spacer relative w-full min-w-max" :style="{ height: totalHeight + 'px' }">
 			<div
 				class="absolute inset-x-0 top-0"
 				:style="{ transform: 'translateY(' + topOffset + 'px)' }"
@@ -28,18 +28,24 @@
 					v-for="item in windowItems"
 					:key="item.originalIndex"
 					:data-line="item.originalIndex + 1"
-					class="log-line"
+					class="log-line flex items-stretch whitespace-pre"
 					:class="entryClass(item.line)"
 					:style="{ height: estimateHeight(item) + 'px' }"
 				>
-					<span class="log-line-num">{{ item.originalIndex + 1 }}</span>
-					<span class="log-line-content" v-html="renderLine(item)"></span>
+					<span
+						class="shrink-0 w-[52px] pr-2.5 text-right text-secondary bg-surface-3 border-r border-solid border-surface-5 select-none overflow-hidden"
+						>{{ item.originalIndex + 1 }}</span
+					>
+					<span
+						class="log-line-content flex-1 px-2 break-all [overflow-wrap:anywhere]"
+						v-html="renderLine(item)"
+					></span>
 				</div>
 			</div>
 		</div>
 
 		<Transition name="scroll-to-bottom-fade">
-			<div v-if="lines.length > 0 && !stickToBottom" class="log-viewport-scroll-bottom">
+			<div v-if="lines.length > 0 && !stickToBottom" class="absolute bottom-4 right-4 z-10">
 				<ButtonStyled circular type="highlight" size="large">
 					<button aria-label="Scroll to bottom" @click="scrollToBottom">
 						<ChevronDownIcon />
@@ -109,29 +115,43 @@ function estimateHeight(item: ViewportLine): number {
 }
 
 // 高度前缀和缓存：lines/wrap/fontSize 变化时重建（O(n)），滚动时二分查找（O(log n)）
+// 总高度必须是响应式的：普通变量 + 无依赖 computed 会缓存过期值，
+// 清空控制台后模板不再读取它，重启后 spacer 会以旧高度渲染（底部空白）。
 let heightPrefix: number[] | null = null
-let heightTotal = 0
+const heightTotal = ref(0)
 
 function rebuildHeights() {
 	const n = props.lines.length
 	if (!props.wrap) {
 		heightPrefix = null
-		heightTotal = n * lineHeightPx.value
+		heightTotal.value = n * lineHeightPx.value
 		return
 	}
-	heightPrefix = new Array(n)
+	const prefix = new Array<number>(n)
 	let acc = 0
 	for (let i = 0; i < n; i++) {
-		heightPrefix[i] = acc
+		prefix[i] = acc
 		acc += estimateHeight(props.lines[i]!)
 	}
-	heightTotal = acc
+	heightPrefix = prefix
+	heightTotal.value = acc
 }
 
 watch(
 	() => [props.lines, props.wrap, props.fontSize] as const,
-	() => {
+	([lines], previous) => {
 		rebuildHeights()
+		// A fresh stream after an empty console (clear, restart, initial
+		// hydration) always resumes bottom-following.
+		if (previous && previous[0].length === 0 && lines.length > 0) {
+			stickToBottom.value = true
+		}
+		if (lines.length === 0) {
+			// Reset the virtual window state along with the DOM scroll position;
+			// browsers may clamp silently without firing a scroll event.
+			scrollTop.value = 0
+			if (viewportRef.value) viewportRef.value.scrollTop = 0
+		}
 		if (stickToBottom.value) {
 			nextTick(scrollToBottom)
 		}
@@ -139,7 +159,7 @@ watch(
 	{ immediate: true },
 )
 
-const totalHeight = computed(() => heightTotal)
+const totalHeight = computed(() => heightTotal.value)
 
 // 虚拟窗口：可见行 + 上下缓冲
 const WINDOW_BUFFER = 15
@@ -266,20 +286,6 @@ defineExpose({
 	user-select: text;
 }
 
-.log-viewport-empty {
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	height: 100%;
-}
-
-.log-viewport-scroll-bottom {
-	position: absolute;
-	bottom: 1rem;
-	right: 1rem;
-	z-index: 10;
-}
-
 .scroll-to-bottom-fade-enter-active,
 .scroll-to-bottom-fade-leave-active {
 	transition: opacity 250ms ease-in-out;
@@ -290,23 +296,8 @@ defineExpose({
 	opacity: 0;
 }
 
-.log-viewport-spacer {
-	width: 100%;
-	min-width: max-content;
-}
-
-.log-viewport-wrap {
-	overflow-x: hidden;
-}
-
 .log-viewport-wrap .log-viewport-spacer {
 	min-width: 0;
-}
-
-.log-line {
-	display: flex;
-	align-items: stretch;
-	white-space: pre;
 }
 
 .log-viewport-wrap .log-line {
@@ -315,25 +306,6 @@ defineExpose({
 
 .log-viewport-wrap .log-line-content {
 	min-width: 0;
-}
-
-.log-line-num {
-	flex-shrink: 0;
-	width: 52px;
-	padding: 0 10px 0 0;
-	text-align: right;
-	color: var(--color-text-tertiary);
-	background-color: var(--surface-3);
-	border-right: 1px solid var(--surface-5);
-	user-select: none;
-	overflow: hidden;
-}
-
-.log-line-content {
-	flex: 1;
-	padding: 0 8px;
-	word-break: break-all;
-	overflow-wrap: anywhere;
 }
 
 .log-line.entry-error {

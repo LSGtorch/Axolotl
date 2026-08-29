@@ -2,7 +2,9 @@ use crate::State;
 use crate::state::CachedLoaderManifest;
 use crate::util::fetch::{FetchSemaphore, fetch, fetch_json, fetch_official};
 use crate::util::io;
-use daedalus::minecraft::{JavaVersion, Library};
+use daedalus::minecraft::{
+    Argument, ArgumentType, JavaVersion, Library, VersionType,
+};
 use daedalus::modded::{
     DUMMY_REPLACE_STRING, LoaderProfileSource, LoaderVersion, Manifest,
     PartialVersionInfo, Processor, SidedDataEntry, Version, VersionGroup,
@@ -18,6 +20,14 @@ const FABRIC_META_URL: &str = "https://meta.fabricmc.net/v2/versions/";
 const QUILT_META_URL: &str = "https://meta.quiltmc.org/v3/versions/";
 const LEGACY_FABRIC_META_URL: &str =
     "https://meta.legacyfabric.net/v2/versions/";
+const BABRIC_META_URL: &str = "https://meta.babric.dev/v2/versions/";
+const BABRIC_GAME_VERSION: &str = "b1.7.3";
+const BABRIC_MAVEN_URL: &str = "https://maven.glass-launcher.net/babric/";
+const BABRIC_LOADER_METADATA_URL: &str =
+    "https://maven.glass-launcher.net/babric/babric/fabric-loader/";
+const BABRIC_POLYFILL_VERSION_URL: &str =
+    "https://babric.github.io/manifest-polyfill/b1.7.3.json";
+const BABRIC_FALLBACK_LOADER_VERSION: &str = "0.15.6-babric.2";
 const OPTIFINE_META_URL: &str = "https://bmclapi2.bangbang93.com/optifine";
 const OPTIFINE_VERSION_LIST_URL: &str =
     "https://bmclapi2.bangbang93.com/optifine/versionList";
@@ -109,6 +119,29 @@ struct MavenVersions {
     values: Vec<String>,
 }
 
+#[derive(Deserialize)]
+struct BabricLauncherMetadata {
+    #[serde(default)]
+    libraries: BabricLauncherLibraries,
+    #[serde(rename = "mainClass")]
+    main_class: BabricMainClass,
+    #[serde(default)]
+    min_java_version: Option<u32>,
+}
+
+#[derive(Deserialize, Default)]
+struct BabricLauncherLibraries {
+    #[serde(default)]
+    common: Vec<Library>,
+    #[serde(default)]
+    client: Vec<Library>,
+}
+
+#[derive(Deserialize)]
+struct BabricMainClass {
+    client: String,
+}
+
 #[derive(Deserialize, Default)]
 struct ForgePromotions {
     #[serde(default)]
@@ -167,6 +200,10 @@ pub(crate) async fn fetch_loader_manifest_official_first(
                 .await
                 .map(|manifest| scope_manifest(manifest, game_version))
         }
+        ("babric", Some(game_version)) => {
+            fetch_babric_manifest_for_game(game_version, fetch_semaphore, pool)
+                .await
+        }
         ("optifine", Some(game_version)) => {
             fetch_optifine_manifest(Some(game_version), fetch_semaphore, pool)
                 .await
@@ -198,6 +235,7 @@ pub(crate) async fn fetch_loader_manifest_official_first(
         ("legacy_fabric", None) => {
             fetch_legacy_fabric_manifest(fetch_semaphore, pool).await
         }
+        ("babric", None) => fetch_babric_manifest(fetch_semaphore, pool).await,
         ("optifine", None) => {
             fetch_optifine_manifest(None, fetch_semaphore, pool).await
         }
@@ -485,6 +523,71 @@ async fn fetch_legacy_fabric_manifest(
         LEGACY_FABRIC_META_URL,
         0,
     ))
+}
+
+async fn fetch_babric_manifest(
+    fetch_semaphore: &FetchSemaphore,
+    pool: &SqlitePool,
+) -> crate::Result<Manifest> {
+    fetch_babric_manifest_for_game(BABRIC_GAME_VERSION, fetch_semaphore, pool)
+        .await
+}
+
+async fn fetch_babric_manifest_for_game(
+    game_version: &str,
+    fetch_semaphore: &FetchSemaphore,
+    pool: &SqlitePool,
+) -> crate::Result<Manifest> {
+    if game_version != BABRIC_GAME_VERSION {
+        return Ok(babric_unsupported_manifest(game_version));
+    }
+    let metadata_url =
+        format!("{BABRIC_LOADER_METADATA_URL}maven-metadata.xml");
+    let metadata = fetch_maven_metadata(&metadata_url, fetch_semaphore, pool)
+        .await
+        .ok();
+    let versions = metadata
+        .map(|metadata| metadata.versioning.versions.values)
+        .filter(|versions| !versions.is_empty())
+        .unwrap_or_else(|| vec![BABRIC_FALLBACK_LOADER_VERSION.to_string()]);
+    Ok(babric_manifest(game_version, versions))
+}
+
+fn babric_unsupported_manifest(game_version: &str) -> Manifest {
+    Manifest {
+        game_versions: vec![Version {
+            id: game_version.to_string(),
+            stable: true,
+            version_group: None,
+            loaders: Vec::new(),
+        }],
+        version_groups: Vec::new(),
+    }
+}
+
+fn babric_manifest(game_version: &str, versions: Vec<String>) -> Manifest {
+    let mut loaders = versions
+        .into_iter()
+        .map(|version| LoaderVersion {
+            id: version.clone(),
+            url: format!(
+                "{BABRIC_META_URL}loader/{game_version}/{version}/profile/json"
+            ),
+            stable: version == BABRIC_FALLBACK_LOADER_VERSION,
+            profile_source: LoaderProfileSource::Babric,
+            fallback_url: None,
+        })
+        .collect::<Vec<_>>();
+    loaders.sort_by(|left, right| compare_versions(&right.id, &left.id));
+    Manifest {
+        game_versions: vec![Version {
+            id: game_version.to_string(),
+            stable: true,
+            version_group: None,
+            loaders,
+        }],
+        version_groups: Vec::new(),
+    }
 }
 
 async fn fetch_optifine_manifest(
@@ -1151,6 +1254,15 @@ pub(crate) async fn resolve_loader_profile(
             )
             .await
         }
+        LoaderProfileSource::Babric => {
+            resolve_babric_profile(
+                state,
+                game_version,
+                &loader_version.id,
+                &primary_url,
+            )
+            .await
+        }
     };
 
     match primary {
@@ -1168,29 +1280,253 @@ pub(crate) async fn resolve_loader_profile(
                 error = %primary_error,
                 "Official loader profile failed; using launcher-meta fallback"
             );
-            if loader_version.profile_source == LoaderProfileSource::LiteLoader
-            {
-                resolve_liteloader_profile(
-                    state,
-                    game_version,
-                    &loader_version.id,
-                    &fallback_url,
-                )
-                .await
-            } else {
-                fetch_json(
-                    Method::GET,
-                    &fallback_url,
-                    None,
-                    None,
-                    None,
-                    &state.api_semaphore,
-                    &state.pool,
-                )
-                .await
+            match loader_version.profile_source {
+                LoaderProfileSource::LiteLoader => {
+                    resolve_liteloader_profile(
+                        state,
+                        game_version,
+                        &loader_version.id,
+                        &fallback_url,
+                    )
+                    .await
+                }
+                LoaderProfileSource::Babric => {
+                    resolve_babric_profile(
+                        state,
+                        game_version,
+                        &loader_version.id,
+                        &fallback_url,
+                    )
+                    .await
+                }
+                _ => {
+                    fetch_json(
+                        Method::GET,
+                        &fallback_url,
+                        None,
+                        None,
+                        None,
+                        &state.api_semaphore,
+                        &state.pool,
+                    )
+                    .await
+                }
             }
         }
     }
+}
+
+async fn resolve_babric_profile(
+    state: &State,
+    game_version: &str,
+    loader_version: &str,
+    profile_url: &str,
+) -> crate::Result<PartialVersionInfo> {
+    if game_version != BABRIC_GAME_VERSION {
+        return Err(crate::ErrorKind::InputError(format!(
+            "Babric does not support Minecraft {game_version}"
+        ))
+        .into());
+    }
+
+    match fetch_json::<PartialVersionInfo>(
+        Method::GET,
+        profile_url,
+        None,
+        None,
+        None,
+        &state.api_semaphore,
+        &state.pool,
+    )
+    .await
+    {
+        Ok(profile) => Ok(profile),
+        Err(error) => {
+            tracing::warn!(
+                game_version,
+                loader_version,
+                error = %error,
+                "Babric profile endpoint is unavailable; synthesizing the profile from Glass Maven"
+            );
+            build_babric_profile(state, game_version, loader_version).await
+        }
+    }
+}
+
+async fn build_babric_profile(
+    state: &State,
+    game_version: &str,
+    loader_version: &str,
+) -> crate::Result<PartialVersionInfo> {
+    let loader_metadata_url = format!(
+        "{BABRIC_LOADER_METADATA_URL}{loader_version}/fabric-loader-{loader_version}.json"
+    );
+    let polyfill = fetch_json::<serde_json::Value>(
+        Method::GET,
+        BABRIC_POLYFILL_VERSION_URL,
+        None,
+        None,
+        None,
+        &state.api_semaphore,
+        &state.pool,
+    )
+    .await?;
+    let launcher_metadata = fetch_json::<BabricLauncherMetadata>(
+        Method::GET,
+        &loader_metadata_url,
+        None,
+        None,
+        None,
+        &state.api_semaphore,
+        &state.pool,
+    )
+    .await?;
+
+    let mut libraries = launcher_metadata.libraries.common;
+    libraries.extend(launcher_metadata.libraries.client);
+    libraries.push(babric_library(
+        "babric:intermediary-upstream:b1.7.3",
+        BABRIC_MAVEN_URL,
+    ));
+    libraries.push(babric_library(
+        &format!("babric:fabric-loader:{loader_version}"),
+        BABRIC_MAVEN_URL,
+    ));
+    libraries.extend(babric_logging_libraries());
+    libraries.extend(babric_lwjgl_libraries(&polyfill)?);
+
+    let minecraft_arguments = polyfill
+        .get("minecraftArguments")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("${auth_player_name} ${auth_session} --gameDir ${game_directory} --assetsDir ${game_assets}");
+    let game_arguments = minecraft_arguments
+        .split_whitespace()
+        .map(|argument| Argument::Normal(argument.to_string()))
+        .collect::<Vec<_>>();
+    let jvm_arguments = vec![
+        Argument::Normal(
+            "-DFabricMcEmu= net.minecraft.client.main.Main ".to_string(),
+        ),
+        Argument::Normal("-cp".to_string()),
+        Argument::Normal("${classpath}".to_string()),
+        Argument::Normal(
+            "-Djava.library.path=${natives_directory}".to_string(),
+        ),
+    ];
+    let now = chrono::Utc::now();
+
+    Ok(PartialVersionInfo {
+        id: format!("fabric-loader-{loader_version}-{game_version}"),
+        inherits_from: game_version.to_string(),
+        release_time: now,
+        time: now,
+        main_class: Some(launcher_metadata.main_class.client),
+        minecraft_arguments: None,
+        arguments: Some(HashMap::from([
+            (ArgumentType::Game, game_arguments),
+            (ArgumentType::Jvm, jvm_arguments),
+        ])),
+        libraries,
+        java_version: Some(JavaVersion {
+            component: "jre-legacy".to_string(),
+            major_version: launcher_metadata.min_java_version.unwrap_or(8),
+        }),
+        type_: VersionType::Release,
+        data: None,
+        processors: None,
+    })
+}
+
+fn babric_library(name: &str, url: &str) -> Library {
+    Library {
+        downloads: None,
+        extract: None,
+        name: name.to_string(),
+        url: Some(url.to_string()),
+        natives: None,
+        rules: None,
+        checksums: None,
+        include_in_classpath: true,
+        downloadable: true,
+    }
+}
+
+fn babric_logging_libraries() -> Vec<Library> {
+    [
+        ("babric:log4j-config:1.0.0", BABRIC_MAVEN_URL),
+        (
+            "net.minecrell:terminalconsoleappender:1.2.0",
+            "https://repo1.maven.org/maven2/",
+        ),
+        (
+            "org.slf4j:slf4j-api:1.8.0-beta4",
+            "https://libraries.minecraft.net/",
+        ),
+        (
+            "org.apache.logging.log4j:log4j-slf4j18-impl:2.16.0",
+            "https://libraries.minecraft.net/",
+        ),
+        (
+            "org.apache.logging.log4j:log4j-api:2.16.0",
+            "https://libraries.minecraft.net/",
+        ),
+        (
+            "org.apache.logging.log4j:log4j-core:2.16.0",
+            "https://libraries.minecraft.net/",
+        ),
+        (
+            "com.google.code.gson:gson:2.8.9",
+            "https://libraries.minecraft.net/",
+        ),
+        (
+            "com.google.guava:guava:31.0.1-jre",
+            "https://libraries.minecraft.net/",
+        ),
+        (
+            "com.google.guava:failureaccess:1.0.1",
+            "https://libraries.minecraft.net/",
+        ),
+        (
+            "org.apache.commons:commons-lang3:3.12.0",
+            "https://libraries.minecraft.net/",
+        ),
+        (
+            "commons-io:commons-io:2.11.0",
+            "https://libraries.minecraft.net/",
+        ),
+        (
+            "commons-codec:commons-codec:1.15",
+            "https://libraries.minecraft.net/",
+        ),
+    ]
+    .into_iter()
+    .map(|(name, url)| babric_library(name, url))
+    .collect()
+}
+
+fn babric_lwjgl_libraries(
+    polyfill: &serde_json::Value,
+) -> crate::Result<Vec<Library>> {
+    let Some(entries) = polyfill
+        .get("libraries")
+        .and_then(serde_json::Value::as_array)
+    else {
+        return Ok(Vec::new());
+    };
+    entries
+        .iter()
+        .filter(|library| {
+            let Some(name) =
+                library.get("name").and_then(serde_json::Value::as_str)
+            else {
+                return false;
+            };
+            name.contains("lwjgl") && name.contains("-babric.")
+        })
+        .cloned()
+        .map(serde_json::from_value)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(Into::into)
 }
 
 async fn resolve_liteloader_profile(
@@ -2122,6 +2458,91 @@ mod tests {
             .write_all(serde_json::to_string(&profile).unwrap().as_bytes())
             .unwrap();
         archive.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn babric_manifest_is_scoped_to_beta_1_7_3_and_uses_babric_profiles() {
+        let manifest =
+            babric_manifest("b1.7.3", vec!["0.15.6-babric.2".to_string()]);
+        assert_eq!(manifest.game_versions[0].id, "b1.7.3");
+        let loader = &manifest.game_versions[0].loaders[0];
+        assert!(loader.url.contains("meta.babric.dev"));
+        assert!(
+            loader
+                .url
+                .contains("loader/b1.7.3/0.15.6-babric.2/profile/json")
+        );
+        assert_eq!(loader.profile_source, LoaderProfileSource::Babric);
+        assert!(loader.fallback_url.is_none());
+
+        let profile: PartialVersionInfo =
+            serde_json::from_value(serde_json::json!({
+                "id": "babric-loader-0.15.6-babric.2-b1.7.3",
+                "inheritsFrom": "b1.7.3",
+                "releaseTime": "2026-08-23T00:00:00Z",
+                "time": "2026-08-23T00:00:00Z",
+                "type": "release",
+                "mainClass": "net.fabricmc.loader.impl.launch.knot.KnotClient",
+                "libraries": [
+                    {"name": "babric:intermediary:b1.7.3"},
+                    {"name": "babric:fabric-loader:0.15.6-babric.2"}
+                ],
+                "arguments": {"game": ["--demo"]}
+            }))
+            .unwrap();
+        assert_eq!(
+            profile.main_class.as_deref(),
+            Some("net.fabricmc.loader.impl.launch.knot.KnotClient")
+        );
+        assert_eq!(profile.inherits_from, "b1.7.3");
+        assert!(
+            profile.libraries.iter().any(|library| {
+                library.name == "babric:intermediary:b1.7.3"
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(&profile.arguments).unwrap()["game"],
+            serde_json::json!(["--demo"])
+        );
+    }
+
+    #[test]
+    fn babric_uses_the_glass_maven_fallback_when_metadata_is_unavailable() {
+        let manifest = babric_manifest(
+            BABRIC_GAME_VERSION,
+            vec![BABRIC_FALLBACK_LOADER_VERSION.to_string()],
+        );
+        let loader = &manifest.game_versions[0].loaders[0];
+
+        assert_eq!(manifest.game_versions[0].id, BABRIC_GAME_VERSION);
+        assert_eq!(loader.id, BABRIC_FALLBACK_LOADER_VERSION);
+        assert!(loader.stable);
+        assert!(
+            loader
+                .url
+                .contains("loader/b1.7.3/0.15.6-babric.2/profile/json")
+        );
+
+        let unsupported = babric_unsupported_manifest("1.7.10");
+        assert_eq!(unsupported.game_versions[0].id, "1.7.10");
+        assert!(unsupported.game_versions[0].loaders.is_empty());
+    }
+
+    #[test]
+    fn babric_profile_libraries_copy_only_babric_lwjgl_from_polyfill() {
+        let libraries = babric_lwjgl_libraries(&serde_json::json!({
+            "libraries": [
+                {"name": "org.lwjgl.lwjgl:lwjgl:2.9.4-babric.1"},
+                {"name": "org.lwjgl.lwjgl:lwjgl_util:2.9.4-babric.1"},
+                {"name": "org.lwjgl.lwjgl:lwjgl:2.9.0"},
+                {"name": "net.java.jinput:jinput:2.0.5"}
+            ]
+        }))
+        .unwrap();
+        assert_eq!(libraries.len(), 2);
+        assert!(libraries.iter().all(|library| {
+            library.name.contains("lwjgl") && library.name.contains("-babric.")
+        }));
     }
 
     #[test]

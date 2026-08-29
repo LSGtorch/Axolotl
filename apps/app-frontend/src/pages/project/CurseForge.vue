@@ -4,6 +4,7 @@
 		{{ formatMessage(messages.loading) }}
 	</div>
 	<div v-else-if="data">
+		<UpgradeProjectReturnBar />
 		<Teleport to="#sidebar-teleport-target">
 			<ProjectSidebarCompatibility
 				:project="data"
@@ -81,11 +82,11 @@
 										? commonMessages.installingLabel
 										: cartProjectSelected
 											? commonMessages.selectedLabel
-										: isWorldMap
-											? instanceId
-												? commonMessages.installButton
-												: messages.addToAnInstance
-											: commonMessages.installButton,
+											: isWorldMap
+												? instanceId
+													? commonMessages.installButton
+													: messages.addToAnInstance
+												: commonMessages.installButton,
 								)
 							}}
 						</button>
@@ -136,21 +137,22 @@
 							<template #open-in-browser>
 								<ExternalIcon /> {{ formatMessage(commonMessages.openInBrowserButton) }}
 							</template>
-								<template #open-in-mcmod>
-									<BookOpenIcon /> {{ formatMessage(messages.openInMcmod) }}
-								</template>
-								<template v-if="favoriteSupported" #save>
-									<BookmarkIcon :class="{ 'text-brand': favoriteSaved }" />
-									{{
-										formatMessage(
-											favoritePending
-												? messages.favoritesLoading
-												: favoriteSaved
-													? messages.removeFromFavorites
-													: messages.addToFavorites,
-											)
-									}}
-								</template>
+							<template #open-in-mcmod>
+								<BookOpenIcon /> {{ formatMessage(messages.openInMcmod) }}
+							</template>
+							<template v-if="favoriteSupported" #save>
+								<BookmarkFilledIcon v-if="favoriteSaved" class="text-brand" />
+								<BookmarkIcon v-else />
+								{{
+									formatMessage(
+										favoritePending
+											? messages.favoritesLoading
+											: favoriteSaved
+												? messages.removeFromFavorites
+												: messages.addToFavorites,
+									)
+								}}
+							</template>
 						</OverflowMenu>
 					</ButtonStyled>
 				</template>
@@ -206,7 +208,9 @@
 				<template #actions="{ version }">
 					<ButtonStyled circular type="transparent" :color="isWorldMap ? 'brand' : 'green'">
 						<button
-							v-tooltip="formatMessage(isWorldMap ? messages.addToAnInstance : commonMessages.installButton)"
+							v-tooltip="
+								formatMessage(isWorldMap ? messages.addToAnInstance : commonMessages.installButton)
+							"
 							:disabled="installing"
 							@click.stop="installSelected(version.id)"
 						>
@@ -240,6 +244,7 @@
 
 <script setup lang="ts">
 import {
+	BookmarkFilledIcon,
 	BookmarkIcon,
 	BookOpenIcon,
 	DownloadIcon,
@@ -250,8 +255,8 @@ import {
 	SpinnerIcon,
 } from '@modrinth/assets'
 import {
-	ButtonStyled,
 	BrowseInstallHeader,
+	ButtonStyled,
 	Card,
 	commonMessages,
 	defineMessages,
@@ -286,8 +291,8 @@ import {
 	getCurseForgeImageUrl,
 	getCurseForgeProject,
 } from '@/helpers/curseforge'
-import { createProjectBrowseLocation, type ProjectBrowseFilter } from '@/helpers/project-links'
 import { projectGalleryTranslationSegments } from '@/helpers/project-gallery'
+import { createProjectBrowseLocation, type ProjectBrowseFilter } from '@/helpers/project-links'
 import { get_game_versions, get_loaders } from '@/helpers/tags'
 import {
 	getTranslationErrorKind,
@@ -299,14 +304,12 @@ import {
 } from '@/helpers/translation'
 import i18n from '@/i18n.config'
 import { injectContentInstall } from '@/providers/content-install'
-import {
-	injectContentSelection,
-	makeContentSelectionKey,
-} from '@/providers/content-selection'
+import { injectContentSelection, makeContentSelectionKey } from '@/providers/content-selection'
 import { useBreadcrumbs } from '@/store/breadcrumbs'
 import { useTheming } from '@/store/state.js'
 
 import Gallery from './Gallery.vue'
+import UpgradeProjectReturnBar from './UpgradeProjectReturnBar.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -517,9 +520,7 @@ const cartInstallContext = computed(() => {
 		backUrl:
 			instanceContentBackUrl.value ??
 			(typeof route.query.b === 'string' ? route.query.b : `/browse/${projectType.value}`),
-		backLabel: fromInstanceContent.value
-			? formatMessage(messages.backToInstanceContent)
-			: '',
+		backLabel: fromInstanceContent.value ? formatMessage(messages.backToInstanceContent) : '',
 		heading: '',
 		selectedProjects: contentSelection.selectedProjects.value,
 		isInstallingSelected: ['validating', 'reviewing', 'queueing'].includes(
@@ -735,6 +736,10 @@ async function loadProject(projectId: number) {
 		if (requestVersion !== projectRequestVersion) return
 		project.value = projectData
 		breadcrumbs.setName('Project', projectData.name)
+		breadcrumbs.setNameIcon(
+			'Project',
+			projectData.logo?.thumbnailUrl ?? projectData.logo?.url ?? null,
+		)
 		loading.value = false
 		void resolveMcmodUrl(projectData.slug, 'curseforge').then((url) => {
 			if (requestVersion === projectRequestVersion) mcmodUrl.value = url
@@ -808,9 +813,7 @@ async function installSelected(fileId: string | null) {
 				project.value.latestFilesIndexes.find(
 					(index) =>
 						index.gameVersion === target.game_version &&
-						(projectType.value !== 'mod' ||
-							!expectedLoader ||
-							index.modLoader === expectedLoader),
+						(projectType.value !== 'mod' || !expectedLoader || index.modLoader === expectedLoader),
 				)?.fileId ??
 				files.value.find(
 					(file) =>
@@ -842,15 +845,9 @@ async function installSelected(fileId: string | null) {
 	}
 	if (isWorldMap.value) {
 		installing.value = true
-		await installCurseForgeWorld(
-			project.value.id,
-			fileId,
-			instanceId.value,
-			'ProjectPage',
-			() => {
-				installing.value = false
-			},
-		).catch((error) => {
+		await installCurseForgeWorld(project.value.id, fileId, instanceId.value, 'ProjectPage', () => {
+			installing.value = false
+		}).catch((error) => {
 			installing.value = false
 			handleError(error)
 		})

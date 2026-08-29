@@ -18,11 +18,8 @@ use std::path::Path;
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use url::Url;
-
-const STREAM_RECV_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Client-side concurrency target for the batch asset downloader. All
 /// concurrent streams are multiplexed over one shared HTTP/2 connection per
@@ -36,6 +33,8 @@ const ASSET_BATCH_RETRY_PASSES: usize = 2;
 pub(crate) enum H2DownloadOutcome {
     /// The download completed through the multiplexed path.
     Completed(DownloadResult),
+    /// The install job canceled this transfer; do not enter fallback.
+    Canceled,
     /// The multiplexed path cannot be used; the caller should fall back to
     /// the legacy path.
     Fallback {
@@ -51,6 +50,7 @@ pub(crate) enum H2DownloadFailure {
     Tls,
     Protocol,
     Http,
+    TianpaoRedirect,
     Integrity,
     Content,
     Io,
@@ -65,6 +65,9 @@ impl H2DownloadFailure {
             Self::Tls => "HTTP/2 TLS connection failed",
             Self::Protocol => "HTTP/2 protocol failed",
             Self::Http => "HTTP/2 response was unsuccessful",
+            Self::TianpaoRedirect => {
+                "Tianpao redirected Modrinth content to the official CDN"
+            }
             Self::Integrity => "HTTP/2 integrity validation failed",
             Self::Content => "HTTP/2 content validation failed",
             Self::Io => "HTTP/2 local I/O failed",
@@ -93,13 +96,26 @@ pub(crate) async fn try_download_via_h2(
     part_path: &Path,
     policy: super::native::NativeH2Policy,
 ) -> H2DownloadOutcome {
+    if request
+        .cancellation
+        .as_ref()
+        .is_some_and(tokio_util::sync::CancellationToken::is_cancelled)
+    {
+        return H2DownloadOutcome::Canceled;
+    }
     if let Some(reason) = super::native::h2_ineligible_reason(route) {
         return H2DownloadOutcome::Fallback {
             failure: H2DownloadFailure::Ineligible(reason.as_str()),
             preserve_partial: false,
         };
     }
-    let connection = match connect_authority(&route.url).await {
+    let connection = match connect_authority(
+        route,
+        true,
+        policy.allow_cold_connection,
+    )
+    .await
+    {
         Ok(connection) => connection,
         Err(failure) => {
             return H2DownloadOutcome::Fallback {
@@ -118,7 +134,7 @@ pub(crate) async fn try_download_via_h2(
     let integrity = request.integrity.clone();
     let expected_size = integrity.size;
 
-    fetch::record_install_download_started(request, route, 0, 1).await;
+    fetch::record_install_download_started(request, route, 1, 1).await;
 
     // When the size is known (Modrinth metadata provides it) skip the probe
     // entirely: small files fetch the body directly, large files split into
@@ -127,6 +143,16 @@ pub(crate) async fn try_download_via_h2(
     let total_size = if let Some(size) = expected_size {
         size
     } else {
+        let _probe_stream_permit =
+            match super::h2_stream_budget::acquire(route).await {
+                Ok(permit) => permit,
+                Err(_) => {
+                    return H2DownloadOutcome::Fallback {
+                        failure: H2DownloadFailure::Connect,
+                        preserve_partial: false,
+                    };
+                }
+            };
         let mut probe_headers = request_headers(request, route);
         probe_headers.insert(RANGE, HeaderValue::from_static("bytes=0-0"));
         probe_headers
@@ -177,6 +203,28 @@ pub(crate) async fn try_download_via_h2(
         total_size
     };
 
+    if let Some(concurrency) = request.h2_range_concurrency {
+        return super::h2_range::download(
+            &connection,
+            &uri,
+            request,
+            route,
+            destination,
+            part_path,
+            total_size,
+            concurrency,
+        )
+        .await;
+    }
+    let _stream_permit = match super::h2_stream_budget::acquire(route).await {
+        Ok(permit) => permit,
+        Err(_) => {
+            return H2DownloadOutcome::Fallback {
+                failure: H2DownloadFailure::Connect,
+                preserve_partial: false,
+            };
+        }
+    };
     let result = single_stream(
         &connection,
         &uri,
@@ -208,10 +256,19 @@ pub(crate) async fn try_download_via_h2(
 }
 
 async fn connect_authority(
-    url: &str,
+    route: &DownloadRoute,
+    reserve_native_budget: bool,
+    allow_cold_connection: bool,
 ) -> Result<Arc<SharedH2Connection>, H2DownloadFailure> {
-    let authority = fetch::url_authority(url).ok_or(H2DownloadFailure::Http)?;
-    match super::h2_pool::shared_connection(&authority).await {
+    let authority =
+        fetch::url_authority(&route.url).ok_or(H2DownloadFailure::Http)?;
+    match super::h2_pool::shared_connection(
+        route,
+        reserve_native_budget,
+        allow_cold_connection,
+    )
+    .await
+    {
         Ok(connection) => Ok(connection),
         Err(error) => {
             tracing::debug!(
@@ -239,6 +296,11 @@ fn classify_download_error(error: &crate::Error) -> H2DownloadFailure {
             H2DownloadFailure::Io
         }
         crate::ErrorKind::JSONError(_) => H2DownloadFailure::Content,
+        crate::ErrorKind::OtherError(message)
+            if message.contains("Tianpao redirected Modrinth content") =>
+        {
+            H2DownloadFailure::TianpaoRedirect
+        }
         crate::ErrorKind::NetworkError(message)
             if message.contains("below expectation") =>
         {
@@ -266,7 +328,7 @@ fn classify_download_error(error: &crate::Error) -> H2DownloadFailure {
     }
 }
 
-fn request_headers(
+pub(crate) fn request_headers(
     request: &DownloadRequest,
     route: &DownloadRoute,
 ) -> HeaderMap {
@@ -321,7 +383,7 @@ fn parse_content_range_total(headers: &HeaderMap) -> Option<u64> {
 
 type StreamPair = (http::Response<()>, h2::RecvStream);
 
-async fn open_stream(
+pub(crate) async fn open_stream(
     connection: &SharedH2Connection,
     uri: &Uri,
     headers: HeaderMap,
@@ -342,9 +404,16 @@ async fn open_stream(
 }
 
 async fn drain_body(stream: &mut h2::RecvStream) {
-    while let Ok(Some(Ok(_))) =
-        tokio::time::timeout(STREAM_RECV_TIMEOUT, stream.data()).await
-    {}
+    loop {
+        let chunk =
+            match super::h2_receive::receive_chunk(stream, "probe").await {
+                Ok(Some(chunk)) => chunk,
+                Ok(None) | Err(_) => break,
+            };
+        if super::h2_receive::release_capacity(stream, chunk.len()).is_err() {
+            break;
+        }
+    }
 }
 
 /// Downloads a single-stream body to `part_path`, hashing as it streams,
@@ -365,6 +434,23 @@ async fn single_stream(
 
     let (response, mut stream) = open_stream(connection, uri, headers).await?;
     if !response.status().is_success() {
+        let current_url = Url::parse(uri.to_string().as_str()).ok();
+        if response.status().is_redirection()
+            && current_url.as_ref().is_some_and(|current_url| {
+                crate::util::download::modrinth_redirect::is_tianpao_official_redirect(
+                    current_url,
+                    response
+                        .headers()
+                        .get(http::header::LOCATION)
+                        .and_then(|location| location.to_str().ok()),
+                )
+            })
+        {
+            return Err(crate::ErrorKind::OtherError(
+                "Tianpao redirected Modrinth content to the official CDN".to_string(),
+            )
+            .into());
+        }
         return Err(crate::ErrorKind::HttpError {
             status: response.status().as_u16(),
             method: "GET".to_string(),
@@ -376,29 +462,24 @@ async fn single_stream(
     let mut hashers = fetch::IntegrityHashers::new_integrity_hashers(integrity);
     let mut file = tokio::fs::File::create(part_path).await?;
     let mut downloaded = 0_u64;
+    let activity = super::h2_receive::H2TransferActivity::begin();
+    let mut progress_gate = super::h2_receive::H2ProgressGate::new(total_size);
     let mut slow_policy =
         super::native_slow::NativeSlowPolicy::new(0, policy.expected_speed);
     loop {
-        let chunk = tokio::time::timeout(STREAM_RECV_TIMEOUT, stream.data())
-            .await
-            .map_err(|_| {
-                crate::ErrorKind::NetworkError(
-                    "HTTP/2 stream receive timed out".into(),
-                )
-            })?
-            .transpose()
-            .map_err(|error| {
-                crate::ErrorKind::NetworkError(format!(
-                    "HTTP/2 stream error: {error}"
-                ))
-            })?;
+        let chunk =
+            super::h2_receive::receive_chunk(&mut stream, "file").await?;
         let Some(chunk) = chunk else {
             break;
         };
         file.write_all(&chunk).await?;
         hashers.update(&chunk);
         downloaded += chunk.len() as u64;
-        record_install_progress(request, downloaded, total_size).await;
+        activity.record_bytes(chunk.len());
+        super::h2_receive::release_capacity(&mut stream, chunk.len())?;
+        if progress_gate.should_report(downloaded, total_size) {
+            record_install_progress(request, downloaded, total_size).await;
+        }
         if policy.abort_if_slow
             && matches!(
 				slow_policy.observe(
@@ -433,7 +514,7 @@ async fn single_stream(
         url: uri.to_string(),
         source: route.source,
         size: downloaded,
-        attempts: 0,
+        attempts: 1,
         fallback_count: 0,
     })
 }
@@ -451,7 +532,7 @@ async fn record_install_stage(request: &DownloadRequest) {
     }
 }
 
-async fn record_install_progress(
+pub(crate) async fn record_install_progress(
     request: &DownloadRequest,
     downloaded: u64,
     total_size: u64,
@@ -537,8 +618,9 @@ pub(crate) async fn download_asset_batch_via_h2<F>(
     on_completed: F,
 ) -> Vec<H2BatchAsset>
 where
-    F: FnMut(H2BatchAsset) -> Pin<Box<dyn Future<Output = ()> + Send>>
+    F: Fn(H2BatchAsset) -> Pin<Box<dyn Future<Output = ()> + Send>>
         + Send
+        + Sync
         + 'static,
 {
     if apply_native_policy
@@ -546,14 +628,6 @@ where
     {
         return items;
     }
-    let _authority_permit = if apply_native_policy {
-        match super::native_budget::acquire(route).await {
-            Ok(permit) => Some(permit),
-            Err(_) => return items,
-        }
-    } else {
-        None
-    };
     let _global_permit = if let Some(semaphore) = native_semaphore {
         match semaphore.0.acquire().await {
             Ok(permit) => Some(permit),
@@ -562,24 +636,27 @@ where
     } else {
         None
     };
-    let connection = match connect_authority(&route.url).await {
-        Ok(connection) => connection,
-        Err(failure) => {
-            if apply_native_policy
-                && failure.should_cooldown_authority()
-                && let Some(authority) = fetch::url_authority(&route.url)
-            {
-                fetch::record_authority_h2_failure(&authority);
+    let connection =
+        match connect_authority(route, apply_native_policy, true).await {
+            Ok(connection) => connection,
+            Err(failure) => {
+                if apply_native_policy
+                    && failure.should_cooldown_authority()
+                    && let Some(authority) = fetch::url_authority(&route.url)
+                {
+                    fetch::record_authority_h2_failure(&authority);
+                }
+                if apply_native_policy && failure.is_transfer_failure() {
+                    super::native_breaker::record_failure(route);
+                    fetch::record_route_health_failure(
+                        route,
+                        fetch::ResourceClass::MinecraftAsset,
+                        None,
+                    );
+                }
+                return items;
             }
-            if apply_native_policy && failure.is_transfer_failure() {
-                super::native_breaker::record_failure(route);
-            }
-            return items;
-        }
-    };
-    if apply_native_policy {
-        super::native_breaker::record_success(route);
-    }
+        };
     let route_authority = fetch::url_authority(&route.url);
 
     // Items whose URL targets a different authority cannot be multiplexed on
@@ -596,7 +673,10 @@ where
         );
     }
 
-    let callback = Arc::new(tokio::sync::Mutex::new(on_completed));
+    let eligible_items = items.len();
+    let batch_started = std::time::Instant::now();
+    let mut completed_bytes = 0_u64;
+    let callback = Arc::new(on_completed);
     for pass in 0..ASSET_BATCH_RETRY_PASSES {
         if items.is_empty() {
             break;
@@ -613,10 +693,15 @@ where
                             ));
                         return (item, Err(error));
                     };
-                    let result =
-                        download_asset_item(&connection, &uri, &item).await;
+                    let result = download_asset_item(
+                        &connection,
+                        &uri,
+                        &item,
+                        route,
+                        apply_native_policy,
+                    )
+                    .await;
                     if result.is_ok() {
-                        let mut callback = callback.lock().await;
                         callback(item.clone()).await;
                     }
                     (item, result)
@@ -628,7 +713,9 @@ where
         items = Vec::new();
         for (item, result) in results {
             match result {
-                Ok(()) => {}
+                Ok(()) => {
+                    completed_bytes = completed_bytes.saturating_add(item.size);
+                }
                 Err(error) => {
                     tracing::debug!(
                         url = %fetch::sanitize_url_for_log(&item.url),
@@ -643,6 +730,23 @@ where
                     }
                 }
             }
+        }
+    }
+    if apply_native_policy {
+        if completed_bytes > 0 {
+            fetch::record_route_transfer_success(
+                route,
+                fetch::ResourceClass::MinecraftAsset,
+                completed_bytes,
+                batch_started.elapsed(),
+            );
+        } else if eligible_items > 0 {
+            super::native_breaker::record_failure(route);
+            fetch::record_route_health_failure(
+                route,
+                fetch::ResourceClass::MinecraftAsset,
+                None,
+            );
         }
     }
     if !failed.is_empty() {
@@ -662,7 +766,14 @@ async fn download_asset_item(
     connection: &SharedH2Connection,
     uri: &Uri,
     item: &H2BatchAsset,
+    route: &DownloadRoute,
+    apply_native_policy: bool,
 ) -> crate::Result<()> {
+    let _stream_permit = if apply_native_policy {
+        Some(super::h2_stream_budget::acquire(route).await?)
+    } else {
+        None
+    };
     let mut headers = HeaderMap::new();
     headers.insert(
         USER_AGENT,
@@ -696,27 +807,18 @@ async fn download_asset_item(
     let result: crate::Result<()> = async {
         let mut file = tokio::fs::File::create(&part_path).await?;
         let mut downloaded = 0_u64;
+        let activity = super::h2_receive::H2TransferActivity::begin();
         loop {
             let chunk =
-                tokio::time::timeout(STREAM_RECV_TIMEOUT, stream.data())
-                    .await
-                    .map_err(|_| {
-                        crate::ErrorKind::NetworkError(
-                            "HTTP/2 asset stream receive timed out".into(),
-                        )
-                    })?
-                    .transpose()
-                    .map_err(|error| {
-                        crate::ErrorKind::NetworkError(format!(
-                            "HTTP/2 asset stream error: {error}"
-                        ))
-                    })?;
+                super::h2_receive::receive_chunk(&mut stream, "asset").await?;
             let Some(chunk) = chunk else {
                 break;
             };
             file.write_all(&chunk).await?;
             hashers.update(&chunk);
             downloaded += chunk.len() as u64;
+            activity.record_bytes(chunk.len());
+            super::h2_receive::release_capacity(&mut stream, chunk.len())?;
         }
         file.flush().await?;
         drop(file);
@@ -731,10 +833,15 @@ async fn download_asset_item(
         fetch::finalize_download(&part_path, &item.destination).await?;
 
         if let Some(legacy) = &item.legacy_destination {
-            if let Some(parent) = legacy.parent() {
-                crate::util::io::create_dir_all(parent).await?;
+            if let Some(state) = crate::State::get_if_initialized() {
+                fetch::copy(&item.destination, legacy, &state.io_semaphore)
+                    .await?;
+            } else {
+                if let Some(parent) = legacy.parent() {
+                    crate::util::io::create_dir_all(parent).await?;
+                }
+                tokio::fs::copy(&item.destination, legacy).await?;
             }
-            tokio::fs::copy(&item.destination, legacy).await?;
         }
         Ok(())
     }

@@ -31,6 +31,30 @@ import type {
 	InstanceLoader,
 } from './types'
 
+export interface InstancePostUpgradeWarning {
+	code: import('./instance-upgrade').InstanceUpgradeIssueCode
+	contentId: string | null
+	relativePath: string | null
+}
+
+export interface InstancePostUpgradeNotice {
+	instanceId: string
+	upgradeJobId: string
+	targetGameVersion: string
+	consecutiveCleanLaunches: number
+	warnings: InstancePostUpgradeWarning[]
+}
+
+export async function get_post_upgrade_notice(
+	instanceId: string,
+): Promise<InstancePostUpgradeNotice | null> {
+	return await invoke('plugin:instance|instance_get_post_upgrade_notice', { instanceId })
+}
+
+export async function dismiss_post_upgrade_notice(instanceId: string): Promise<void> {
+	await invoke('plugin:instance|instance_dismiss_post_upgrade_notice', { instanceId })
+}
+
 export async function remove(instanceId: string): Promise<void> {
 	await invoke('plugin:instance|instance_remove', { instanceId })
 	removeInstanceCache(instanceId)
@@ -54,6 +78,221 @@ export async function get_projects(
 
 export async function get_installed_project_ids(instanceId: string): Promise<string[]> {
 	return await invoke('plugin:instance|instance_get_installed_project_ids', { instanceId })
+}
+
+export type CoreComponentKind = 'jar_mod' | 'replacement_jar' | 'agent'
+
+export type CoreComponentSource = {
+	provider: string
+	projectId: string | null
+	versionId: string | null
+	fileId: string | null
+	pageUrl: string | null
+}
+
+export type CoreComponent = {
+	id: string
+	kind: CoreComponentKind
+	fileName: string
+	relativePath: string
+	enabled: boolean
+	removed: boolean
+	order: number
+	sha1: string | null
+	sha256: string | null
+	source: CoreComponentSource | null
+	targetGameVersion: string
+	createdAt: string
+	modifiedAt: string
+	failureReason: string | null
+}
+
+export type CoreJarPreview = {
+	outputPath: string
+	componentCount: number
+	replacementComponentId: string | null
+	entries: number
+	sha1: string
+	sha256: string
+}
+
+export type McArchiveCoreInstallResult =
+	| { state: 'installed'; component: CoreComponent }
+	| {
+			state: 'manual_download'
+			fileName: string
+			pageUrl: string | null
+			expectedSha256: string | null
+	  }
+
+export async function list_core_components(instanceId: string): Promise<CoreComponent[]> {
+	return await invoke('plugin:instance|instance_list_core_components', { instanceId })
+}
+
+export async function add_core_jar_mod(
+	instanceId: string,
+	sourcePath: string,
+	targetGameVersion: string,
+	source?: CoreComponentSource,
+): Promise<CoreComponent> {
+	return await invoke('plugin:instance|instance_add_core_jar_mod', {
+		instanceId,
+		sourcePath,
+		targetGameVersion,
+		source,
+	})
+}
+
+export async function replace_core_jar(
+	instanceId: string,
+	sourcePath: string,
+	targetGameVersion: string,
+	source?: CoreComponentSource,
+): Promise<CoreComponent> {
+	return await invoke('plugin:instance|instance_replace_core_jar', {
+		instanceId,
+		sourcePath,
+		targetGameVersion,
+		source,
+	})
+}
+
+export async function move_core_component(
+	instanceId: string,
+	componentId: string,
+	direction: -1 | 1,
+): Promise<CoreComponent[]> {
+	return await invoke('plugin:instance|instance_move_core_component', {
+		instanceId,
+		componentId,
+		direction,
+	})
+}
+
+export async function set_core_component_enabled(
+	instanceId: string,
+	componentId: string,
+	enabled: boolean,
+): Promise<CoreComponent> {
+	return await invoke('plugin:instance|instance_set_core_component_enabled', {
+		instanceId,
+		componentId,
+		enabled,
+	})
+}
+
+export async function remove_core_component(
+	instanceId: string,
+	componentId: string,
+): Promise<void> {
+	await invoke('plugin:instance|instance_remove_core_component', { instanceId, componentId })
+}
+
+export async function restore_core_component(
+	instanceId: string,
+	componentId: string,
+): Promise<CoreComponent> {
+	return await invoke('plugin:instance|instance_restore_core_component', {
+		instanceId,
+		componentId,
+	})
+}
+
+export async function preview_core_jar(instanceId: string): Promise<CoreJarPreview | null> {
+	return await invoke('plugin:instance|instance_preview_core_jar', { instanceId })
+}
+
+export async function install_mcarchive_modloader(
+	instanceId: string,
+	gameVersion: string,
+): Promise<McArchiveCoreInstallResult> {
+	return await invoke('plugin:instance|instance_install_mcarchive_modloader', {
+		instanceId,
+		gameVersion,
+	})
+}
+
+export async function import_mcarchive_modloader(
+	instanceId: string,
+	gameVersion: string,
+	sourcePath: string,
+): Promise<McArchiveCoreInstallResult> {
+	return await invoke('plugin:instance|instance_import_mcarchive_modloader', {
+		instanceId,
+		gameVersion,
+		sourcePath,
+	})
+}
+
+export type McArchiveContentInstallRequest = {
+	projectId: string
+	projectSlug: string
+	versionId: string
+	fileId: string
+	projectType: ContentFileProjectType
+}
+
+export type McArchiveContentInstallResult =
+	| { state: 'installed'; relativePath: string }
+	| {
+			state: 'manual_download'
+			fileName: string
+			pageUrl: string | null
+			expectedSha256: string | null
+	  }
+
+export type PlanetMinecraftContentInstallRequest = {
+	projectId: string
+	versionId: string
+	projectType: ContentFileProjectType
+}
+
+export type PlanetMinecraftContentInstallResult =
+	| { state: 'installed'; relativePath: string }
+	| { state: 'manual_download'; pageUrl: string; fileName: string | null }
+
+export async function install_mcarchive_content(
+	instanceId: string,
+	request: McArchiveContentInstallRequest,
+): Promise<McArchiveContentInstallResult> {
+	return await invoke('plugin:instance|instance_install_mcarchive_content', {
+		instanceId,
+		request,
+	})
+}
+
+export async function import_mcarchive_content(
+	instanceId: string,
+	request: McArchiveContentInstallRequest,
+	sourcePath: string,
+): Promise<McArchiveContentInstallResult> {
+	return await invoke('plugin:instance|instance_import_mcarchive_content', {
+		instanceId,
+		request,
+		sourcePath,
+	})
+}
+
+export async function install_planet_minecraft_content(
+	instanceId: string,
+	request: PlanetMinecraftContentInstallRequest,
+): Promise<PlanetMinecraftContentInstallResult> {
+	return await invoke('plugin:instance|instance_install_planet_minecraft_content', {
+		instanceId,
+		request,
+	})
+}
+
+export async function import_planet_minecraft_content(
+	instanceId: string,
+	request: PlanetMinecraftContentInstallRequest,
+	sourcePath: string,
+): Promise<PlanetMinecraftContentInstallResult> {
+	return await invoke('plugin:instance|instance_import_planet_minecraft_content', {
+		instanceId,
+		request,
+		sourcePath,
+	})
 }
 
 export type InstanceInstallTarget = {
@@ -123,7 +362,7 @@ export interface InstanceContentSnapshotItem {
 	expectedRelativePath: string
 	required: boolean
 	projectType: string
-	provider: 'modrinth' | 'curseforge' | null
+	provider: 'modrinth' | 'curseforge' | 'mcarchive' | null
 	providerProjectId: string | null
 	providerReleaseId: string | null
 	content: ContentItem | null
@@ -137,12 +376,12 @@ export interface InstanceContentSnapshotItem {
 	dependency: {
 		autoDependency: boolean
 		requiredBy: Array<{
-			provider: 'modrinth' | 'curseforge' | 'local'
+			provider: 'modrinth' | 'curseforge' | 'mcarchive' | 'local'
 			projectId: string
 			releaseId: string
 		}>
 		requires: Array<{
-			provider: 'modrinth' | 'curseforge' | 'local'
+			provider: 'modrinth' | 'curseforge' | 'mcarchive' | 'local'
 			projectId: string
 			releaseId: string
 		}>
@@ -158,7 +397,7 @@ export interface PendingManualDownload {
 	operationKind: 'pack_install' | 'pack_update' | 'content_install' | 'content_update'
 	operationTargetId: string | null
 	projectType: string
-	provider: 'modrinth' | 'curseforge'
+	provider: 'modrinth' | 'curseforge' | 'mcarchive'
 	providerProjectId: string
 	providerReleaseId: string
 	fileName: string
@@ -179,7 +418,7 @@ export interface InstanceContentSnapshot {
 	pack: {
 		name: string
 		iconPath: string | null
-		provider: 'modrinth' | 'curseforge' | null
+		provider: 'modrinth' | 'curseforge' | 'mcarchive' | null
 		projectId: string | null
 		versionId: string | null
 		reconciled: boolean
@@ -191,7 +430,7 @@ export interface InstanceContentSnapshot {
 	warnings: Array<{
 		code: string
 		message: string
-		provider: 'modrinth' | 'curseforge' | null
+		provider: 'modrinth' | 'curseforge' | 'mcarchive' | null
 	}>
 }
 
@@ -214,7 +453,7 @@ export interface ContentUpdatePlan {
 		contentId: string
 		relativePath: string | null
 		ownershipKind: ContentOwnershipKind
-		provider: 'modrinth' | 'curseforge'
+		provider: 'modrinth' | 'curseforge' | 'mcarchive'
 		currentReleaseId: string | null
 		targetReleaseId: string
 	}>

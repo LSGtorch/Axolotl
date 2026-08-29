@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { defineMessages, useVIntl } from '@modrinth/ui'
-import { type NbtTag,NbtType } from 'deepslate/nbt'
+import { type NbtTag, NbtType } from 'deepslate/nbt'
 import { computed, ref } from 'vue'
 
 import NbtTypeIcon from './NbtTypeIcon.vue'

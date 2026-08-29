@@ -32,6 +32,8 @@ struct InstanceConfigFile {
     icon_path: Option<String>,
     update_channel: String,
     symlink_target: Option<String>,
+    #[serde(default)]
+    game_dir_override: Option<String>,
     groups: Vec<String>,
     content_set: InstanceConfigContentSet,
     link: crate::state::instances::InstanceLink,
@@ -217,6 +219,7 @@ fn config_file(
         icon_path: instance.icon_path.clone(),
         update_channel: instance.update_channel.key().to_string(),
         symlink_target: instance.symlink_target.clone(),
+        game_dir_override: instance.game_dir_override.clone(),
         groups: metadata.groups.clone(),
         content_set: InstanceConfigContentSet {
             source_kind: metadata.applied_content_set.source_kind,
@@ -429,6 +432,7 @@ mod tests {
             linked_dot_minecraft: None,
             linked_version_id: None,
             linked_version_json_path: None,
+            game_dir_override: Some(r"D:\Games\.minecraft".to_string()),
             created: now,
             modified: now,
             last_played: Some(now),
@@ -494,6 +498,10 @@ mod tests {
             Some(r"C:\absolute\icon.png")
         );
         assert_eq!(roundtrip.symlink_target.as_deref(), Some(r"Z:\target"));
+        assert_eq!(
+            roundtrip.game_dir_override.as_deref(),
+            Some(r"D:\Games\.minecraft")
+        );
         assert_eq!(roundtrip.groups, vec!["Group A".to_string()]);
         assert_eq!(
             roundtrip.launch_overrides.java_path.as_deref(),
@@ -540,6 +548,7 @@ mod tests {
                 icon_path: None,
                 link: InstanceLink::Unmanaged,
                 symlink_target: None,
+                game_dir_override: None,
             },
             &state,
         )

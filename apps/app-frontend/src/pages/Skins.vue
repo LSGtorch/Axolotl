@@ -4,6 +4,7 @@ import {
 	EditIcon,
 	EyeIcon,
 	LogInIcon,
+	PlusIcon,
 	RotateCounterClockwiseIcon,
 	SpinnerIcon,
 } from '@modrinth/assets'
@@ -69,6 +70,10 @@ const messages = defineMessages({
 	skinSelectorTitle: {
 		id: 'app.skins.title',
 		defaultMessage: 'Skin selector',
+	},
+	createSkinButton: {
+		id: 'app.skins.create-skin',
+		defaultMessage: 'Create skin',
 	},
 	modrinthSection: {
 		id: 'app.skins.section.modrinth',
@@ -1110,17 +1115,24 @@ await loadSkins()
 		</div>
 
 		<div class="pt-2">
-			<NavTabs
-				class="mb-4"
-				:active-index="skinListTab === 'saved' ? 0 : 1"
-				:links="skinListTabLinks"
-				mode="local"
-				@tab-click="
-					(index: number) => {
-						skinListTab = index === 0 ? 'saved' : 'default'
-					}
-				"
-			/>
+			<div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+				<NavTabs
+					:active-index="skinListTab === 'saved' ? 0 : 1"
+					:links="skinListTabLinks"
+					mode="local"
+					@tab-click="
+						(index: number) => {
+							skinListTab = index === 0 ? 'saved' : 'default'
+						}
+					"
+				/>
+				<ButtonStyled color="brand">
+					<button @click="router.push('/lab/skin-editor')">
+						<PlusIcon />
+						{{ formatMessage(messages.createSkinButton) }}
+					</button>
+				</ButtonStyled>
+			</div>
 			<VirtualSkinSectionList
 				ref="skinSectionList"
 				:active-tab="skinListTab"

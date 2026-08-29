@@ -68,7 +68,9 @@ test('content favorite writes roll back busy state when persistence fails', asyn
 		},
 	})
 
-	await assert.rejects(store.add({ provider: 'modrinth', project_id: 'sodium', content_type: 'mod' }))
+	await assert.rejects(
+		store.add({ provider: 'modrinth', project_id: 'sodium', content_type: 'mod' }),
+	)
 	assert.equal(store.isFavorite('modrinth', 'sodium'), false)
 	assert.equal(store.isPending('modrinth', 'sodium'), false)
 

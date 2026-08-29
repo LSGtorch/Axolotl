@@ -40,6 +40,7 @@ test('shares the complete client loader list with instance installation settings
 			'cleanroom',
 			'lite_loader',
 			'legacy_fabric',
+			'babric',
 		],
 	)
 	assert.deepEqual([...instanceInstallablePlatforms], ['vanilla', ...clientInstallableLoaders])

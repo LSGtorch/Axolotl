@@ -1,4 +1,5 @@
 use crate::api::Result;
+use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use tauri::http::HeaderValue;
@@ -18,6 +19,13 @@ const MIAWA_HOST: &str = "https://miawa.cn";
 const MIAWA_API_TIMEOUT: std::time::Duration =
     std::time::Duration::from_secs(15);
 
+// The updater plugin builds `Update` with no request timeout, so a stalled
+// connection would hang the download forever. Bound the whole download
+// (installers can exceed 100 MB) so failures always surface and can fall
+// back to another source.
+const UPDATE_DOWNLOAD_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(15 * 60);
+
 // ── Miawa API types ──────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -26,13 +34,8 @@ struct MiawaEnvelope<T> {
 }
 
 #[derive(Deserialize)]
-struct MiawaLaunchers {
-    axolotl: Vec<MiawaLauncherEntry>,
-}
-
-#[derive(Deserialize)]
-struct MiawaLauncherEntry {
-    tag_name: String,
+struct MiawaLatest {
+    version: String,
 }
 
 #[derive(Deserialize)]
@@ -66,38 +69,37 @@ fn miawa_client() -> reqwest::Client {
         .expect("Failed to build Miawa HTTP client")
 }
 
-/// Latest launcher tag name (e.g. "v1.8.11") reported by the Miawa API.
-async fn miawa_latest_tag() -> Result<String> {
+async fn miawa_latest_version() -> Result<String> {
     let client = miawa_client();
-    let launchers: MiawaEnvelope<MiawaLaunchers> = client
-        .get(format!("{MIAWA_API_BASE}/launchers"))
+    let latest: MiawaEnvelope<MiawaLatest> = client
+        .get(format!("{MIAWA_API_BASE}/latest/axolotl"))
         .send()
         .await
         .map_err(|e| {
             theseus::Error::from(theseus::ErrorKind::OtherError(format!(
-                "Miawa launchers request failed: {e}"
+                "Miawa latest version request failed: {e}"
             )))
         })?
         .json()
         .await
         .map_err(|e| {
             theseus::Error::from(theseus::ErrorKind::OtherError(format!(
-                "Failed to parse Miawa launchers response: {e}"
+                "Failed to parse Miawa latest version response: {e}"
             )))
         })?;
 
-    launchers
-        .data
-        .axolotl
-        .into_iter()
-        .next()
-        .map(|l| l.tag_name)
-        .ok_or_else(|| {
-            theseus::Error::from(theseus::ErrorKind::OtherError(
-                "Miawa returned empty axolotl list".to_string(),
-            ))
-            .into()
-        })
+    Ok(latest.data.version)
+}
+
+fn miawa_update_available(current: &Version, remote_tag: &str) -> Result<bool> {
+    let remote =
+        Version::parse(remote_tag.trim_start_matches('v')).map_err(|e| {
+            theseus::Error::from(theseus::ErrorKind::OtherError(format!(
+                "Failed to parse Miawa latest version {remote_tag:?}: {e}"
+            )))
+        })?;
+
+    Ok(remote > *current)
 }
 
 /// Resolve a download URL for a Miawa file path via the prepare API.
@@ -206,9 +208,11 @@ async fn check_with_updater<R: Runtime>(
     source: &str,
 ) -> Result<Option<UpdateMetadata>> {
     let endpoints = update_endpoints(source)?;
-    let Some(update) = check_with_endpoints(webview, endpoints).await? else {
+    let Some(mut update) = check_with_endpoints(webview, endpoints).await?
+    else {
         return Ok(None);
     };
+    update.timeout = Some(UPDATE_DOWNLOAD_TIMEOUT);
 
     let metadata = UpdateMetadata {
         rid: webview.resources_table().add(update.clone()),
@@ -222,14 +226,20 @@ async fn check_with_updater<R: Runtime>(
     Ok(Some(metadata))
 }
 
-/// Miawa check: hand the updater plugin a prepared (dynamic) latest.json
-/// URL as its endpoint, then redirect the plugin's download URL to the
-/// mirror. Everything else (version comparison, signature, unpacking,
-/// per-platform install) stays inside tauri-plugin-updater.
 async fn check_miawa<R: Runtime>(
     webview: &Webview<R>,
 ) -> Result<Option<UpdateMetadata>> {
-    let tag_name = miawa_latest_tag().await?;
+    let tag_name = miawa_latest_version().await?;
+    let current_version = webview.app_handle().package_info().version.clone();
+
+    if !miawa_update_available(&current_version, &tag_name)? {
+        tracing::info!(
+            current = %current_version,
+            latest = %tag_name,
+            "Miawa has no newer version; skipping latest.json check"
+        );
+        return Ok(None);
+    }
 
     let latest_url =
         miawa_prepare_url(&format!("axolotl/{tag_name}/latest.json")).await?;
@@ -240,6 +250,7 @@ async fn check_miawa<R: Runtime>(
     else {
         return Ok(None);
     };
+    update.timeout = Some(UPDATE_DOWNLOAD_TIMEOUT);
 
     // Redirect the actual download to the Miawa mirror.
     let filename = update

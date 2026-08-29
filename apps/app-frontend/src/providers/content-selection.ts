@@ -169,6 +169,15 @@ function selectedItemKey(provider: ContentSelectionProvider, projectId: string) 
 	return `${provider}:${projectId}`
 }
 
+function modrinthProjectUrl(project: Labrinth.Projects.v2.Project): string {
+	return `https://modrinth.com/${project.project_type}/${project.slug}`
+}
+
+function curseForgeProjectUrl(project: { slug: string; links?: { websiteUrl?: string } }): string {
+	if (project.links?.websiteUrl) return project.links.websiteUrl
+	return `https://www.curseforge.com/minecraft/mc-mods/${project.slug}`
+}
+
 export function createContentSelection({
 	addNotification,
 	handleError,
@@ -539,12 +548,15 @@ export function createContentSelection({
 		)
 		const dependencies = plan.dependencies.map((dependency) => {
 			const included = selectedProjectIds.has(dependency.project_id)
+			const project = projectsById.get(dependency.project_id)
 			return {
 				id: dependencyKey('modrinth', dependency.project_id, dependency.version_id),
-				title: projectsById.get(dependency.project_id)?.title ?? dependency.project_id,
-				iconUrl: projectsById.get(dependency.project_id)?.icon_url,
+				title: project?.title ?? dependency.project_id,
+				iconUrl: project?.icon_url,
 				versionNumber: versionsById.get(dependency.version_id)?.version_number,
 				fileName: versionsById.get(dependency.version_id)?.files[0]?.filename,
+				description: project?.description,
+				projectUrl: project ? modrinthProjectUrl(project) : undefined,
 				requiredBy: dependency.dependent_on_version_id
 					? [titleByVersion.get(dependency.dependent_on_version_id)].filter(
 							(title): title is string => !!title,
@@ -559,16 +571,19 @@ export function createContentSelection({
 		for (const skipped of plan.skipped) {
 			if (skipped.reason !== 'already_installed') continue
 			const versionId = skipped.version_id ?? `skipped-${skipped.project_id}`
+			const project = projectsById.get(skipped.project_id)
 			dependencies.push({
 				id: dependencyKey('modrinth', skipped.project_id, versionId),
-				title: projectsById.get(skipped.project_id)?.title ?? skipped.project_id,
-				iconUrl: projectsById.get(skipped.project_id)?.icon_url,
+				title: project?.title ?? skipped.project_id,
+				iconUrl: project?.icon_url,
 				versionNumber: skipped.version_id
 					? versionsById.get(skipped.version_id)?.version_number
 					: undefined,
 				fileName: skipped.version_id
 					? versionsById.get(skipped.version_id)?.files[0]?.filename
 					: undefined,
+				description: project?.description,
+				projectUrl: project ? modrinthProjectUrl(project) : undefined,
 				requiredBy: skipped.dependent_on_version_id
 					? [titleByVersion.get(skipped.dependent_on_version_id)].filter(
 							(title): title is string => !!title,
@@ -652,6 +667,35 @@ export function createContentSelection({
 			const projects = await getCurseForgeProjects([...new Set(missingIds)]).catch(() => [])
 			for (const project of projects) titleById.set(project.id, project.name)
 		}
+		const dependencyProjectIds = [
+			...new Set([
+				...preview.dependencies.map((dependency) => dependency.projectId),
+				...preview.skipped
+					.filter((skipped) => skipped.reason === 'already_installed')
+					.map((skipped) => skipped.projectId),
+			]),
+		]
+		const projectById = new Map<number, { summary: string; slug: string; websiteUrl?: string }>()
+		if (dependencyProjectIds.length) {
+			const projects = await getCurseForgeProjects(dependencyProjectIds).catch(() => [])
+			for (const project of projects) {
+				projectById.set(project.id, {
+					summary: project.summary,
+					slug: project.slug,
+					websiteUrl: project.links?.websiteUrl,
+				})
+			}
+		}
+		const fallbackProjectsById = new Map<string, Labrinth.Projects.v2.Project>()
+		const fallbackProjectIds = [
+			...new Set((preview.modrinthFallbacks ?? []).map((fallback) => fallback.projectId)),
+		]
+		if (fallbackProjectIds.length) {
+			const projects = await get_project_many(fallbackProjectIds)
+				.catch(() => [])
+				.then((projects) => (projects ?? []) as Labrinth.Projects.v2.Project[])
+			for (const project of projects) fallbackProjectsById.set(project.id, project)
+		}
 		const dependencies: ContentInstallPreviewDependency[] = preview.dependencies.map(
 			(dependency) => {
 				const included = [...items.value.values()].some(
@@ -660,12 +704,15 @@ export function createContentSelection({
 						selected.provider === 'curseforge' &&
 						selected.providerProjectId === String(dependency.projectId),
 				)
+				const project = projectById.get(dependency.projectId)
 				return {
 					id: dependencyKey('curseforge', String(dependency.projectId), String(dependency.fileId)),
 					title: dependency.title,
 					iconUrl: dependency.iconUrl,
 					versionNumber: dependency.versionNumber,
 					fileName: dependency.fileName,
+					description: project?.summary,
+					projectUrl: project ? curseForgeProjectUrl(project) : undefined,
 					requiredBy: dependency.requiredByProjectIds
 						.map((id) => titleById.get(id))
 						.filter((title): title is string => !!title),
@@ -680,9 +727,12 @@ export function createContentSelection({
 		for (const skippedItem of preview.skipped) {
 			if (skippedItem.reason !== 'already_installed') continue
 			const projectId = String(skippedItem.projectId)
+			const project = projectById.get(skippedItem.projectId)
 			dependencies.push({
 				id: dependencyKey('curseforge', projectId, String(skippedItem.fileId ?? 'skipped')),
 				title: titleById.get(skippedItem.projectId) ?? projectId,
+				description: project?.summary,
+				projectUrl: project ? curseForgeProjectUrl(project) : undefined,
 				requiredBy: [item.title],
 				requiredByKeys: [item.key],
 				alreadyInstalled: true,
@@ -697,11 +747,14 @@ export function createContentSelection({
 					selected.provider === 'modrinth' &&
 					selected.projectId === fallback.projectId,
 			)
+			const fallbackProject = fallbackProjectsById.get(fallback.projectId)
 			dependencies.push({
 				id: dependencyKey('modrinth', fallback.projectId, fallback.versionId),
 				title: fallback.title,
 				iconUrl: fallback.iconUrl,
 				versionNumber: fallback.versionNumber,
+				description: fallbackProject?.description,
+				projectUrl: fallbackProject ? modrinthProjectUrl(fallbackProject) : undefined,
 				requiredBy: [titleById.get(fallback.parentProjectId) ?? item.title],
 				requiredByKeys: [item.key],
 				alreadyInstalled: included,

@@ -7,6 +7,7 @@ import {
 	injectFilePicker,
 	injectNotificationManager,
 	OverflowMenu,
+	RadioButtons,
 	StyledInput,
 	useVIntl,
 } from '@modrinth/ui'
@@ -124,6 +125,65 @@ async function setIcon() {
 	}
 }
 
+const gameDirOverride = ref(instance.value.game_dir_override)
+const savingGameDir = ref(false)
+
+watch(
+	() => instance.value.game_dir_override,
+	(path) => {
+		gameDirOverride.value = path
+	},
+)
+
+// An external game dir is stored as a single path. Whether it is version
+// isolated is encoded in the path: `<root>/versions/<name>` vs the `.minecraft`
+// root itself. `isExternal` is false for built-in (managed) instances, which
+// expose no isolation option.
+const isExternal = computed(() => !!gameDirOverride.value)
+
+const gameDirInfo = computed(() => {
+	const path = gameDirOverride.value
+	if (!path) return { isolated: false, baseRoot: null }
+	const normalized = path.replace(/\\/g, '/')
+	const segments = normalized.split('/').filter(Boolean)
+	if (segments.length >= 2 && segments[segments.length - 2] === 'versions') {
+		return { isolated: true, baseRoot: segments.slice(0, -2).join('/') }
+	}
+	return { isolated: false, baseRoot: path }
+})
+
+type GameDirMode = 'isolated' | 'not-isolated'
+const gameDirMode = computed<GameDirMode>({
+	get: () => (gameDirInfo.value.isolated ? 'isolated' : 'not-isolated'),
+	set: (mode) => void setGameDirMode(mode),
+})
+const gameDirModeItems: GameDirMode[] = ['isolated', 'not-isolated']
+
+function gameDirModeLabel(mode: GameDirMode) {
+	return mode === 'isolated' ? messages.gameDirIsolated : messages.gameDirNotIsolated
+}
+
+async function setGameDirMode(mode: GameDirMode) {
+	const baseRoot = gameDirInfo.value.baseRoot
+	if (!baseRoot) return
+	const nextPath = mode === 'isolated' ? `${baseRoot}/versions/${instance.value.name}` : baseRoot
+	if (nextPath === gameDirOverride.value) return
+
+	// The launcher only records the new override path; the user is responsible
+	// for actually moving the mods/saves/config folders to match.
+	const previous = gameDirOverride.value
+	gameDirOverride.value = nextPath
+	savingGameDir.value = true
+	try {
+		await edit(instance.value.id, { game_dir_override: nextPath })
+	} catch (error) {
+		gameDirOverride.value = previous
+		handleError(error)
+	} finally {
+		savingGameDir.value = false
+	}
+}
+
 const editInstanceObject = computed(() => ({
 	name: title.value.trim().substring(0, 32) ?? 'Instance',
 }))
@@ -191,6 +251,36 @@ const messages = defineMessages({
 	duplicateButton: {
 		id: 'instance.settings.tabs.general.duplicate-button',
 		defaultMessage: 'Duplicate',
+	},
+	gameDir: {
+		id: 'instance.settings.tabs.general.game-dir',
+		defaultMessage: 'Game directory',
+	},
+	gameDirDescription: {
+		id: 'instance.settings.tabs.general.game-dir.description',
+		defaultMessage:
+			'Uses a separate folder as the working directory for this instance. The game reads mods, saves, configs, and resource packs from that folder instead of the managed instance folder.',
+	},
+	gameDirCurrent: {
+		id: 'instance.settings.tabs.general.game-dir.current',
+		defaultMessage: 'Current directory',
+	},
+	gameDirIsolated: {
+		id: 'instance.settings.tabs.general.game-dir.isolated',
+		defaultMessage: 'Version isolated (stored in versions/)',
+	},
+	gameDirNotIsolated: {
+		id: 'instance.settings.tabs.general.game-dir.not-isolated',
+		defaultMessage: 'Version shared (.minecraft/)',
+	},
+	gameDirMoveNote: {
+		id: 'instance.settings.tabs.general.game-dir.move-note',
+		defaultMessage:
+			'Switching isolation only updates the launcher path. Move the mods, saves, and config folders yourself to match.',
+	},
+	gameDirManagedNote: {
+		id: 'instance.settings.tabs.general.game-dir.managed-note',
+		defaultMessage: 'This instance uses the Axolotl-managed folder.',
 	},
 	updateChannel: {
 		id: 'instance.settings.tabs.general.update-channel',
@@ -328,6 +418,33 @@ const messages = defineMessages({
 				</p>
 			</div>
 		</template>
+		<div class="flex flex-col gap-2.5 mt-6">
+			<h2 class="m-0 text-lg font-semibold text-contrast block">
+				{{ formatMessage(messages.gameDir) }}
+			</h2>
+			<p class="m-0">
+				{{ formatMessage(messages.gameDirDescription) }}
+			</p>
+			<template v-if="isExternal">
+				<div class="flex flex-col gap-1.5">
+					<RadioButtons v-model="gameDirMode" :items="gameDirModeItems" force-selection>
+						<template #default="{ item }">
+							{{ formatMessage(gameDirModeLabel(item)) }}
+						</template>
+					</RadioButtons>
+				</div>
+				<p v-if="gameDirOverride" class="m-0 text-secondary break-all">
+					{{ formatMessage(messages.gameDirCurrent) }}:
+					<code>{{ gameDirOverride }}</code>
+				</p>
+				<p class="m-0 text-sm text-secondary">
+					{{ formatMessage(messages.gameDirMoveNote) }}
+				</p>
+			</template>
+			<p v-else class="m-0 text-sm text-secondary">
+				{{ formatMessage(messages.gameDirManagedNote) }}
+			</p>
+		</div>
 		<div class="flex flex-col gap-2.5 mt-6">
 			<h2 class="m-0 text-lg font-semibold text-contrast block">
 				{{ formatMessage(messages.updateChannel) }}

@@ -1,5 +1,5 @@
 <template>
-	<div class="flex flex-col gap-3 p-6">
+	<div class="box-border flex min-h-full w-full flex-col gap-3 p-6">
 		<div class="flex flex-wrap items-center justify-between gap-3">
 			<div data-onboarding-id="downloads-tabs">
 				<NavTabs
@@ -90,7 +90,12 @@
 				/>
 			</Card>
 
-			<Card v-for="job in visibleJobs" :key="job.job_id" class="!p-0">
+			<Card
+				v-for="job in visibleJobs"
+				:key="job.job_id"
+				:data-install-job-id="job.job_id"
+				class="!p-0"
+			>
 				<div class="flex flex-wrap items-center gap-4 p-4">
 					<img
 						v-if="job.display?.icon"
@@ -110,8 +115,8 @@
 								{{ jobTitle(job) }}
 							</h2>
 							<TagItem>
-								<component :is="providerIcon(job.provider)" />
-								{{ providerLabel(job.provider) }}
+								<component :is="jobTypeIcon(job)" />
+								{{ jobTypeLabel(job) }}
 							</TagItem>
 							<Badge :color="statusColor(job.status)" :type="statusLabel(job.status)" />
 							<Badge
@@ -198,6 +203,15 @@
 							</button>
 						</ButtonStyled>
 						<ButtonStyled
+							v-if="tab === 'history' && isSuccessfulUpgradeJob(job)"
+							color="brand"
+							size="small"
+						>
+							<button @click="router.push(upgradeResultLocation(job))">
+								<CheckCircleIcon />{{ formatMessage(messages.viewUpgradeResult) }}
+							</button>
+						</ButtonStyled>
+						<ButtonStyled
 							v-if="job.instance_id && !job.instance_deleted && job.status !== 'waiting_for_user'"
 							type="outlined"
 							size="small"
@@ -206,7 +220,11 @@
 								<ExternalIcon />{{ formatMessage(messages.openInstance) }}
 							</button>
 						</ButtonStyled>
-						<ButtonStyled type="transparent" size="small">
+						<ButtonStyled
+							v-if="job.items.length > 0 || job.error || job.rollback_error"
+							type="transparent"
+							size="small"
+						>
 							<button @click="toggleExpanded(job.job_id)">
 								<ChevronDownIcon :class="expanded.has(job.job_id) ? 'rotate-180' : ''" />
 								{{
@@ -344,8 +362,9 @@
 			</Card>
 		</div>
 
-		<Card v-else>
+		<Card v-else class="flex flex-1">
 			<EmptyState
+				class="my-auto"
 				:type="query ? 'no-search-result' : 'no-tasks'"
 				:heading="formatMessage(query ? messages.noResultsTitle : messages.emptyTitle)"
 				:description="
@@ -370,6 +389,7 @@
 <script setup lang="ts">
 import {
 	ArrowBigRightDashIcon,
+	CheckCircleIcon,
 	ChevronDownIcon,
 	ClipboardCopyIcon,
 	ClockIcon,
@@ -395,6 +415,7 @@ import {
 	DropdownSelect,
 	EmptyState,
 	injectNotificationManager,
+	type MessageDescriptor,
 	NavTabs,
 	ProgressBar,
 	StyledInput,
@@ -406,8 +427,8 @@ import {
 } from '@modrinth/ui'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { openUrl } from '@tauri-apps/plugin-opener'
-import { computed, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, nextTick, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 
 import MissingModpackContentModal from '@/components/ui/modal/MissingModpackContentModal.vue'
 import { listPendingCurseForgeManualDownloads } from '@/helpers/curseforge'
@@ -428,10 +449,19 @@ import type { LoadingBar } from '@/helpers/state'
 import { injectContentInstall } from '@/providers/content-install'
 import { injectDownloadManager } from '@/providers/download-manager'
 
+import {
+	createDownloadFocusState,
+	focusedDownloadJobId,
+	reconcileDownloadFocus,
+	stopDownloadFocusAutoFollow,
+} from './download-focus'
+import { isSuccessfulUpgradeJob, upgradeResultLocation } from './instance/upgrade/result'
+
 type DownloadItem = InstallJobSnapshot['items'][number]
 
 const manager = injectDownloadManager()
 const { showCurseForgeManualDownloads } = injectContentInstall()
+const route = useRoute()
 const router = useRouter()
 const { handleError } = injectNotificationManager()
 const { formatMessage } = useVIntl()
@@ -444,6 +474,8 @@ const expanded = ref(new Set<string>())
 const busy = ref(new Set<string>())
 const clearHistoryModal = ref<InstanceType<typeof ConfirmModal>>()
 const missingContentModal = ref<InstanceType<typeof MissingModpackContentModal>>()
+const focusedJobId = computed(() => focusedDownloadJobId(route.query.job))
+const focusState = ref(createDownloadFocusState(focusedJobId.value))
 
 const messages = defineMessages({
 	newDownload: { id: 'app.downloads.new-download', defaultMessage: 'New download' },
@@ -476,6 +508,11 @@ const messages = defineMessages({
 			'{completed} / {total} required files are ready. {missing, plural, one {# file still needs to be downloaded.} other {# files still need to be downloaded.}}',
 	},
 	copyDiagnostics: { id: 'app.downloads.copy-diagnostics', defaultMessage: 'Copy diagnostics' },
+	upgrade: { id: 'app.downloads.operation.upgrade', defaultMessage: 'Upgrade' },
+	viewUpgradeResult: {
+		id: 'app.downloads.view-upgrade-result',
+		defaultMessage: 'View upgrade result',
+	},
 	openInstance: { id: 'app.downloads.open-instance', defaultMessage: 'Open instance' },
 	instanceDeleted: { id: 'app.downloads.instance-deleted', defaultMessage: 'Instance deleted' },
 	details: { id: 'app.downloads.details', defaultMessage: 'Details' },
@@ -570,6 +607,7 @@ const messages = defineMessages({
 		id: 'app.downloads.more-active-requests',
 		defaultMessage: '+{count} active requests',
 	},
+	unknownPhase: { id: 'app.downloads.phase.unknown', defaultMessage: 'Working' },
 })
 
 const statusMessages = defineMessages({
@@ -630,9 +668,27 @@ const phaseMessages = defineMessages({
 		id: 'app.downloads.phase.running-loader-processors',
 		defaultMessage: 'Installing loader',
 	},
+	creating_backup: {
+		id: 'app.downloads.phase.creating-backup',
+		defaultMessage: 'Creating backup',
+	},
+	staging_content: {
+		id: 'app.downloads.phase.staging-content',
+		defaultMessage: 'Staging content',
+	},
+	applying_content: {
+		id: 'app.downloads.phase.applying-content',
+		defaultMessage: 'Applying content',
+	},
+	updating_loader: {
+		id: 'app.downloads.phase.updating-loader',
+		defaultMessage: 'Updating loader',
+	},
+	verifying: { id: 'app.downloads.phase.verifying', defaultMessage: 'Verifying' },
 	finalizing: { id: 'app.downloads.phase.finalizing', defaultMessage: 'Finalizing' },
+	completed: { id: 'app.downloads.phase.completed', defaultMessage: 'Completed' },
 	rolling_back: { id: 'app.downloads.phase.rolling-back', defaultMessage: 'Rolling back changes' },
-})
+} satisfies Record<InstallPhaseId, MessageDescriptor>)
 
 const legacyDownloads = manager.legacyDownloads
 const historyJobs = manager.historyJobs
@@ -718,6 +774,16 @@ function providerIcon(value: InstallJobSnapshot['provider']) {
 			: DownloadIcon
 }
 
+function jobTypeLabel(job: InstallJobSnapshot) {
+	return job.kind === 'upgrade_unmanaged_instance'
+		? formatMessage(messages.upgrade)
+		: providerLabel(job.provider)
+}
+
+function jobTypeIcon(job: InstallJobSnapshot) {
+	return job.kind === 'upgrade_unmanaged_instance' ? RefreshCwIcon : providerIcon(job.provider)
+}
+
 function legacyProvider(bar: LoadingBar): InstallJobSnapshot['provider'] {
 	if (bar.bar_type?.type === 'pack_download' || bar.bar_type?.type === 'pack_file_download')
 		return 'curse_forge'
@@ -738,7 +804,8 @@ function statusLabel(status: string) {
 }
 
 function phaseLabel(phase: InstallPhaseId) {
-	return formatMessage(phaseMessages[phase])
+	const message = (phaseMessages as Partial<Record<string, MessageDescriptor>>)[phase]
+	return formatMessage(message ?? messages.unknownPhase)
 }
 
 function isRecoveryValidation(job: InstallJobSnapshot) {
@@ -812,12 +879,18 @@ function jobPercent(job: InstallJobSnapshot) {
 		return Math.min(99, (completedRequiredFiles(job) / total) * 100)
 	}
 	const progress = effectiveInstallProgress(job)
-	if (!hasDeterminateInstallProgress(progress)) return 0
-	return Math.min(99, Math.max(0, (progress.current / progress.total) * 100))
+	if (hasDeterminateInstallProgress(progress)) {
+		return Math.min(99, Math.max(0, (progress.current / progress.total) * 100))
+	}
+	if (job.summary.bytes_total && job.summary.bytes_total > 0) {
+		return Math.min(99, Math.max(0, (job.summary.bytes_downloaded / job.summary.bytes_total) * 100))
+	}
+	return 0
 }
 
 function hasDeterminateProgress(job: InstallJobSnapshot) {
-	return hasDeterminateInstallProgress(effectiveInstallProgress(job))
+	if (hasDeterminateInstallProgress(effectiveInstallProgress(job))) return true
+	return !!(job.summary.bytes_total && job.summary.bytes_total > 0)
 }
 
 function parallelPercent(job: InstallJobSnapshot) {
@@ -1025,8 +1098,40 @@ function formatDate(value: string) {
 }
 
 function selectTab(index: number) {
+	focusState.value = stopDownloadFocusAutoFollow(focusState.value)
 	tab.value = index === 0 ? 'active' : 'history'
 }
+
+function focusedJobElement(jobId: string): HTMLElement | null {
+	return (
+		[...document.querySelectorAll<HTMLElement>('[data-install-job-id]')].find(
+			(element) => element.dataset.installJobId === jobId,
+		) ?? null
+	)
+}
+
+watch(
+	[focusedJobId, manager.jobs],
+	async ([jobId, jobs]) => {
+		if (focusState.value.jobId !== jobId) {
+			focusState.value = createDownloadFocusState(jobId)
+		}
+		const effect = reconcileDownloadFocus(
+			focusState.value,
+			jobId ? (jobs.find((job) => job.job_id === jobId) ?? null) : null,
+		)
+		focusState.value = effect.state
+		if (effect.tab) tab.value = effect.tab
+		if (effect.expand && jobId) {
+			expanded.value = new Set([...expanded.value, jobId])
+		}
+		if (effect.scroll && jobId) {
+			await nextTick()
+			focusedJobElement(jobId)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+		}
+	},
+	{ immediate: true },
+)
 
 function toggleExpanded(jobId: string) {
 	const next = new Set(expanded.value)

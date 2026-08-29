@@ -6838,6 +6838,7 @@ dependencies = [
  "path-util",
  "quartz_nbt",
  "regex",
+ "semver",
  "serde",
  "serde_json",
  "serde_with",

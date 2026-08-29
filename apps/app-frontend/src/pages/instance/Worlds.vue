@@ -55,7 +55,12 @@
 					<ButtonStyled type="outlined">
 						<button
 							class="!h-10 flex items-center gap-2"
-							@click="router.push({ path: '/browse/world', query: { i: instance.id, from: 'world-maps' } })"
+							@click="
+								router.push({
+									path: '/browse/world',
+									query: { i: instance.id, from: 'world-maps' },
+								})
+							"
 						>
 							<WorldIcon class="size-5" />
 							<span>{{ formatMessage(messages.browseMaps) }}</span>
@@ -154,7 +159,9 @@
 				<ButtonStyled type="outlined">
 					<button
 						class="!h-10 flex items-center gap-2"
-						@click="router.push({ path: '/browse/world', query: { i: instance.id, from: 'world-maps' } })"
+						@click="
+							router.push({ path: '/browse/world', query: { i: instance.id, from: 'world-maps' } })
+						"
 					>
 						<WorldIcon class="size-5" />
 						<span>{{ formatMessage(messages.browseMaps) }}</span>

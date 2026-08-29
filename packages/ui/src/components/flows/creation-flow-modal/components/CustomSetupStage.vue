@@ -32,6 +32,30 @@
 			/>
 		</div>
 
+		<!-- Instance-specific: Game directory isolation -->
+		<div
+			v-if="ctx.flowType === 'instance'"
+			data-onboarding-id="creation-game-dir"
+			class="flex flex-col gap-2"
+		>
+			<span class="font-semibold text-contrast">{{ formatMessage(messages.gameDirLabel) }}</span>
+			<RadioButtons v-model="gameDirMode" :items="gameDirModeItems" force-selection>
+				<template #default="{ item }">
+					{{ formatMessage(gameDirModeLabel(item)) }}
+				</template>
+			</RadioButtons>
+			<div v-if="gameDirMode !== 'builtin'" class="flex items-center gap-2">
+				<ButtonStyled type="outlined">
+					<button @click="pickGameDir">
+						{{ formatMessage(messages.gameDirChooseFolder) }}
+					</button>
+				</ButtonStyled>
+				<span v-if="ctx.gameDirOverride.value" class="text-sm text-secondary break-all">
+					{{ ctx.gameDirOverride.value }}
+				</span>
+			</div>
+		</div>
+
 		<!-- Game version -->
 		<div data-onboarding-id="creation-game-version" class="flex flex-col gap-2">
 			<span class="font-semibold text-contrast">{{
@@ -182,7 +206,7 @@
 <script setup lang="ts">
 import type { Paper } from '@modrinth/api-client'
 import { UploadIcon, XIcon } from '@modrinth/assets'
-import { commonMessages, defineMessages, useVIntl } from '@modrinth/ui'
+import { commonMessages, defineMessages, RadioButtons, useVIntl } from '@modrinth/ui'
 import { computed, onMounted, ref, watch } from 'vue'
 
 import { useDebugLogger } from '#ui/composables/debug-logger'
@@ -196,7 +220,12 @@ import Collapsible from '../../../base/Collapsible.vue'
 import Combobox, { type ComboboxOption } from '../../../base/Combobox.vue'
 import PaperChannelBadge from '../../../base/PaperChannelBadge.vue'
 import StyledInput from '../../../base/StyledInput.vue'
-import type { AdjunctLoader, LoaderVersionEntry, LoaderVersionType } from '../creation-flow-context'
+import type {
+	AdjunctLoader,
+	GameDirOverrideMode,
+	LoaderVersionEntry,
+	LoaderVersionType,
+} from '../creation-flow-context'
 import { injectCreationFlowContext } from '../creation-flow-context'
 import {
 	createLatestRequestGuard,
@@ -237,6 +266,26 @@ const messages = defineMessages({
 	removeIcon: {
 		id: 'creation-flow.modal.custom-setup.icon.remove',
 		defaultMessage: 'Remove icon',
+	},
+	gameDirLabel: {
+		id: 'creation-flow.modal.custom-setup.game-dir.label',
+		defaultMessage: 'Game directory',
+	},
+	gameDirIsolated: {
+		id: 'creation-flow.modal.custom-setup.game-dir.isolated',
+		defaultMessage: 'Custom · Version isolated (.minecraft/versions/instance name/)',
+	},
+	gameDirNotIsolated: {
+		id: 'creation-flow.modal.custom-setup.game-dir.not-isolated',
+		defaultMessage: 'Custom · Version shared (.minecraft/)',
+	},
+	gameDirManaged: {
+		id: 'creation-flow.modal.custom-setup.game-dir.managed',
+		defaultMessage: 'Axolotl directory',
+	},
+	gameDirChooseFolder: {
+		id: 'creation-flow.modal.custom-setup.game-dir.choose-folder',
+		defaultMessage: 'Choose folder',
 	},
 	nameLabel: {
 		id: 'creation-flow.modal.custom-setup.name.label',
@@ -374,6 +423,10 @@ const messages = defineMessages({
 		id: 'creation-flow.modal.custom-setup.game-version-type.alpha',
 		defaultMessage: 'April Fools',
 	},
+	ancientVersionType: {
+		id: 'creation-flow.modal.custom-setup.game-version-type.ancient',
+		defaultMessage: 'Ancient',
+	},
 })
 
 function formatLoaderVersionTypeLabel(type: LoaderVersionType): string {
@@ -390,7 +443,7 @@ function formatLoaderVersionTypeLabel(type: LoaderVersionType): string {
 // Version type selection
 const selectedVersionType = ref<GameVersionType>('release')
 
-const versionTypeItems: GameVersionType[] = ['release', 'snapshot', 'alpha']
+const versionTypeItems: GameVersionType[] = ['release', 'snapshot', 'alpha', 'ancient']
 
 function formatVersionTypeLabel(type: GameVersionType): string {
 	switch (type) {
@@ -400,6 +453,8 @@ function formatVersionTypeLabel(type: GameVersionType): string {
 			return formatMessage(messages.snapshotVersionType)
 		case 'alpha':
 			return formatMessage(messages.alphaVersionType)
+		case 'ancient':
+			return formatMessage(messages.ancientVersionType)
 	}
 }
 
@@ -681,6 +736,39 @@ function removeIcon() {
 	ctx.instanceIcon.value = null
 	ctx.instanceIconUrl.value = null
 	ctx.instanceIconPath.value = null
+}
+
+const gameDirMode = computed<GameDirOverrideMode>({
+	get: () => ctx.gameDirOverrideMode.value,
+	set: (mode) => setGameDirMode(mode),
+})
+
+function setGameDirMode(mode: GameDirOverrideMode) {
+	ctx.gameDirOverrideMode.value = mode
+	// Switching back to the managed (builtin) folder drops any previously
+	// chosen external root so it is not silently retained.
+	if (mode === 'builtin') {
+		ctx.gameDirOverride.value = null
+	}
+}
+
+const gameDirModeItems: GameDirOverrideMode[] = ['builtin', 'isolated', 'not-isolated']
+
+function gameDirModeLabel(mode: GameDirOverrideMode) {
+	switch (mode) {
+		case 'isolated':
+			return messages.gameDirIsolated
+		case 'not-isolated':
+			return messages.gameDirNotIsolated
+		default:
+			return messages.gameDirManaged
+	}
+}
+
+async function pickGameDir() {
+	const picked = await filePicker.pickFolder()
+	if (!picked?.path) return
+	ctx.gameDirOverride.value = picked.path
 }
 
 const loaderVersionsLoading = ref(false)

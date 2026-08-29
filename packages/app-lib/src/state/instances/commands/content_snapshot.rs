@@ -167,12 +167,15 @@ pub(crate) async fn get_content_snapshot(
     let provider_rows = sqlx::query(
         "SELECT ref.content_entry_id, ref.provider,
                 ref.provider_project_id, ref.provider_release_id,
+				ref.provider_file_id,
                 ref.is_origin
          FROM instance_content_provider_refs ref
          INNER JOIN instance_content_entries entry
             ON entry.id = ref.content_entry_id
          WHERE entry.content_set_id = ?
-         ORDER BY ref.content_entry_id, ref.provider",
+         ORDER BY ref.content_entry_id, ref.is_origin DESC, ref.provider,
+            ref.provider_project_id, ref.provider_release_id IS NULL,
+            ref.provider_release_id",
     )
     .bind(&content_set.id)
     .fetch_all(&state.pool)
@@ -184,10 +187,13 @@ pub(crate) async fn get_content_snapshot(
             row.try_get::<String, _>("provider_project_id")?;
         let provider_release_id =
             row.try_get::<Option<String>, _>("provider_release_id")?;
+        let provider_file_id =
+            row.try_get::<Option<String>, _>("provider_file_id")?;
         let reference = ContentProviderRef::from_database(
             &provider,
             &provider_project_id,
             provider_release_id.as_deref(),
+            provider_file_id.as_deref(),
         )?;
         refs_by_entry
             .entry(entry_id.clone())
@@ -471,6 +477,16 @@ pub(crate) async fn get_content_snapshot(
                 if let Some(content) =
                     enriched.get(&item.expected_relative_path)
                 {
+                    if refresh_remote
+                        && item.member_id.is_none()
+                        && let Some(reference) = primary_persistent_ref(content)
+                    {
+                        item.provider = Some(reference.provider());
+                        item.provider_project_id =
+                            Some(reference.database_project_id());
+                        item.provider_release_id =
+                            reference.database_release_id();
+                    }
                     item.content = Some(content.clone());
                     item.capabilities.can_update = content.update.is_some()
                         && item.materialization_state
@@ -1516,28 +1532,19 @@ fn snapshot_item(
     expected_relative_path: String,
     content: Option<ContentItem>,
 ) -> InstanceContentSnapshotItem {
-    let provider = member.and_then(|member| member.provider).or_else(|| {
-        content.as_ref().and_then(|content| content.origin_provider)
-    });
+    let persistent_ref = content.as_ref().and_then(primary_persistent_ref);
+    let provider = member
+        .and_then(|member| member.provider)
+        .or_else(|| persistent_ref.map(ContentProviderRef::provider));
     let provider_project_id = member
         .and_then(|member| member.provider_project_id.clone())
         .or_else(|| {
-            content.as_ref().and_then(|content| {
-                content
-                    .provider_refs
-                    .first()
-                    .map(ContentProviderRef::database_project_id)
-            })
+            persistent_ref.map(ContentProviderRef::database_project_id)
         });
     let provider_release_id = member
         .and_then(|member| member.provider_release_id.clone())
         .or_else(|| {
-            content.as_ref().and_then(|content| {
-                content
-                    .provider_refs
-                    .first()
-                    .and_then(ContentProviderRef::database_release_id)
-            })
+            persistent_ref.and_then(ContentProviderRef::database_release_id)
         });
     let stored_materialization_state = member
         .map_or(PackMemberMaterializationState::Present, |member| {
@@ -1581,6 +1588,20 @@ fn snapshot_item(
         content,
         dependency: None,
     }
+}
+
+fn primary_persistent_ref(
+    content: &ContentItem,
+) -> Option<&ContentProviderRef> {
+    content
+        .origin_provider
+        .and_then(|origin| {
+            content
+                .provider_refs
+                .iter()
+                .find(|reference| reference.provider() == origin)
+        })
+        .or_else(|| content.provider_refs.first())
 }
 
 fn snapshot_materialization_state(
@@ -1669,6 +1690,32 @@ fn pack_provider(link: &InstanceLink) -> Option<ContentProvider> {
 mod tests {
     use super::*;
 
+    fn content_with_refs(
+        provider_refs: Vec<ContentProviderRef>,
+        origin_provider: Option<ContentProvider>,
+    ) -> ContentItem {
+        ContentItem {
+            file_name: "example.jar".to_string(),
+            file_path: "mods/example.jar".to_string(),
+            id: "hash".to_string(),
+            size: 1,
+            enabled: true,
+            project_type: crate::state::ProjectType::Mod,
+            project: None,
+            version: None,
+            owner: None,
+            update: None,
+            date_added: None,
+            provider_refs,
+            origin_provider,
+            rollback: None,
+            environment: None,
+            source_kind: Some(ContentSourceKind::Local),
+            external: false,
+            loader: None,
+        }
+    }
+
     #[test]
     fn present_content_does_not_keep_a_stale_missing_state() {
         assert_eq!(
@@ -1685,5 +1732,103 @@ mod tests {
             ),
             PackMemberMaterializationState::Missing,
         );
+    }
+
+    #[test]
+    fn verified_non_origin_ref_supplies_snapshot_identity() {
+        let item = snapshot_item(
+            Some("file".to_string()),
+            Some("entry".to_string()),
+            None,
+            ContentOwnershipKind::UserAdded,
+            crate::state::ProjectType::Mod,
+            "mods/example.jar".to_string(),
+            Some(content_with_refs(
+                vec![
+                    ContentProviderRef::from_database(
+                        "modrinth",
+                        "5LTBDHXu",
+                        Some("eKsF3BdO"),
+                        None,
+                    )
+                    .unwrap(),
+                ],
+                None,
+            )),
+        );
+
+        assert_eq!(item.provider, Some(ContentProvider::Modrinth));
+        assert_eq!(item.provider_project_id.as_deref(), Some("5LTBDHXu"));
+        assert_eq!(item.provider_release_id.as_deref(), Some("eKsF3BdO"));
+    }
+
+    #[test]
+    fn origin_ref_remains_primary_when_verified_alias_is_added() {
+        let item = snapshot_item(
+            Some("file".to_string()),
+            Some("entry".to_string()),
+            None,
+            ContentOwnershipKind::UserAdded,
+            crate::state::ProjectType::Mod,
+            "mods/example.jar".to_string(),
+            Some(content_with_refs(
+                vec![
+                    ContentProviderRef::from_database(
+                        "curseforge",
+                        "123",
+                        Some("456"),
+                        None,
+                    )
+                    .unwrap(),
+                    ContentProviderRef::from_database(
+                        "modrinth",
+                        "5LTBDHXu",
+                        Some("eKsF3BdO"),
+                        None,
+                    )
+                    .unwrap(),
+                ],
+                Some(ContentProvider::CurseForge),
+            )),
+        );
+
+        assert_eq!(item.provider, Some(ContentProvider::CurseForge));
+        assert_eq!(item.provider_project_id.as_deref(), Some("123"));
+        assert_eq!(item.provider_release_id.as_deref(), Some("456"));
+    }
+
+    #[test]
+    fn upgraded_origin_release_wins_over_stale_same_provider_ref() {
+        let item = snapshot_item(
+            Some("file".to_string()),
+            Some("entry".to_string()),
+            None,
+            ContentOwnershipKind::UserAdded,
+            crate::state::ProjectType::Mod,
+            "mods/[sodium] sodium-old-name.jar".to_string(),
+            Some(content_with_refs(
+                vec![
+                    ContentProviderRef::from_database(
+                        "modrinth",
+                        "AANobbMI",
+                        Some("vf7UgZpC"),
+                        None,
+                    )
+                    .unwrap(),
+                    ContentProviderRef::from_database(
+                        "modrinth",
+                        "AANobbMI",
+                        Some("7pwil2dy"),
+                        None,
+                    )
+                    .unwrap(),
+                ],
+                Some(ContentProvider::Modrinth),
+            )),
+        );
+
+        assert_eq!(item.provider, Some(ContentProvider::Modrinth));
+        assert_eq!(item.provider_project_id.as_deref(), Some("AANobbMI"));
+        assert_eq!(item.provider_release_id.as_deref(), Some("vf7UgZpC"));
     }
 }

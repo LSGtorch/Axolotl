@@ -88,6 +88,9 @@ pub(crate) async fn create_direct_link_instance(
         linked_version_json_path: Some(
             resolved.version_json.to_string_lossy().to_string(),
         ),
+        // Directly associated instances resolve their game directory from the
+        // link metadata; the managed `game_dir_override` never applies.
+        game_dir_override: None,
         created: now,
         modified: now,
         last_played: None,

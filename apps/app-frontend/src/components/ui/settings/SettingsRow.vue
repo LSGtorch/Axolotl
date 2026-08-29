@@ -16,16 +16,16 @@ withDefaults(
 		class="settings-row"
 		:class="{ 'settings-row-compact': compact, 'settings-row-stacked': stacked }"
 	>
-		<div class="settings-row-copy">
-			<div v-if="$slots.label" class="settings-row-label">
+		<div class="flex min-w-0 flex-col gap-1">
+			<div v-if="$slots.label" class="text-contrast text-base font-semibold">
 				<slot name="label" />
 			</div>
-			<div v-if="$slots.description" class="settings-row-description">
+			<div v-if="$slots.description" class="text-secondary text-sm leading-[1.45]">
 				<slot name="description" />
 			</div>
 			<slot name="copy" />
 		</div>
-		<div v-if="$slots.control" class="settings-row-control">
+		<div v-if="$slots.control" class="settings-row-control flex min-w-0 justify-end">
 			<slot name="control" />
 		</div>
 	</div>
@@ -55,31 +55,6 @@ withDefaults(
 	grid-template-columns: minmax(0, 1fr);
 	align-items: start;
 	gap: var(--gap-md);
-}
-
-.settings-row-copy {
-	display: flex;
-	min-width: 0;
-	flex-direction: column;
-	gap: var(--gap-xs);
-}
-
-.settings-row-label {
-	color: var(--color-contrast);
-	font-size: 1rem;
-	font-weight: 600;
-}
-
-.settings-row-description {
-	color: var(--color-secondary);
-	font-size: 0.875rem;
-	line-height: 1.45;
-}
-
-.settings-row-control {
-	display: flex;
-	min-width: 0;
-	justify-content: flex-end;
 }
 
 .settings-row-stacked .settings-row-control {

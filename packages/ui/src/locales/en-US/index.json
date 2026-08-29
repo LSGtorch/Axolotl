@@ -615,7 +615,7 @@
     "defaultMessage": "No logs yet"
   },
   "console.empty.server-description": {
-    "defaultMessage": "Click the green start button to start the server!"
+    "defaultMessage": "Click the start button to start the server!"
   },
   "console.empty.server-title": {
     "defaultMessage": "Welcome to your Modrinth server!"
@@ -1800,7 +1800,7 @@
     "defaultMessage": "Unsaved changes"
   },
   "files.validation.name-invalid-directory": {
-    "defaultMessage": "Name must contain only alphanumeric characters, dashes, underscores, or spaces."
+    "defaultMessage": "Name must contain only alphanumeric characters, dashes, underscores, dots, or spaces."
   },
   "files.validation.name-invalid-file": {
     "defaultMessage": "Name must contain only alphanumeric characters, dashes, underscores, dots, or spaces."
@@ -4513,5 +4513,131 @@
   },
   "drop.symlink_method.import_now": {
     "defaultMessage": "Import"
+  },
+  "console.command.placeholder": {
+    "defaultMessage": "Send a command"
+  },
+  "console.crash.finding.connector-incompatible-fabric-mods.action": {
+    "defaultMessage": "Remove or replace the Fabric Mods named in the Connector error with Forge-compatible alternatives."
+  },
+  "console.crash.finding.connector-incompatible-fabric-mods.title": {
+    "defaultMessage": "Sinytra Connector found incompatible Fabric Mods"
+  },
+  "console.crash.finding.disk-space.action": {
+    "defaultMessage": "Free space on the drive containing the instance, then retry the launch or installation."
+  },
+  "console.crash.finding.disk-space.title": {
+    "defaultMessage": "The disk ran out of free space"
+  },
+  "console.crash.finding.file-in-use.action": {
+    "defaultMessage": "Close the program named in the evidence, including other launchers, backup tools, or antivirus scans, then retry."
+  },
+  "console.crash.finding.file-in-use.title": {
+    "defaultMessage": "Another process is using a required file"
+  },
+  "console.crash.finding.known-signature.action": {
+    "defaultMessage": "Review the evidence and the related Minecraft, loader, Java, graphics, or Mod versions before changing the instance."
+  },
+  "console.crash.finding.known-signature.title": {
+    "defaultMessage": "A known crash signature was detected"
+  },
+  "console.crash.finding.missing-embeddium.action": {
+    "defaultMessage": "Install the Embeddium version required by Oculus for this Minecraft and Forge version."
+  },
+  "console.crash.finding.missing-embeddium.title": {
+    "defaultMessage": "Oculus requires Embeddium"
+  },
+  "console.crash.finding.missing-indium.action": {
+    "defaultMessage": "Install the Indium version compatible with the installed Fabric Loader and Sodium version."
+  },
+  "console.crash.finding.missing-indium.title": {
+    "defaultMessage": "A Mod requires Indium"
+  },
+  "console.crash.mod-change": {
+    "defaultMessage": "{kind}: {filename}"
+  },
+  "console.crash.mod-change.added": {
+    "defaultMessage": "Added"
+  },
+  "console.crash.mod-change.modified": {
+    "defaultMessage": "Modified"
+  },
+  "console.crash.mod-change.removed": {
+    "defaultMessage": "Removed"
+  },
+  "console.crash.mod-changes.summary": {
+    "defaultMessage": "{added} added, {removed} removed, {modified} modified"
+  },
+  "console.crash.mod-changes.title": {
+    "defaultMessage": "Mod files changed since the last successful launch"
+  },
+  "console.crash.windows-events.title": {
+    "defaultMessage": "Related Windows application events"
+  },
+  "content.page-layout.view-dependencies": {
+    "defaultMessage": "View dependencies"
+  },
+  "creation-flow.modal.custom-setup.game-dir.choose-folder": {
+    "defaultMessage": "Choose folder"
+  },
+  "creation-flow.modal.custom-setup.game-dir.isolated": {
+    "defaultMessage": "Custom · Version isolated (.minecraft/versions/instance name/)"
+  },
+  "creation-flow.modal.custom-setup.game-dir.label": {
+    "defaultMessage": "Game directory"
+  },
+  "creation-flow.modal.custom-setup.game-dir.managed": {
+    "defaultMessage": "Axolotl directory"
+  },
+  "creation-flow.modal.custom-setup.game-dir.not-isolated": {
+    "defaultMessage": "Custom · Version shared (.minecraft/)"
+  },
+  "creation-flow.modal.custom-setup.game-version-type.ancient": {
+    "defaultMessage": "Ancient"
+  },
+  "drop.symlink_method.game-dir.isolated": {
+    "defaultMessage": "Version isolated"
+  },
+  "drop.symlink_method.game-dir.label": {
+    "defaultMessage": "Game directory"
+  },
+  "drop.symlink_method.game-dir.not-isolated": {
+    "defaultMessage": "Version shared (.minecraft/)"
+  },
+  "files.editor.editor-unavailable-placeholder": {
+    "defaultMessage": "Code editor unavailable"
+  },
+  "search.filter.dependency_type.embedded": {
+    "defaultMessage": "Embedded"
+  },
+  "search.filter.dependency_type.optional": {
+    "defaultMessage": "Optional"
+  },
+  "search.filter.dependency_type.required": {
+    "defaultMessage": "Required"
+  },
+  "search.filter.dependent_project": {
+    "defaultMessage": "Depends on: {project}"
+  },
+  "search.filter.dependent_project.search_placeholder": {
+    "defaultMessage": "Search for a project..."
+  },
+  "search.filter.excluded_projects": {
+    "defaultMessage": "Excludes: {projects}"
+  },
+  "search.filter.included_content.remove_project.tooltip": {
+    "defaultMessage": "Remove project"
+  },
+  "search.filter.included_content.search_placeholder": {
+    "defaultMessage": "Search content..."
+  },
+  "search.filter.included_projects": {
+    "defaultMessage": "Includes: {projects}"
+  },
+  "search.filter_type.compatible_dependency_project_ids": {
+    "defaultMessage": "Depends on"
+  },
+  "search.filter_type.included_content": {
+    "defaultMessage": "Included content"
   }
 }

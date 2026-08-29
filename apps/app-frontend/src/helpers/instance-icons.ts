@@ -400,6 +400,7 @@ const loaderIconIds: Record<string, string> = {
 	cleanroom: 'cleanroom',
 	lite_loader: 'liteloader',
 	legacy_fabric: 'fabric',
+	babric: 'fabric',
 }
 
 export interface DisplayInstanceIcon {

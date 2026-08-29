@@ -450,6 +450,29 @@ fn decode_basic_entities(value: &str) -> String {
         .replace("&amp;", "&")
 }
 
+/// Debug-log preview that never panics on multi-byte UTF-8 text (e.g. Chinese
+/// translations returned by DeepL): a byte-offset slice like `&text[..50]`
+/// panics when byte 50 lands inside a multi-byte character.
+fn truncate_preview(value: &str, max_chars: usize) -> String {
+    value.chars().take(max_chars).collect()
+}
+
+/// Byte-bounded log prefix for sensitive credentials. `max_bytes` is a strict
+/// upper bound: for ASCII credentials (all real DeepL keys) the prefix is
+/// exactly `max_bytes` bytes, matching the historical behaviour; for multi-byte
+/// credentials it can only be shorter (never longer) because the budget is
+/// walked back to a char boundary instead of splitting a character. This is
+/// strictly more conservative than the byte slice it replaces and never panics.
+fn credential_prefix(value: &str, max_bytes: usize) -> String {
+    let mut end = max_bytes.min(value.len());
+    // Always stop on a char boundary, and clamp end to > 0 so usize cannot
+    // underflow: 0 is always a char boundary, but we do not rely on that fact.
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value[..end].to_string()
+}
+
 fn provider_language(locale: &str, provider: TranslationProvider) -> String {
     let normalized = locale.replace('_', "-");
     match provider {
@@ -471,19 +494,28 @@ fn provider_language(locale: &str, provider: TranslationProvider) -> String {
     }
 }
 
-/// DeepL 的 source_lang 只接受基础语言码，ZH-HANT/ZH-HANS 仅可用于
-/// target_lang；显式指定繁体源时必须回退到 ZH。
+/// DeepL 的 `source_lang` 只接受基础语言码：地区变体（EN-US/EN-GB、PT-BR/PT-PT、
+/// ZH-HANT/ZH-HANS）仅可用于 `target_lang`，官方 API 把变体当作源语言时会返回
+/// HTTP 400（"Value for 'source_lang' not supported."）。
+///
+/// 因此这里必须独立于 `provider_language`（target 方向）直接维护映射，而不是把
+/// locale 先转成 target 代码再"还原"成 source 代码：新增 target 变体时 source 侧
+/// 不会自动覆盖，同样的错误会再次出现。
 fn provider_source_language(
     locale: &str,
     provider: TranslationProvider,
 ) -> String {
-    if provider == TranslationProvider::DeepL {
-        match provider_language(locale, provider).as_str() {
-            "ZH-HANT" | "ZH-HANS" => "ZH".to_string(),
-            mapped => mapped.to_string(),
-        }
-    } else {
-        provider_language(locale, provider)
+    if provider != TranslationProvider::DeepL {
+        return provider_language(locale, provider);
+    }
+    let normalized = locale.replace('_', "-");
+    match normalized.as_str() {
+        "auto" => "auto".to_string(),
+        "zh" | "zh-CN" | "zh-TW" | "zh-HANS" | "zh-HANT" => "ZH".to_string(),
+        "en" | "en-US" | "en-GB" => "EN".to_string(),
+        "pt" | "pt-BR" | "pt-PT" => "PT".to_string(),
+        "nb" | "nb-NO" | "no" | "no-NO" => "NB".to_string(),
+        value => value.split('-').next().unwrap_or(value).to_uppercase(),
     }
 }
 
@@ -578,9 +610,10 @@ async fn deepl_translate(
         source = %source_language,
         target = %target_language,
         api_key_len = %api_key.len(),
-        api_key_prefix = %if api_key.len() > 4 { &api_key[..4] } else { "***" },
+        api_key_prefix =
+            %if api_key.len() > 4 { credential_prefix(api_key, 4) } else { "***".to_string() },
         text_len = %segment.text.len(),
-        text_preview = %if segment.text.len() > 50 { &segment.text[..50] } else { &segment.text },
+        text_preview = %truncate_preview(&segment.text, 50),
         "Preparing DeepL translation request"
     );
 
@@ -746,7 +779,7 @@ async fn deepl_translate(
 
     tracing::info!(
         translated_text_len = %translated.len(),
-        translated_preview = %if translated.len() > 50 { &translated[..50] } else { &translated },
+        translated_preview = %truncate_preview(translated, 50),
         "DeepL translation successful"
     );
 
@@ -939,14 +972,10 @@ async fn translate_uncached(
     settings: &StoredTranslationSettings,
     request: &TranslationRequest,
 ) -> crate::Result<Vec<TranslatedSegment>> {
-    let source = if request.source_language == "auto" {
-        "auto".to_string()
-    } else {
-        provider_source_language(
-            &request.source_language,
-            settings.settings.provider,
-        )
-    };
+    let source = provider_source_language(
+        &request.source_language,
+        settings.settings.provider,
+    );
     let target =
         provider_language(&request.target_language, settings.settings.provider);
     match settings.settings.provider {
@@ -1311,6 +1340,57 @@ mod tests {
     }
 
     #[test]
+    fn truncate_preview_never_panics_on_multibyte_text() {
+        // U+6E2C is 3 bytes in UTF-8, so byte 50 sits inside a character.
+        let text = "\u{6e2c}".repeat(60);
+        assert!(text.len() > 50);
+        assert!(!text.is_char_boundary(50));
+        let preview = truncate_preview(&text, 50);
+        assert_eq!(preview.chars().count(), 50);
+        assert_eq!(preview, text.chars().take(50).collect::<String>());
+        assert_eq!(truncate_preview("hello", 50), "hello");
+    }
+
+    #[test]
+    fn credential_prefix_stays_within_byte_budget() {
+        // ASCII keys keep the original byte-based behaviour.
+        assert_eq!(credential_prefix("abc12345", 4), "abc1");
+        // Byte budget never grows: a multi-byte key logs at most 4 bytes and
+        // always ends at a char boundary (may be shorter, never panics).
+        let key = "\u{6e2c}\u{6e2c}\u{6e2c}\u{6e2c}\u{6e2c}";
+        let prefix = credential_prefix(key, 4);
+        assert!(prefix.len() <= 4);
+        assert!(key.is_char_boundary(prefix.len()));
+        assert_eq!(credential_prefix("ab", 4), "ab");
+    }
+
+    #[test]
+    fn credential_prefix_never_exceeds_byte_budget() {
+        // Even with an adversarial byte budget, the prefix never leaks more
+        // than the requested budget, always ends on a char boundary, and never
+        // panics - including budget 0 on multi-byte input.
+        let samples = [
+            "",
+            "abcd1234",
+            "\u{6e2c}",
+            "\u{6e2c}\u{6e2c}\u{6e2c}\u{6e2c}",
+            "a\u{6e2c}b\u{6e2c}",
+        ];
+        for text in samples {
+            // budget 0 must return empty without panicking (regression for the
+            // former end -= 1 underflow exposure).
+            let empty = credential_prefix(text, 0);
+            assert_eq!(empty, "");
+            assert!(text.is_char_boundary(empty.len()));
+            for budget in 1..=8 {
+                let prefix = credential_prefix(text, budget);
+                assert!(prefix.len() <= budget);
+                assert!(text.is_char_boundary(prefix.len()));
+            }
+        }
+    }
+
+    #[test]
     fn parses_provider_responses() {
         assert_eq!(
             parse_google_response(
@@ -1400,7 +1480,13 @@ mod tests {
     }
 
     #[test]
-    fn deepl_source_language_uses_base_chinese_code() {
+    fn deepl_source_language_uses_base_codes() {
+        // "auto" lets DeepL detect the source language itself.
+        assert_eq!(
+            provider_source_language("auto", TranslationProvider::DeepL),
+            "auto"
+        );
+        // Chinese variants are only valid as target_lang.
         assert_eq!(
             provider_source_language("zh-TW", TranslationProvider::DeepL),
             "ZH"
@@ -1409,9 +1495,40 @@ mod tests {
             provider_source_language("zh-CN", TranslationProvider::DeepL),
             "ZH"
         );
+        // English and Portuguese regional variants are rejected by source_lang.
+        assert_eq!(
+            provider_source_language("en", TranslationProvider::DeepL),
+            "EN"
+        );
+        assert_eq!(
+            provider_source_language("en-US", TranslationProvider::DeepL),
+            "EN"
+        );
+        assert_eq!(
+            provider_source_language("en-GB", TranslationProvider::DeepL),
+            "EN"
+        );
+        assert_eq!(
+            provider_source_language("pt-BR", TranslationProvider::DeepL),
+            "PT"
+        );
+        assert_eq!(
+            provider_source_language("pt-PT", TranslationProvider::DeepL),
+            "PT"
+        );
+        // Other locales keep their base code, including Norwegian (NB).
         assert_eq!(
             provider_source_language("ja-JP", TranslationProvider::DeepL),
             "JA"
+        );
+        assert_eq!(
+            provider_source_language("no-NO", TranslationProvider::DeepL),
+            "NB"
+        );
+        // Non-DeepL providers keep their existing passthrough behaviour.
+        assert_eq!(
+            provider_source_language("en-US", TranslationProvider::Google),
+            "en-US"
         );
     }
 

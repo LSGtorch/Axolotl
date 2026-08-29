@@ -396,7 +396,7 @@ async function fetchMirrorDescription(hit: TranslatableHit): Promise<string | nu
  *
  * @param hits      Search result hits that carry at least provider + ID and
  *                  description fields.
- * @param locale    Target locale — only `zh-CN` triggers translation.
+ * @param locale    Fallback target locale when no target language is configured.
  * @param force     - When true, skip the `auto_translate` setting check;
  *                  always translate.
  * @param useServer - If true, sends the description via the Rust backend;
@@ -409,11 +409,15 @@ export async function translateSearchDescriptions<T extends TranslatableHit>(
 	useServer = false,
 ): Promise<T[]> {
 	if (hits.length === 0) return hits
-	if (!_force) {
-		const settings = await getTranslationSettings()
-		if (!settings.auto_translate) return hits
+	let targetLanguage = locale
+	const settings = await getTranslationSettings()
+	if (!_force && !settings.auto_translate) return hits
+	targetLanguage = settings.target_language?.trim() || locale
+	if (!targetLanguage || targetLanguage === 'en-US') return hits
+	// mcimirror 镜像只缓存中文翻译,非中文目标改走服务端路径
+	if (!useServer && targetLanguage !== 'zh-CN' && targetLanguage !== 'zh') {
+		useServer = true
 	}
-	if (locale !== 'zh-CN') return hits
 
 	if (useServer) {
 		const segments: TranslationSegment[] = hits.map((hit) => ({
@@ -422,8 +426,8 @@ export async function translateSearchDescriptions<T extends TranslatableHit>(
 			format: 'html',
 		}))
 		const request: TranslationRequest = {
-			target_language: 'zh-CN',
-			source_language: 'en',
+			target_language: targetLanguage,
+			source_language: 'auto',
 			segments,
 			context: {
 				title: hits[0]?.title ?? '',
@@ -435,9 +439,8 @@ export async function translateSearchDescriptions<T extends TranslatableHit>(
 		const translated: TranslationResponse['segments'] = []
 		const results = await Promise.allSettled(
 			createTranslationBatches(request.segments).map((batch) =>
-				translateInBatches(
-					{ ...request, segments: batch },
-					(batchResponse) => translated.push(...batchResponse.segments),
+				translateInBatches({ ...request, segments: batch }, (batchResponse) =>
+					translated.push(...batchResponse.segments),
 				),
 			),
 		)

@@ -651,7 +651,9 @@ defineExpose({ save, cancel, isDirty })
 							>
 								<component :is="section.icon" class="size-4" />
 							</span>
-							<span class="min-w-0 flex-1 truncate text-sm font-semibold text-primary group-hover:text-contrast">
+							<span
+								class="min-w-0 flex-1 truncate text-sm font-semibold text-primary group-hover:text-contrast"
+							>
 								{{ formatMessage(section.title) }}
 							</span>
 						</span>
@@ -723,7 +725,10 @@ defineExpose({ save, cancel, isDirty })
 			</div>
 		</template>
 
-		<div v-else class="h-[clamp(18rem,60vh,32rem)] overflow-hidden rounded-lg border border-solid border-surface-4">
+		<div
+			v-else
+			class="h-[clamp(18rem,60vh,32rem)] overflow-hidden rounded-lg border border-solid border-surface-4"
+		>
 			<StudioEditor
 				file-path="server.properties"
 				language="properties"

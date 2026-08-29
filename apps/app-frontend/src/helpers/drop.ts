@@ -107,13 +107,15 @@ export async function scanLauncherInstances(
 	launcherType: string,
 	basePath: string,
 ): Promise<ScanResult[]> {
-	const instances: { name: string; path: string; compatibleMode?: boolean; versionPath?: string }[] = await invoke(
-		'plugin:drop|drop_scan_launcher_instances',
-		{
-			launcherType,
-			basePath,
-		},
-	)
+	const instances: {
+		name: string
+		path: string
+		compatibleMode?: boolean
+		versionPath?: string
+	}[] = await invoke('plugin:drop|drop_scan_launcher_instances', {
+		launcherType,
+		basePath,
+	})
 
 	return [
 		{

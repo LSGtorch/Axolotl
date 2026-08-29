@@ -683,6 +683,7 @@ mod tests {
                 target: ResolutionPreferences::default(),
                 existing_project_ids: Vec::new(),
                 excluded_project_ids: Vec::new(),
+                force_project_ids: Vec::new(),
             },
         )
         .await
@@ -777,6 +778,7 @@ mod tests {
                 },
                 existing_project_ids: Vec::new(),
                 excluded_project_ids: Vec::new(),
+                force_project_ids: Vec::new(),
             },
         )
         .await

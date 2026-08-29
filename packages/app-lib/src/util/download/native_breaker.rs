@@ -7,7 +7,8 @@ use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
 const FAILURE_THRESHOLD: u32 = 3;
-const DEFAULT_COOLDOWN: Duration = Duration::from_secs(30);
+const MAX_FAILURE_COOLDOWN: Duration = Duration::from_secs(1);
+const DEFAULT_COOLDOWN: Duration = MAX_FAILURE_COOLDOWN;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct BreakerKey {
@@ -85,7 +86,8 @@ pub(crate) fn record_failure_with_cooldown(
     let state = breakers.entry(key).or_default();
     state.consecutive_failures = state.consecutive_failures.saturating_add(1);
     if state.consecutive_failures >= FAILURE_THRESHOLD {
-        state.open_until = Some(Instant::now() + cooldown);
+        state.open_until =
+            Some(Instant::now() + cooldown.min(MAX_FAILURE_COOLDOWN));
     }
 }
 
@@ -94,9 +96,9 @@ mod tests {
     use super::*;
     use crate::util::fetch::DownloadRouteSource;
 
-    fn route() -> DownloadRoute {
+    fn route(host: &str) -> DownloadRoute {
         DownloadRoute {
-            url: "https://breaker.example/file".to_string(),
+            url: format!("https://{host}/file"),
             source: DownloadRouteSource::Official,
             is_mirror: false,
             allow_sensitive_headers: true,
@@ -107,12 +109,22 @@ mod tests {
 
     #[test]
     fn unique_route_is_never_skipped() {
-        let route = route();
+        let route = route("unique-breaker.example");
         for _ in 0..FAILURE_THRESHOLD {
             record_failure(&route);
         }
         assert!(should_skip(&route, true));
         assert!(!should_skip(&route, false));
+        record_success(&route);
+    }
+
+    #[test]
+    fn externally_requested_cooldown_is_limited_to_one_second() {
+        let route = route("clamped-breaker.example");
+        for _ in 0..FAILURE_THRESHOLD {
+            record_failure_with_cooldown(&route, Duration::from_secs(60));
+        }
+        assert!(is_open(&route));
         record_success(&route);
     }
 }

@@ -1,4 +1,4 @@
-import { GC_STRATEGY_DEFINITIONS } from './strategies'
+import { GC_STRATEGY_DEFINITIONS } from './strategies.ts'
 import type { GcContext, GcResolution, ResolvedGcStrategyId } from './types'
 
 export function resolveAutoGcArgs(context: GcContext): string {
@@ -98,4 +98,4 @@ export function getResolvedStrategyName(strategyId: ResolvedGcStrategyId): strin
 
 // Re-exported from strategies so callers can keep importing from the
 // auto-selector module while the chain stays testable via `node --test`.
-export { buildGcCandidateChain } from './strategies'
+export { buildGcCandidateChain } from './strategies.ts'

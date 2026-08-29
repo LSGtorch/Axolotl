@@ -21,6 +21,8 @@ pub const CURRENT_CLEANROOM_FORMAT_VERSION: usize = 1;
 pub const CURRENT_LITELOADER_FORMAT_VERSION: usize = 2;
 /// Current Legacy Fabric manifest cache format.
 pub const CURRENT_LEGACY_FABRIC_FORMAT_VERSION: usize = 1;
+/// Current Babric manifest cache format.
+pub const CURRENT_BABRIC_FORMAT_VERSION: usize = 2;
 
 /// Metadata for locating and caching a loader manifest.
 #[derive(Debug, Clone)]
@@ -105,6 +107,7 @@ fn current_loader_manifest_format_version(loader: &str) -> usize {
         "cleanroom" => CURRENT_CLEANROOM_FORMAT_VERSION,
         "lite_loader" => CURRENT_LITELOADER_FORMAT_VERSION,
         "legacy_fabric" => CURRENT_LEGACY_FABRIC_FORMAT_VERSION,
+        "babric" => CURRENT_BABRIC_FORMAT_VERSION,
         _ => 0,
     }
 }
@@ -609,6 +612,8 @@ pub enum LoaderProfileSource {
     Installer,
     /// A profile synthesized from the LiteLoader versions manifest.
     LiteLoader,
+    /// A profile synthesized from Babric's Glass Maven metadata and legacy profile.
+    Babric,
 }
 
 fn is_json_profile_source(source: &LoaderProfileSource) -> bool {
@@ -645,6 +650,8 @@ mod tests {
         assert_eq!(loader_manifest_metadata("quilt").format_version, 2);
         assert_eq!(loader_manifest_metadata("forge").format_version, 3);
         assert_eq!(loader_manifest_metadata("neo").format_version, 1);
+        assert_eq!(loader_manifest_metadata("babric").format_version, 2);
+        assert_eq!(loader_manifest_metadata("babric").cache_key, "babric-v2");
         assert_eq!(
             loader_manifest_metadata("quilt").path,
             "quilt/v1/manifest.json"

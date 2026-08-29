@@ -201,7 +201,8 @@ export const onboardingMessages = defineMessages({
 	},
 	resourcesDescription: {
 		id: 'app.onboarding.resources.description',
-		defaultMessage: 'Choose how content downloads and installs, from download sources to safety checks.',
+		defaultMessage:
+			'Choose how content downloads and installs, from download sources to safety checks.',
 	},
 	privacyTitle: {
 		id: 'app.onboarding.privacy.title',

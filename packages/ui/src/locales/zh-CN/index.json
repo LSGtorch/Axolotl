@@ -570,10 +570,10 @@
     "defaultMessage": "崩溃报告怀疑一个或多个模组"
   },
   "console.crash.local-header": {
-    "defaultMessage": "{findings, plural, other {# 项本地诊断结果}}，来自 {sources, plural, other {# 个相关文件}}"
+    "defaultMessage": "{findings, plural, one {# 项本地诊断结果} other {# 项本地诊断结果}}，来自 {sources, plural, one {# 个相关文件} other {# 个相关文件}}"
   },
   "console.crash.problems-detected": {
-    "defaultMessage": "检测到 {count, plural, other {# 个问题}}"
+    "defaultMessage": "检测到 {count, plural, one {# 个问题} other {# 个问题}}"
   },
   "console.delete-modal.confirmation": {
     "defaultMessage": "删除后无法恢复此日志文件。确定要继续吗？"
@@ -4515,5 +4515,131 @@
   "app.settings.updates.miawa": "柠泽镜像",
   "drop.symlink_method.import_now": {
     "message": "直接导入"
+  },
+  "console.command.placeholder": {
+    "defaultMessage": "发送命令"
+  },
+  "console.crash.finding.connector-incompatible-fabric-mods.action": {
+    "defaultMessage": "移除或替换 Connector 错误中指出的 Fabric 模组，改用兼容 Forge 的替代版本。"
+  },
+  "console.crash.finding.connector-incompatible-fabric-mods.title": {
+    "defaultMessage": "Sinytra Connector 发现不兼容的 Fabric 模组"
+  },
+  "console.crash.finding.disk-space.action": {
+    "defaultMessage": "请释放实例所在磁盘的空间，然后重试启动。"
+  },
+  "console.crash.finding.disk-space.title": {
+    "defaultMessage": "磁盘空间不足"
+  },
+  "console.crash.finding.file-in-use.action": {
+    "defaultMessage": "关闭证据中指出的程序，包括其他启动器、备份工具或杀毒扫描，然后重试。"
+  },
+  "console.crash.finding.file-in-use.title": {
+    "defaultMessage": "另一个进程正在使用必需文件"
+  },
+  "console.crash.finding.known-signature.action": {
+    "defaultMessage": "在修改实例前查看证据以及相关的 Minecraft、加载器、Java、图形或模组版本。"
+  },
+  "console.crash.finding.known-signature.title": {
+    "defaultMessage": "检测到已知崩溃特征"
+  },
+  "console.crash.finding.missing-embeddium.action": {
+    "defaultMessage": "请安装 Oculus 针对此 Minecraft 和 Forge 版本所需的 Embeddium 版本。"
+  },
+  "console.crash.finding.missing-embeddium.title": {
+    "defaultMessage": "Oculus 需要 Embeddium"
+  },
+  "console.crash.finding.missing-indium.action": {
+    "defaultMessage": "请安装与已安装 Fabric Loader 和 Sodium 版本兼容的 Indium 版本。"
+  },
+  "console.crash.finding.missing-indium.title": {
+    "defaultMessage": "模组需要 Indium"
+  },
+  "console.crash.mod-change": {
+    "defaultMessage": "{kind}：{filename}"
+  },
+  "console.crash.mod-change.added": {
+    "defaultMessage": "新增"
+  },
+  "console.crash.mod-change.modified": {
+    "defaultMessage": "已修改"
+  },
+  "console.crash.mod-change.removed": {
+    "defaultMessage": "已移除"
+  },
+  "console.crash.mod-changes.summary": {
+    "defaultMessage": "新增 {added} 项，移除 {removed} 项，修改 {modified} 项"
+  },
+  "console.crash.mod-changes.title": {
+    "defaultMessage": "上次成功启动后模组文件发生了变化"
+  },
+  "console.crash.windows-events.title": {
+    "defaultMessage": "相关 Windows 应用程序事件"
+  },
+  "content.page-layout.view-dependencies": {
+    "defaultMessage": "查看依赖关系"
+  },
+  "creation-flow.modal.custom-setup.game-dir.choose-folder": {
+    "defaultMessage": "选择文件夹"
+  },
+  "creation-flow.modal.custom-setup.game-dir.isolated": {
+    "defaultMessage": "自定义 · 版本隔离 (.minecraft/versions/实例名/)"
+  },
+  "creation-flow.modal.custom-setup.game-dir.label": {
+    "defaultMessage": "游戏目录"
+  },
+  "creation-flow.modal.custom-setup.game-dir.managed": {
+    "defaultMessage": "Axolotl 目录"
+  },
+  "creation-flow.modal.custom-setup.game-dir.not-isolated": {
+    "defaultMessage": "自定义 · 版本共享 (.minecraft/)"
+  },
+  "creation-flow.modal.custom-setup.game-version-type.ancient": {
+    "defaultMessage": "远古版"
+  },
+  "files.editor.editor-unavailable-placeholder": {
+    "defaultMessage": "代码编辑器不可用"
+  },
+  "search.filter.dependency_type.embedded": {
+    "defaultMessage": "内置"
+  },
+  "search.filter.dependency_type.optional": {
+    "defaultMessage": "可选"
+  },
+  "search.filter.dependency_type.required": {
+    "defaultMessage": "必需"
+  },
+  "search.filter.dependent_project": {
+    "defaultMessage": "依赖于：{project}"
+  },
+  "search.filter.dependent_project.search_placeholder": {
+    "defaultMessage": "搜索项目……"
+  },
+  "search.filter.excluded_projects": {
+    "defaultMessage": "排除：{projects}"
+  },
+  "search.filter.included_content.remove_project.tooltip": {
+    "defaultMessage": "移除项目"
+  },
+  "search.filter.included_content.search_placeholder": {
+    "defaultMessage": "搜索内容……"
+  },
+  "search.filter.included_projects": {
+    "defaultMessage": "包含：{projects}"
+  },
+  "search.filter_type.compatible_dependency_project_ids": {
+    "defaultMessage": "依赖于"
+  },
+  "search.filter_type.included_content": {
+    "defaultMessage": "包含内容"
+  },
+  "drop.symlink_method.game-dir.isolated": {
+    "message": "版本隔离"
+  },
+  "drop.symlink_method.game-dir.label": {
+    "message": "游戏目录"
+  },
+  "drop.symlink_method.game-dir.not-isolated": {
+    "message": "版本共享（.minecraft/）"
   }
 }

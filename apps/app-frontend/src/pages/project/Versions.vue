@@ -30,6 +30,16 @@
 						<CheckIcon v-else />
 					</button>
 				</ButtonStyled>
+				<!-- 开服功能暂有问题，隐藏该按钮
+				<ButtonStyled v-if="serverCapable && startServer" circular type="transparent">
+					<button
+						v-tooltip="formatMessage(messages.startServer)"
+						@click.stop="() => startServer(version)"
+					>
+						<ServerIcon />
+					</button>
+				</ButtonStyled>
+				-->
 				<ButtonStyled circular type="transparent">
 					<OverflowMenu
 						v-if="false"
@@ -72,7 +82,13 @@
 </template>
 
 <script setup>
-import { CheckIcon, DownloadIcon, ExternalIcon, MoreVerticalIcon } from '@modrinth/assets'
+import {
+	CheckIcon,
+	DownloadIcon,
+	ExternalIcon,
+	MoreVerticalIcon,
+	ServerIcon,
+} from '@modrinth/assets'
 import {
 	ButtonStyled,
 	commonMessages,
@@ -82,7 +98,7 @@ import {
 	ProjectPageVersions,
 	useVIntl,
 } from '@modrinth/ui'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute } from 'vue-router'
 
 import { SwapIcon } from '@/assets/icons/index.js'
@@ -101,9 +117,13 @@ const messages = defineMessages({
 		id: 'app.project.versions.add-to-another-instance',
 		defaultMessage: 'Add to another instance',
 	},
+	startServer: {
+		id: 'app.project.versions.start-server',
+		defaultMessage: 'Create server',
+	},
 })
 
-defineProps({
+const props = defineProps({
 	project: {
 		type: Object,
 		default: () => {},
@@ -132,7 +152,15 @@ defineProps({
 		type: String,
 		default: null,
 	},
+	startServer: {
+		type: Function,
+		default: null,
+	},
 })
+
+const serverCapable = computed(
+	() => props.project?.project_type === 'modpack' && props.project?.server_side !== 'unsupported',
+)
 
 const { handleError } = injectNotificationManager()
 const route = useRoute()
@@ -157,23 +185,8 @@ const [loaders, gameVersions] = await Promise.all([
 </script>
 
 <style scoped lang="scss">
-.filter-header {
-	display: flex;
-	flex-wrap: wrap;
-	justify-content: space-between;
-	align-items: center;
-	gap: 0.5rem;
-	margin-bottom: 0.5rem;
-}
-
 .table-row {
 	grid-template-columns: min-content 1fr 1fr 1.5fr;
-}
-
-.manage {
-	display: flex;
-	gap: 0.5rem;
-	flex-grow: 1;
 }
 
 .card-row {
@@ -181,20 +194,6 @@ const [loaders, gameVersions] = await Promise.all([
 	align-items: center;
 	justify-content: space-between;
 	background-color: var(--color-raised-bg);
-}
-
-.mod-card {
-	display: flex;
-	flex-direction: column;
-	gap: 1rem;
-	overflow: hidden;
-	margin-top: 0.5rem;
-}
-
-.text-combo {
-	display: flex;
-	align-items: center;
-	gap: 0.5rem;
 }
 
 .select {
@@ -211,23 +210,7 @@ const [loaders, gameVersions] = await Promise.all([
 	.version-badge {
 		display: flex;
 		flex-wrap: wrap;
-
-		.channel-indicator {
-			margin-right: 0.5rem;
-		}
 	}
-}
-
-.stacked-text {
-	display: flex;
-	flex-direction: column;
-	gap: 0.25rem;
-	align-items: flex-start;
-}
-
-.download-cell {
-	width: 4rem;
-	padding: 1rem;
 }
 
 .filter-checkbox {

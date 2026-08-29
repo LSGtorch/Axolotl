@@ -1,7 +1,11 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
-import type { StorageNode, StoragePath, StorageTree } from '@/components/ui/settings/storage/storageData'
+import type {
+	StorageNode,
+	StoragePath,
+	StorageTree,
+} from '@/components/ui/settings/storage/storageData'
 
 export type StorageScanEvent =
 	| { kind: 'started' }

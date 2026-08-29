@@ -20,6 +20,7 @@ import type { Component } from 'vue'
 import AboutSettings from './AboutSettings.vue'
 import AISettings from './AISettings.vue'
 import AppearanceSettings from './AppearanceSettings.vue'
+import ContentDownloadSettings from './ContentDownloadSettings.vue'
 import DefaultInstanceSettings from './DefaultInstanceSettings.vue'
 import FeatureFlagSettings from './FeatureFlagSettings.vue'
 import HomeNavigationSettings from './HomeNavigationSettings.vue'
@@ -27,7 +28,6 @@ import JavaSettings from './JavaSettings.vue'
 import LanguageTranslationSettings from './LanguageTranslationSettings.vue'
 import NetworkMultiplayerSettings from './NetworkMultiplayerSettings.vue'
 import PrivacySettings from './PrivacySettings.vue'
-import ContentDownloadSettings from './ContentDownloadSettings.vue'
 import {
 	getVisibleSettingsCategoryDefinitions,
 	type SettingsCategoryDefinition,

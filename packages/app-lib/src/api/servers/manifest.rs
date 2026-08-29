@@ -18,10 +18,14 @@ const DEFAULT_JAR_NAME: &str = "server.jar";
 /// Executable launcher jar downloaded from Fabric Meta; must match the
 /// filename used by the frontend's `resolveServerJar('fabric')`.
 const FABRIC_SERVER_JAR_NAME: &str = "fabric-server.jar";
+/// Executable launcher jar downloaded from Quilt Meta; must match the
+/// filename used by the frontend's `resolveServerJar('quilt')`.
+const QUILT_SERVER_JAR_NAME: &str = "quilt-server.jar";
 
 pub(super) fn type_default_jar_name(server_type: &str) -> Option<String> {
     match server_type {
         "fabric" => Some(FABRIC_SERVER_JAR_NAME.to_string()),
+        "quilt" => Some(QUILT_SERVER_JAR_NAME.to_string()),
         _ => None,
     }
 }
@@ -53,6 +57,12 @@ pub struct ServerManifest {
     pub memory_mb: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modpack: Option<ModpackInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub install_state: Option<InstallState>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub install_error: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub jvm_args: Vec<String>,
     pub created_at: DateTime<Utc>,
@@ -60,6 +70,30 @@ pub struct ServerManifest {
     pub last_started_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub last_exit_crashed: bool,
+}
+
+/// Tracks whether a modpack server has finished materializing. `Incomplete`
+/// is written when an install starts (and left behind if the app exits
+/// mid-download); `Failed` records an install error so the UI can offer a
+/// retry. Both clear once the install succeeds.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum InstallState {
+    Incomplete,
+    Failed,
+}
+
+/// Identifies a modpack a server was created from. Populated by
+/// [`super::modpack::install_modpack`] so the UI can badge and link servers
+/// back to their source project.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ModpackInfo {
+    pub project_id: String,
+    pub version_id: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_url: Option<String>,
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -186,6 +220,9 @@ mod tests {
             java_path: None,
             memory_mb: Some(2048),
             icon_path: None,
+            modpack: None,
+            install_state: None,
+            install_error: None,
             jvm_args: Vec::new(),
             created_at: Utc::now(),
             last_started_at: None,
@@ -209,12 +246,18 @@ mod tests {
             java_path: None,
             memory_mb: None,
             icon_path: None,
+            modpack: None,
+            install_state: None,
+            install_error: None,
             jvm_args: Vec::new(),
             created_at: Utc::now(),
             last_started_at: None,
             last_exit_crashed: false,
         };
         assert_eq!(resolve_jar_name(&manifest), FABRIC_SERVER_JAR_NAME);
+
+        manifest.server_type = "quilt".to_string();
+        assert_eq!(resolve_jar_name(&manifest), QUILT_SERVER_JAR_NAME);
 
         manifest.server_type = "vanilla".to_string();
         assert_eq!(resolve_jar_name(&manifest), DEFAULT_JAR_NAME);

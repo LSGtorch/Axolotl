@@ -25,7 +25,7 @@ use crate::util::fetch::{
 };
 use crate::{ErrorKind, State};
 use dashmap::DashMap;
-use futures::stream;
+use futures::{StreamExt, stream};
 use reqwest::{Method, StatusCode};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -41,6 +41,7 @@ const API_BASE_URL: &str = "https://api.curseforge.com";
 const MINECRAFT_GAME_ID: u32 = 432;
 const MAX_PAGE_SIZE: u32 = 50;
 const MODPACK_FILE_INSTALL_ATTEMPTS: usize = 3;
+const MODPACK_METADATA_CONCURRENCY: usize = 4;
 const DEPENDENCY_RELATION_EMBEDDED: u32 = 1;
 const DEPENDENCY_RELATION_OPTIONAL: u32 = 2;
 pub(crate) const DEPENDENCY_RELATION_REQUIRED: u32 = 3;
@@ -61,6 +62,64 @@ static MANUAL_IMPORT_SCAN_LOCK: LazyLock<tokio::sync::Mutex<()>> =
 static DEPENDENCY_RESOLUTION_PLANS: LazyLock<
     DashMap<String, CachedDependencyResolutionPlan>,
 > = LazyLock::new(DashMap::new);
+
+fn unique_metadata_chunks(mut ids: Vec<u32>) -> Vec<Vec<u32>> {
+    ids.sort_unstable();
+    ids.dedup();
+    ids.chunks(MAX_PAGE_SIZE as usize)
+        .map(<[u32]>::to_vec)
+        .collect()
+}
+
+async fn get_modpack_projects(
+    project_ids: Vec<u32>,
+) -> crate::Result<HashMap<u32, CurseForgeProject>> {
+    let chunks = unique_metadata_chunks(project_ids);
+    let project_ids = chunks.iter().flatten().copied().collect::<Vec<_>>();
+    let batches = stream::iter(chunks)
+        .map(|chunk| async move { get_projects(chunk).await })
+        .buffer_unordered(MODPACK_METADATA_CONCURRENCY)
+        .collect::<Vec<_>>()
+        .await;
+    let mut projects = HashMap::new();
+    for batch in batches {
+        for project in batch? {
+            projects.insert(project.id, project);
+        }
+    }
+    let missing = project_ids
+        .into_iter()
+        .filter(|project_id| !projects.contains_key(project_id))
+        .collect::<Vec<_>>();
+    let fallbacks = stream::iter(missing)
+        .map(|project_id| async move { get_project(project_id).await })
+        .buffer_unordered(MODPACK_METADATA_CONCURRENCY)
+        .collect::<Vec<_>>()
+        .await;
+    for project in fallbacks {
+        let project = project?;
+        projects.insert(project.id, project);
+    }
+    Ok(projects)
+}
+
+async fn get_modpack_files(
+    file_ids: Vec<u32>,
+) -> crate::Result<HashMap<u32, CurseForgeFile>> {
+    let chunks = unique_metadata_chunks(file_ids);
+    let batches = stream::iter(chunks)
+        .map(|chunk| async move { get_files_many(chunk).await })
+        .buffer_unordered(MODPACK_METADATA_CONCURRENCY)
+        .collect::<Vec<_>>()
+        .await;
+    let mut files = HashMap::new();
+    for batch in batches {
+        for file in batch? {
+            files.insert(file.id, file);
+        }
+    }
+    Ok(files)
+}
 
 #[derive(Clone)]
 struct CachedDependencyResolutionPlan {
@@ -470,6 +529,117 @@ pub struct CurseForgeInstalledFile {
     pub file_id: u32,
     pub relative_path: String,
     pub dependency: bool,
+}
+
+pub(crate) struct StagedCurseForgeUpgrade {
+    pub path: PathBuf,
+    pub file: CurseForgeFile,
+    pub project_type: ProjectType,
+}
+
+pub(crate) async fn stage_curseforge_upgrade_file(
+    project_id: u32,
+    file_id: u32,
+    project_type: Option<ProjectType>,
+    reporter: Option<&InstallProgressReporter>,
+) -> crate::Result<StagedCurseForgeUpgrade> {
+    let file = get_file(project_id, file_id).await?;
+    if file.mod_id != project_id || file.id != file_id {
+        return Err(ErrorKind::InputError(
+            "CurseForge returned metadata for a different project or file"
+                .to_string(),
+        )
+        .into());
+    }
+    validate_file_name(&file.file_name)?;
+    let project = get_project(project_id).await?;
+    let project_type = project_type
+        .or_else(|| recognized_project_type(project.class_id))
+        .ok_or_else(|| {
+            ErrorKind::InputError(
+                "CurseForge upgrade project has an unsupported content type"
+                    .to_string(),
+            )
+        })?;
+    let url =
+        resolve_curseforge_download_url(project_id, file_id, &project, &file)
+            .await?
+            .ok_or_else(|| {
+                ErrorKind::InputError(
+            "Selected CurseForge upgrade file requires a manual download"
+                .to_string(),
+        )
+            })?;
+    let state = State::get().await?;
+    let path = state
+        .directories
+        .caches_dir()
+        .join("content")
+        .join("curseforge")
+        .join(project_id.to_string())
+        .join(file_id.to_string())
+        .join(&file.file_name);
+    let tracking = path.display().to_string();
+    download_curseforge_path(
+        &url,
+        &file,
+        &path,
+        curseforge_content_validation(&file.file_name),
+        None,
+        reporter.map(|reporter| (reporter, tracking.as_str())),
+        None,
+        true,
+    )
+    .await?;
+    verify_installed_curseforge_file(&path, &file).await?;
+    Ok(StagedCurseForgeUpgrade {
+        path,
+        file,
+        project_type,
+    })
+}
+
+pub(crate) async fn apply_staged_curseforge_upgrade_file(
+    instance_id: &str,
+    staged: StagedCurseForgeUpgrade,
+    ownership_kind: crate::state::instances::ContentOwnershipKind,
+    relative_path: &str,
+) -> crate::Result<String> {
+    let state = State::get().await?;
+    let full_path = crate::api::instance::get_full_path(instance_id)
+        .await?
+        .join(relative_path);
+    let _instance_lock = state.lock_instance_content(instance_id).await;
+    let previous_path =
+        crate::state::materialize_project_download(&staged.path, &full_path)
+            .await?;
+    let record_result = record_installed_curseforge_file(
+        instance_id,
+        relative_path,
+        &full_path,
+        &staged.file,
+        staged.project_type,
+        ownership_kind,
+        &state,
+    )
+    .await;
+    match record_result {
+        Ok(()) => {
+            crate::state::finalize_project_materialization(
+                previous_path.as_deref(),
+            )
+            .await?;
+        }
+        Err(error) => {
+            crate::state::restore_project_materialization(
+                &full_path,
+                previous_path.as_deref(),
+            )
+            .await?;
+            return Err(error);
+        }
+    }
+    Ok(relative_path.to_string())
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1386,6 +1556,8 @@ pub async fn install_world_with_reporter(
         curseforge_content_validation(&file.file_name),
         None,
         Some((&reporter, &tracking_path)),
+        None,
+        true,
     )
     .await?;
     let world_name = crate::state::instances::commands::import_world_save(
@@ -1908,6 +2080,7 @@ async fn install_file_from_resolution_plan(
                 .is_some_and(|project_id| {
                     excluded_project_ids.contains(&project_id)
                 }),
+            ContentProviderRef::McArchive { .. } => false,
         };
         if excluded {
             result
@@ -2051,6 +2224,16 @@ async fn install_file_from_resolution_plan(
                             false
                         }
                     }
+                }
+                ContentProviderRef::McArchive { .. } => {
+                    result.skipped_dependencies.push(
+                        CurseForgeSkippedDependency {
+                            project_id: 0,
+                            file_id: None,
+                            reason: "unsupported_provider".to_string(),
+                        },
+                    );
+                    false
                 }
             };
             if installed_node {
@@ -2277,6 +2460,7 @@ fn curseforge_project_id(reference: &ContentProviderRef) -> Option<u32> {
             Some(project_id.get())
         }
         ContentProviderRef::Modrinth { .. } => None,
+        ContentProviderRef::McArchive { .. } => None,
     }
 }
 
@@ -2286,6 +2470,7 @@ fn curseforge_file_id(reference: &ContentProviderRef) -> Option<u32> {
             file_id.map(CurseForgeFileId::get)
         }
         ContentProviderRef::Modrinth { .. } => None,
+        ContentProviderRef::McArchive { .. } => None,
     }
 }
 
@@ -3405,36 +3590,18 @@ pub async fn install_modpack_with_reporter(
         .iter()
         .map(|file| file.project_id)
         .collect::<Vec<_>>();
-    let mut projects = HashMap::new();
-    for project_ids in project_ids.chunks(50) {
-        for project in get_projects(project_ids.to_vec()).await? {
-            projects.insert(project.id, project);
-        }
-    }
-    for project_id in &project_ids {
-        if !projects.contains_key(project_id) {
-            let project = get_project(*project_id).await?;
-            projects.insert(project.id, project);
-        }
-    }
+    let projects = get_modpack_projects(project_ids).await?;
 
     let instance_name = crate::api::instance::get(&request.instance_id)
         .await?
         .map(|metadata| metadata.instance.name)
         .unwrap_or_else(|| project.name.clone());
     let total_files = selected_files.len().max(1);
-    let mut file_ids = selected_files
+    let file_ids = selected_files
         .iter()
         .map(|file| file.file_id)
         .collect::<Vec<_>>();
-    file_ids.sort_unstable();
-    file_ids.dedup();
-    let mut file_meta = HashMap::<u32, CurseForgeFile>::new();
-    for chunk in file_ids.chunks(50) {
-        for file in get_files_many(chunk.to_vec()).await? {
-            file_meta.insert(file.id, file);
-        }
-    }
+    let file_meta = get_modpack_files(file_ids).await?;
     let content_total_bytes = selected_files
         .iter()
         .map(|file| {
@@ -4050,32 +4217,14 @@ pub(crate) async fn install_local_manifest_files(
         .iter()
         .map(|file| file.project_id)
         .collect::<Vec<_>>();
-    let mut projects = HashMap::new();
-    for project_ids in project_ids.chunks(50) {
-        for project in get_projects(project_ids.to_vec()).await? {
-            projects.insert(project.id, project);
-        }
-    }
-    for project_id in &project_ids {
-        if !projects.contains_key(project_id) {
-            let project = get_project(*project_id).await?;
-            projects.insert(project.id, project);
-        }
-    }
+    let projects = get_modpack_projects(project_ids).await?;
 
     let total_files = selected_files.len().max(1);
-    let mut file_ids = selected_files
+    let file_ids = selected_files
         .iter()
         .map(|file| file.file_id)
         .collect::<Vec<_>>();
-    file_ids.sort_unstable();
-    file_ids.dedup();
-    let mut file_meta = HashMap::<u32, CurseForgeFile>::new();
-    for chunk in file_ids.chunks(50) {
-        for file in get_files_many(chunk.to_vec()).await? {
-            file_meta.insert(file.id, file);
-        }
-    }
+    let file_meta = get_modpack_files(file_ids).await?;
     let content_total_bytes = selected_files
         .iter()
         .map(|file| {
@@ -4604,10 +4753,7 @@ async fn create_curseforge_update_backup(
     let directory = tempfile::Builder::new()
         .prefix("curseforge-pack-update-")
         .tempdir_in(state.directories.caches_dir())?;
-    let instance_path = state
-        .directories
-        .instances_dir()
-        .join(&metadata.instance.path);
+    let instance_path = state.directories.instance_game_dir(&metadata.instance);
     let mut backups = Vec::new();
     for member in members {
         let Some(entry_id) = member.content_entry_id.as_ref() else {
@@ -4647,10 +4793,7 @@ async fn rollback_curseforge_update(
     installed: &[CurseForgeInstalledFile],
     state: &State,
 ) -> crate::Result<()> {
-    let instance_path = state
-        .directories
-        .instances_dir()
-        .join(&metadata.instance.path);
+    let instance_path = state.directories.instance_game_dir(&metadata.instance);
     let old_paths = backup
         .files
         .iter()
@@ -7640,6 +7783,10 @@ fn curseforge_integrity(
     }
 }
 
+const fn curseforge_modpack_h2_range_concurrency() -> Option<usize> {
+    Some(16)
+}
+
 fn curseforge_candidate_urls(url: &str) -> crate::Result<Vec<String>> {
     let parsed = reqwest::Url::parse(url).map_err(|_| {
         ErrorKind::InputError(
@@ -7679,11 +7826,17 @@ async fn download_curseforge_path(
     validation: ContentValidation,
     progress: Option<&mut FetchProgressFn<'_>>,
     tracking: Option<(&InstallProgressReporter, &str)>,
+    h2_range_concurrency: Option<usize>,
+    allow_http1_segmented_download: bool,
 ) -> crate::Result<crate::util::fetch::DownloadResult> {
     let state = State::get().await?;
     let mut request = DownloadRequest::new(url, ResourceClass::CurseForge)
         .with_candidate_urls(curseforge_candidate_urls(url)?)
-        .with_integrity(curseforge_integrity(file, validation));
+        .with_integrity(curseforge_integrity(file, validation))
+        .with_http1_segmented_download(allow_http1_segmented_download);
+    if let Some(concurrency) = h2_range_concurrency {
+        request = request.with_h2_range_concurrency(concurrency);
+    }
     let parsed = reqwest::Url::parse(url)?;
     if is_forge_cdn_url(&parsed)
         && let Some(key) = api_key()
@@ -7733,6 +7886,8 @@ async fn download_curseforge_archive(
         ContentValidation::Jar,
         progress,
         reporter.map(|reporter| (reporter, tracking_item_id.as_str())),
+        curseforge_modpack_h2_range_concurrency(),
+        true,
     )
     .await
 }
@@ -7790,6 +7945,8 @@ async fn download_installed_file(
         download_metrics
             .and_then(|metrics| metrics.reporter.as_ref())
             .map(|reporter| (reporter, relative_path.as_str())),
+        None,
+        false,
     )
     .await?;
     if let Some(download_metrics) = download_metrics {
@@ -8401,6 +8558,32 @@ mod tests {
     use super::*;
 
     #[test]
+    fn modpack_metadata_ids_are_deduplicated_before_batching() {
+        let mut ids = (1..=120).collect::<Vec<_>>();
+        ids.extend([1, 50, 120]);
+        let chunks = unique_metadata_chunks(ids);
+
+        assert_eq!(
+            chunks.iter().map(Vec::len).collect::<Vec<_>>(),
+            vec![50, 50, 20]
+        );
+        assert_eq!(
+            chunks
+                .iter()
+                .flatten()
+                .copied()
+                .collect::<HashSet<_>>()
+                .len(),
+            120
+        );
+    }
+
+    #[test]
+    fn modpack_archives_use_sixteen_h2_range_streams() {
+        assert_eq!(curseforge_modpack_h2_range_concurrency(), Some(16));
+    }
+
+    #[test]
     fn dependency_fallback_requires_the_target_game_and_loader() {
         let mut target_file =
             stage8_curseforge_file(1, 101, "target.jar", 0, Vec::new(), 0);
@@ -8655,6 +8838,7 @@ mod tests {
             None,
             None,
             InstanceLink::Unmanaged,
+            None,
             None,
         )
         .await
@@ -10561,6 +10745,7 @@ mod tests {
             None,
             InstanceLink::Unmanaged,
             None,
+            None,
         )
         .await
         .unwrap();
@@ -10650,8 +10835,7 @@ mod tests {
         assert_eq!(imported.expected_relative_path, relative_path);
         let instance_path = state
             .directories
-            .instances_dir()
-            .join(created.instance.path)
+            .instance_game_dir(&created.instance)
             .join(relative_path);
         assert_eq!(crate::util::io::read(&instance_path).await.unwrap(), bytes);
         assert!(source.exists());

@@ -10,7 +10,10 @@ import {
 function version(
 	id: string,
 	loaders: string[],
-	options: { datePublished?: string; versionType?: Labrinth.Versions.v2.Version['version_type'] } = {},
+	options: {
+		datePublished?: string
+		versionType?: Labrinth.Versions.v2.Version['version_type']
+	} = {},
 ): Labrinth.Versions.v2.Version {
 	return {
 		id,

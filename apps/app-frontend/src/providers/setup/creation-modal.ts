@@ -3,6 +3,7 @@ import type {
 	AbstractWebNotificationManager,
 	CreationFlowContextValue,
 	CreationFlowModal,
+	SymlinkMethodChoice,
 } from '@modrinth/ui'
 import { defineMessages, useVIntl } from '@modrinth/ui'
 import { inject, provide, ref, useTemplateRef } from 'vue'
@@ -27,7 +28,6 @@ import {
 import { check_symlink_capability, list } from '@/helpers/instance'
 import { get_loader_versions as getLoaderManifest } from '@/helpers/metadata.js'
 import type { InstanceLoader } from '@/helpers/types'
-import { useTheming } from '@/store/state'
 
 const symlinkMessages = defineMessages({
 	unsupportedTitle: {
@@ -93,7 +93,6 @@ export function setupCreationModal(
 	const { formatMessage } = useVIntl()
 	const { handleError } = notificationManager
 	const router = useRouter()
-	const themeStore = useTheming()
 
 	const installationModal =
 		useTemplateRef<ComponentExposed<typeof CreationFlowModal>>('installationModal')
@@ -133,32 +132,21 @@ export function setupCreationModal(
 		name: string,
 		iconUrl?: string,
 	) {
-		await install_create_modpack_instance({
-			type: 'fromVersionId',
-			project_id: projectId,
-			version_id: versionId,
-			title: name,
-			icon_url: iconUrl,
-		}).catch(handleError)
+		await install_create_modpack_instance(
+			{
+				type: 'fromVersionId',
+				project_id: projectId,
+				version_id: versionId,
+				title: name,
+				icon_url: iconUrl,
+			},
+			{ name },
+		).catch(handleError)
 		trackEvent('InstanceCreate', { source: 'CreationModalModpack' })
 	}
 
 	async function handleCreate(config: CreationFlowContextValue) {
 		try {
-			if (config.modpackSelection.value) {
-				const { projectId, versionId, name, iconUrl } = config.modpackSelection.value
-
-				const instances = await list().catch(handleError)
-				const existingInstance = instances?.find((i) => i.link?.project_id === projectId)
-
-				if (existingInstance && !themeStore.getFeatureFlag('skip_non_essential_warnings')) {
-					pendingModpackCreation.value = { projectId, versionId, name, iconUrl }
-					installationModal.value?.hide()
-					modpackAlreadyInstalledModal.value?.show(existingInstance.name, existingInstance.id)
-					return
-				}
-			}
-
 			installationModal.value?.hide()
 
 			if (config.isImportMode.value) {
@@ -203,21 +191,30 @@ export function setupCreationModal(
 				const chooseImportMethod: (options: {
 					instanceNames: string[]
 					symlinkCapable: 'supported' | 'requires_admin' | 'unsupported'
-				}) => Promise<boolean> = inject('chooseImportMethod')!
+				}) => Promise<SymlinkMethodChoice[]> = inject('chooseImportMethod')!
 
-				const useSymlink = await chooseImportMethod({
+				const choices = await chooseImportMethod({
 					instanceNames: instanceEntries.map((e) => e.instanceName),
 					symlinkCapable: capability,
 				})
 
+				if (choices.length === 0) return
+
+				const choiceByInstanceName = new Map(choices.map((choice) => [choice.instanceName, choice]))
+
 				for (const entry of instanceEntries) {
+					const choice = choiceByInstanceName.get(entry.instanceName)
 					try {
 						const job = await import_instance(
 							entry.launcherType,
 							entry.path,
 							entry.instanceName,
-							useSymlink,
+							choice?.symlink ?? false,
 							entry.instancePath,
+							undefined,
+							undefined,
+							undefined,
+							choice?.gameDirOverride ?? null,
 						)
 						await wait_for_install_job(job.job_id)
 					} catch (error) {
@@ -253,6 +250,20 @@ export function setupCreationModal(
 				: (config.selectedLoaderVersion.value ?? config.loaderVersionType.value)
 			const iconPath = config.instanceIconPath.value ?? null
 			const name = config.instanceName.value.trim() || config.autoInstanceName.value
+			// Game directory: `gameDirOverride` holds the picked `.minecraft`
+			// root. Builtin keeps the managed folder (null); external resolves to
+			// `<root>/versions/<name>` when version-isolated, or the `.minecraft`
+			// root itself when not.
+			const mode = config.gameDirOverrideMode.value
+			const gameRoot = config.gameDirOverride.value ?? null
+			const gameDirOverride =
+				mode === 'builtin'
+					? null
+					: gameRoot
+						? mode === 'isolated'
+							? `${gameRoot}/versions/${name}`
+							: gameRoot
+						: null
 
 			await install_create_instance({
 				name,
@@ -266,6 +277,7 @@ export function setupCreationModal(
 					role: 'adjunct',
 				})),
 				iconPath,
+				gameDirOverride,
 			}).catch(handleError)
 
 			trackEvent('InstanceCreate', {

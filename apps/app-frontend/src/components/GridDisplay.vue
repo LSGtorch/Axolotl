@@ -419,7 +419,7 @@ function onBatchEditApplied() {
 		:key="instanceSection.key"
 		:divider="grouping === 'Group' || instanceSection.key !== UNGROUPED_GROUP_KEY"
 		:open-by-default="!isSectionCollapsed(instanceSection.key)"
-		class="row"
+		class="w-full"
 		@on-open="setSectionCollapsed(instanceSection.key, false)"
 		@on-close="setSectionCollapsed(instanceSection.key, true)"
 	>
@@ -430,7 +430,12 @@ function onBatchEditApplied() {
 					: instanceSection.key
 			}}</span>
 		</template>
-		<section class="instances" :class="{ 'library-cards': displayMode === 'cards' }">
+		<section
+			class="grid grid-cols-[repeat(auto-fill,minmax(16rem,1fr))] w-full gap-3 mr-auto scroll-smooth overflow-y-auto"
+			:class="{
+				'grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] gap-4': displayMode === 'cards',
+			}"
+		>
 			<div
 				v-for="instance in instanceSection.value"
 				:key="instance.id + instance.install_stage"
@@ -549,22 +554,4 @@ function onBatchEditApplied() {
 	</ContextMenu>
 </template>
 <style lang="scss" scoped>
-.row {
-	width: 100%;
-}
-
-.instances {
-	display: grid;
-	grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
-	width: 100%;
-	gap: 0.75rem;
-	margin-right: auto;
-	scroll-behavior: smooth;
-	overflow-y: auto;
-
-	&.library-cards {
-		grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr));
-		gap: 1rem;
-	}
-}
 </style>

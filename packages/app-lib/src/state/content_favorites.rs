@@ -6,6 +6,7 @@ use sqlx::Row;
 pub enum ContentFavoriteProvider {
     Modrinth,
     Curseforge,
+    Mcarchive,
 }
 
 impl ContentFavoriteProvider {
@@ -13,6 +14,7 @@ impl ContentFavoriteProvider {
         match self {
             Self::Modrinth => "modrinth",
             Self::Curseforge => "curseforge",
+            Self::Mcarchive => "mcarchive",
         }
     }
 
@@ -20,6 +22,7 @@ impl ContentFavoriteProvider {
         match value {
             "modrinth" => Ok(Self::Modrinth),
             "curseforge" => Ok(Self::Curseforge),
+            "mcarchive" => Ok(Self::Mcarchive),
             _ => Err(crate::ErrorKind::InputError(format!(
                 "Unsupported content favorite provider: {value}"
             ))

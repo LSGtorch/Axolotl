@@ -12,10 +12,11 @@ use tokio::process::{Child, ChildStdin, Command};
 
 use crate::event::ServerPayloadType;
 use crate::event::emit::emit_server;
-use crate::state::clear_log_buffer;
+use crate::state::{clear_log_buffer, get_log_buffer};
+use crate::util::io::IOError;
 use crate::{ErrorKind, Result};
 
-use super::logs::stream_server_output;
+use super::logs::{analyze_exit_reason, stream_server_output};
 use super::manifest::{
     read_manifest, resolve_jar_name, server_path, write_manifest,
 };
@@ -68,14 +69,19 @@ async fn start_inner(
 ) -> Result<()> {
     let dir = server_path(server_id).await?;
     let mut manifest = read_manifest(&dir).await?;
-    let jar_name = resolve_jar_name(&manifest);
-    let jar_path = dir.join(&jar_name);
-    if !jar_path.exists() {
-        return Err(ErrorKind::LauncherError(format!(
-            "Server jar not found: {jar_name}. Download the server files first."
-        ))
-        .as_error());
-    }
+    let launch_args = if manifest.server_type == "forge" {
+        forge_launch_args(&dir)?
+    } else {
+        let jar_name = resolve_jar_name(&manifest);
+        let jar_path = dir.join(&jar_name);
+        if !jar_path.exists() {
+            return Err(ErrorKind::LauncherError(format!(
+                "Server jar not found: {jar_name}. Download the server files first."
+            ))
+            .as_error());
+        }
+        vec!["-jar".to_string(), jar_name, "nogui".to_string()]
+    };
 
     let java = java_path
         .or_else(|| manifest.java_path.clone())
@@ -84,13 +90,37 @@ async fn start_inner(
         .or(manifest.memory_mb)
         .unwrap_or(DEFAULT_MEMORY_MB);
 
+    // Ensure eula.txt exists (create with eula=false if missing)
+    let eula_path = dir.join("eula.txt");
+    if !eula_path.exists() {
+        tokio::fs::write(&eula_path, "eula=false\n")
+            .await
+            .map_err(|e| IOError::with_path(e, &eula_path))?;
+    }
+
     let mut command = Command::new(&java);
     command.arg(format!("-Xmx{memory}M"));
     for arg in jvm_args.unwrap_or_else(|| manifest.jvm_args.clone()) {
         command.arg(arg);
     }
-    command.arg("-jar").arg(&jar_name).arg("nogui");
+    for arg in launch_args {
+        command.arg(arg);
+    }
     command.current_dir(&dir);
+    // Dynamic-loader injection variables (Steam overlays, debugging tools,
+    // Dynamic-loader injection variables (Steam overlays, debugging tools,
+    // stale shell exports) lengthen every dyld failure message the JVM
+    // produces, which is exactly what trips the JNA < 5.13 macOS assertion;
+    // they have no business affecting a managed server either.
+    for variable in [
+        "DYLD_LIBRARY_PATH",
+        "DYLD_FALLBACK_LIBRARY_PATH",
+        "DYLD_FRAMEWORK_PATH",
+        "DYLD_FALLBACK_FRAMEWORK_PATH",
+        "DYLD_INSERT_LIBRARIES",
+    ] {
+        command.env_remove(variable);
+    }
     command.stdout(std::process::Stdio::piped());
     command.stderr(std::process::Stdio::piped());
     command.stdin(std::process::Stdio::piped());
@@ -222,16 +252,72 @@ async fn monitor_server_process(
             .map(|status| !status.success() && !stop_requested && eula_accepted)
             .unwrap_or(false);
 
+        // Classify self-exits from the tail of the console output so the UI
+        // can react (e.g. offer the EULA dialog). User-requested stops and
+        // unmatched exits stay unclassified. The brief settle wait lets the
+        // output-stream tasks flush their final lines into the buffer first.
+        let reason = if stop_requested {
+            None
+        } else {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            analyze_exit_reason(&get_log_buffer(&server_id))
+        };
+
         if let Ok(mut manifest) = read_manifest(&dir).await {
             manifest.last_exit_crashed = crashed;
             let _ = write_manifest(&dir, &manifest).await;
         }
 
-        emit_server(&server_id, ServerPayloadType::Stopped { crashed })
+        emit_server(&server_id, ServerPayloadType::Stopped { crashed, reason })
             .await
             .ok();
         return;
     }
+}
+
+/// Builds the JVM launch arguments for a Forge server. Modern Forge (1.17+)
+/// ships `@args` files that enumerate the classpath and main class; legacy Forge
+/// (<=1.16) produces a single runnable `forge-*.jar`.
+fn forge_launch_args(dir: &Path) -> Result<Vec<String>> {
+    let forge_dir = dir
+        .join("libraries")
+        .join("net")
+        .join("minecraftforge")
+        .join("forge");
+    if let Ok(entries) = std::fs::read_dir(&forge_dir) {
+        let args_file = if cfg!(windows) {
+            "win_args.txt"
+        } else {
+            "unix_args.txt"
+        };
+        for entry in entries.flatten() {
+            let candidate = entry.path().join(args_file);
+            if candidate.is_file() {
+                let mut args = Vec::new();
+                if dir.join("user_jvm_args.txt").exists() {
+                    args.push("@user_jvm_args.txt".to_string());
+                }
+                args.push(format!("@{}", candidate.to_string_lossy()));
+                args.push("nogui".to_string());
+                return Ok(args);
+            }
+        }
+    }
+    if let Some(jar) = find_forge_jar(dir) {
+        return Ok(vec!["-jar".to_string(), jar, "nogui".to_string()]);
+    }
+    Err(ErrorKind::LauncherError(
+        "Forge server files are missing. Reinstall the server.".to_string(),
+    )
+    .as_error())
+}
+
+fn find_forge_jar(dir: &Path) -> Option<String> {
+    let entry = std::fs::read_dir(dir).ok()?.flatten().find(|e| {
+        e.file_name().to_string_lossy().starts_with("forge-")
+            && e.path().extension().is_some_and(|ext| ext == "jar")
+    })?;
+    Some(entry.file_name().to_string_lossy().into_owned())
 }
 
 async fn read_eula_accepted(dir: &Path) -> bool {

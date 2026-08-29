@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import {
-	contentFavoriteKey,
-	isFavoriteContentType,
-} from './content-favorites.ts'
+import { contentFavoriteKey, isFavoriteContentType } from './content-favorites.ts'
 
 test('content favorites keep provider-qualified identities separate', () => {
-	assert.notEqual(contentFavoriteKey('modrinth', 'same-id'), contentFavoriteKey('curseforge', 'same-id'))
+	assert.notEqual(
+		contentFavoriteKey('modrinth', 'same-id'),
+		contentFavoriteKey('curseforge', 'same-id'),
+	)
 })
 
 test('content favorites only accept installable content types', () => {

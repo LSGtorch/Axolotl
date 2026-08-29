@@ -5,12 +5,36 @@ use serde::{Deserialize, Serialize};
 use zhconv::{Variant, zhconv};
 
 const WIKI_ENTRIES_DATA: &str = include_str!("content_search/WikiEntries.txt");
+const SEARCHER_WORDS_DATA: &str =
+    include_str!("content_search/searcher_words.txt");
 const RADIX_DIGITS: &str = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/+=!?@#$%^&*()[]{}<>;:',";
 const MAX_MATCHES: usize = 100;
 const MIN_SIMILARITY: f64 = 0.25;
+/// Compact queries shorter than this are never worth segmenting; they are
+/// either a single known word or too ambiguous to split safely.
+const MIN_COMPACT_QUERY_LENGTH: usize = 6;
 
 static WIKI_ENTRIES: LazyLock<Vec<WikiEntry>> =
     LazyLock::new(|| parse_wiki_entries(WIKI_ENTRIES_DATA));
+
+/// Segmentation dictionary, sorted longest-first so greedy prefix matching
+/// prefers the longest known word at every step.
+static SEARCHER_WORDS: LazyLock<Vec<String>> = LazyLock::new(|| {
+    let mut words = SEARCHER_WORDS_DATA
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .filter(|line| {
+            line.chars()
+                .all(|character| character.is_ascii_alphabetic())
+        })
+        .map(str::to_lowercase)
+        .collect::<Vec<_>>();
+    words.sort();
+    words.dedup();
+    words.sort_by(|left, right| right.len().cmp(&left.len()));
+    words
+});
 
 static CHINESE_NAME_INDEX: LazyLock<ChineseNameIndex> =
     LazyLock::new(|| build_chinese_name_index(&WIKI_ENTRIES));
@@ -508,6 +532,60 @@ pub fn resolve_chinese_content_search(query: &str) -> ChineseSearchResolution {
         modrinth_slugs,
         translations,
     }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContentSearchExpansion {
+    /// Dictionary-based segmentation of a compact (separator-free) query,
+    /// e.g. `sodiumextra` → `sodium extra`. `None` when the query is already
+    /// a single known word, cannot be fully segmented, or is too short.
+    pub suggested_split: Option<String>,
+}
+
+/// Expands a browse search query with the bundled segmentation dictionary.
+///
+/// Server-side search (Modrinth, CurseForge) tokenizes on whitespace and
+/// separators, so a query typed without spaces (`sodiumextra`) cannot match a
+/// project named "Sodium Extra". This resolves such queries to their
+/// space-separated form whenever the whole query can be reconstructed from
+/// known words; ambiguity (`xyzabc`) yields no suggestion.
+pub fn expand_content_search_query(query: &str) -> ContentSearchExpansion {
+    let compact = query
+        .chars()
+        .filter(|character| character.is_alphanumeric())
+        .collect::<String>()
+        .to_lowercase();
+    ContentSearchExpansion {
+        suggested_split: segment_compact_query(&compact),
+    }
+}
+
+fn segment_compact_query(compact: &str) -> Option<String> {
+    if compact.len() < MIN_COMPACT_QUERY_LENGTH
+        || SEARCHER_WORDS.iter().any(|word| word == compact)
+    {
+        return None;
+    }
+    let mut parts = Vec::new();
+    let mut rest = compact;
+    while !rest.is_empty() {
+        let Some((word, remainder)) = longest_prefix_word(rest) else {
+            return None;
+        };
+        parts.push(word);
+        rest = remainder;
+    }
+    if parts.len() < 2 || parts.iter().any(|part| part.len() < 2) {
+        return None;
+    }
+    Some(parts.join(" "))
+}
+
+fn longest_prefix_word<'a>(value: &'a str) -> Option<(&'a str, &'a str)> {
+    SEARCHER_WORDS.iter().find_map(|word| {
+        value.strip_prefix(word).map(|rest| (word.as_str(), rest))
+    })
 }
 
 fn parse_wiki_entries(source: &str) -> Vec<WikiEntry> {
@@ -1148,5 +1226,64 @@ mod tests {
         assert!(words.contains(&"ender".to_string()));
         assert!(words.contains(&"io".to_string()));
         assert!(!words.contains(&"enderio".to_string()));
+    }
+
+    #[test]
+    fn segments_compact_queries_into_known_words() {
+        assert_eq!(
+            expand_content_search_query("sodiumextra")
+                .suggested_split
+                .as_deref(),
+            Some("sodium extra")
+        );
+        assert_eq!(
+            expand_content_search_query("irisshaders")
+                .suggested_split
+                .as_deref(),
+            Some("iris shaders")
+        );
+        assert_eq!(
+            expand_content_search_query("examplemod")
+                .suggested_split
+                .as_deref(),
+            Some("example mod")
+        );
+        assert_eq!(
+            expand_content_search_query("thetwilightforest")
+                .suggested_split
+                .as_deref(),
+            Some("the twilight forest")
+        );
+        assert_eq!(
+            expand_content_search_query("shulkerbox")
+                .suggested_split
+                .as_deref(),
+            Some("shulker box")
+        );
+    }
+
+    #[test]
+    fn leaves_known_and_unsegmentable_queries_without_a_split() {
+        assert_eq!(expand_content_search_query("sodium").suggested_split, None);
+        assert_eq!(expand_content_search_query("ae2").suggested_split, None);
+        assert_eq!(expand_content_search_query("xyzabc").suggested_split, None);
+        assert_eq!(expand_content_search_query("").suggested_split, None);
+        assert_eq!(expand_content_search_query("a b").suggested_split, None);
+    }
+
+    #[test]
+    fn segmentation_ignores_separators_and_case() {
+        assert_eq!(
+            expand_content_search_query("Sodium-Extra")
+                .suggested_split
+                .as_deref(),
+            Some("sodium extra")
+        );
+        assert_eq!(
+            expand_content_search_query("sodium extra")
+                .suggested_split
+                .as_deref(),
+            Some("sodium extra")
+        );
     }
 }

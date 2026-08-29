@@ -29,7 +29,11 @@ const statusMessage = {
 </script>
 
 <template>
-	<div v-if="props.status !== 'idle'" class="settings-save-status" role="status">
+	<div
+		v-if="props.status !== 'idle'"
+		class="settings-save-status inline-flex items-center gap-1 text-xs text-secondary"
+		role="status"
+	>
 		<SpinnerIcon v-if="props.status === 'saving'" class="size-3.5 animate-spin" />
 		<span>{{ props.status === 'idle' ? '' : formatMessage(statusMessage[props.status]) }}</span>
 		<Button v-if="props.status === 'error' && props.retry" type="quiet" @click="props.retry">
@@ -39,14 +43,6 @@ const statusMessage = {
 </template>
 
 <style scoped>
-.settings-save-status {
-	display: inline-flex;
-	align-items: center;
-	gap: var(--gap-xs);
-	color: var(--color-secondary);
-	font-size: 0.75rem;
-}
-
 .settings-save-status :deep(.btn) {
 	padding: 0.25rem 0.5rem;
 	font-size: 0.75rem;

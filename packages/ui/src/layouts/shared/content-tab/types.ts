@@ -52,6 +52,7 @@ export interface ContentCardTableItem {
 	enabled?: boolean
 	disabled?: boolean
 	disabledTooltip?: string | null
+	postUpgradeWarningTooltip?: string | null
 	toggleDisabled?: boolean
 	toggleDisabledTooltip?: string | null
 	installing?: boolean

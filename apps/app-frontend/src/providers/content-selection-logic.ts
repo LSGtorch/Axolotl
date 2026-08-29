@@ -38,7 +38,9 @@ export function getActiveDependencyConflictIdentities(
 		versions.set(identity, identityVersions)
 	}
 	return new Set(
-		[...versions.entries()].filter(([, versionIds]) => versionIds.size > 1).map(([identity]) => identity),
+		[...versions.entries()]
+			.filter(([, versionIds]) => versionIds.size > 1)
+			.map(([identity]) => identity),
 	)
 }
 

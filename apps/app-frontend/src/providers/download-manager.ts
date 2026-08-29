@@ -44,6 +44,29 @@ export interface DownloadManager {
 	skipMissingContent: (jobId: string) => Promise<void>
 	remove: (jobId: string) => Promise<void>
 	clearHistory: () => Promise<void>
+	/**
+	 * Insert a synthetic job created on the frontend (e.g. a server download
+	 * that does not go through the backend install-pipeline). The job is kept
+	 * in-memory and will disappear on refresh — callers must update it via
+	 * `setSyntheticJob` to keep it alive.
+	 */
+	addSyntheticJob: (job: InstallJobSnapshot) => void
+	/**
+	 * Replace a synthetic job (identified by `job_id`) with a fresh snapshot.
+	 * This is a no-op for backend-tracked jobs.
+	 */
+	setSyntheticJob: (job: InstallJobSnapshot) => void
+	/**
+	 * Register a cancel handler for a synthetic job.  When `cancel()` is
+	 * called with this jobId the handler is invoked *before* the job is
+	 * removed from the list, allowing the caller to abort the underlying
+	 * operation (e.g. stop a server install).
+	 */
+	onSyntheticCancel: (jobId: string, handler: () => void | Promise<void>) => void
+	/**
+	 * Unregister a previously registered cancel handler.
+	 */
+	offSyntheticCancel: (jobId: string) => void
 	dispose: () => void
 }
 
@@ -210,7 +233,12 @@ export function createDownloadManager(handleError: (error: unknown) => void): Do
 			return null
 		})
 		if (page && !disposed) {
-			jobs.value = page.jobs
+			const activeSynthetics = jobs.value.filter(
+				(job) => syntheticIds.has(job.job_id) && activeStatuses.has(job.status),
+			)
+			jobs.value = [...page.jobs, ...activeSynthetics].sort((a, b) =>
+				b.created.localeCompare(a.created),
+			)
 			const seenInstances = new Set<string>()
 			for (const job of page.jobs) {
 				if (job.status !== 'succeeded') continue
@@ -261,6 +289,23 @@ export function createDownloadManager(handleError: (error: unknown) => void): Do
 	}
 
 	async function cancel(jobId: string) {
+		if (syntheticIds.has(jobId)) {
+			// Remove the ID *before* removing the job from the list so that any
+			// in-flight progress listener callback that calls setSyntheticJob
+			// will see the missing ID and become a no-op, preventing the job
+			// from being re-inserted.
+			syntheticIds.delete(jobId)
+			const handler = syntheticCancelHandlers.get(jobId)
+			if (handler) {
+				try {
+					await handler()
+				} catch {
+					// Handler errors are non-fatal; still remove the job from the list.
+				}
+			}
+			jobs.value = jobs.value.filter((job) => job.job_id !== jobId)
+			return
+		}
 		const job = await download_job_cancel(jobId)
 		await reconcileJob(job)
 	}
@@ -308,6 +353,27 @@ export function createDownloadManager(handleError: (error: unknown) => void): Do
 	const activeJobs = computed(() => jobs.value.filter((job) => activeStatuses.has(job.status)))
 	const historyJobs = computed(() => jobs.value.filter((job) => !activeStatuses.has(job.status)))
 
+	const syntheticIds = new Set<string>()
+	const syntheticCancelHandlers = new Map<string, () => void | Promise<void>>()
+
+	function addSyntheticJob(job: InstallJobSnapshot) {
+		syntheticIds.add(job.job_id)
+		jobs.value = [job, ...jobs.value].sort((a, b) => b.created.localeCompare(a.created))
+	}
+
+	function setSyntheticJob(job: InstallJobSnapshot) {
+		if (!syntheticIds.has(job.job_id)) return
+		setJob(job)
+	}
+
+	function onSyntheticCancel(jobId: string, handler: () => void | Promise<void>) {
+		syntheticCancelHandlers.set(jobId, handler)
+	}
+
+	function offSyntheticCancel(jobId: string) {
+		syntheticCancelHandlers.delete(jobId)
+	}
+
 	return {
 		jobs,
 		legacyDownloads,
@@ -323,11 +389,16 @@ export function createDownloadManager(handleError: (error: unknown) => void): Do
 		skipMissingContent,
 		remove,
 		clearHistory,
+		addSyntheticJob,
+		setSyntheticJob,
+		onSyntheticCancel,
+		offSyntheticCancel,
 		dispose() {
 			disposed = true
 			initializing = false
 			pendingInitialUpdates.length = 0
 			pendingRequestUpdatesByJob.clear()
+			syntheticCancelHandlers.clear()
 			if (requestFlushTimer !== null) {
 				clearTimeout(requestFlushTimer)
 				requestFlushTimer = null

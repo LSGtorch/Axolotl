@@ -44,6 +44,12 @@ pub struct EditInstance {
         with = "serde_with::rust::double_option"
     )]
     pub symlink_target: Option<Option<String>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "serde_with::rust::double_option"
+    )]
+    pub game_dir_override: Option<Option<String>>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -182,6 +188,32 @@ pub(crate) async fn edit_instance(
     if let Some(link) = &patch.link {
         instance_rows::upsert_instance_link(&instance.id, link, &mut tx)
             .await?;
+        if matches!(link, InstanceLink::Unmanaged) {
+            let content_set_id = content_set
+                .as_ref()
+                .map(|content_set| content_set.id.as_str())
+                .or(instance.applied_content_set_id.as_deref());
+            if let Some(content_set_id) = content_set_id {
+                sqlx::query(
+                    "UPDATE instance_content_sets SET source_kind = 'local', modified = ? WHERE id = ?",
+                )
+                .bind(now.timestamp())
+                .bind(content_set_id)
+                .execute(&mut *tx)
+                .await?;
+                sqlx::query(
+                    "UPDATE instance_content_entries SET source_kind = 'local', ownership_kind = 'user_added', modified_at = ? WHERE content_set_id = ? AND ownership_kind = 'pack_managed'",
+                )
+                .bind(now.timestamp())
+                .bind(content_set_id)
+                .execute(&mut *tx)
+                .await?;
+                sqlx::query("DELETE FROM instance_pack_members WHERE content_set_id = ?")
+                    .bind(content_set_id)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+        }
     }
 
     if let Some(groups) = &patch.groups {
@@ -267,6 +299,9 @@ fn apply_instance_patch(
     }
     if let Some(symlink_target) = &patch.symlink_target {
         instance.symlink_target = symlink_target.clone();
+    }
+    if let Some(game_dir_override) = &patch.game_dir_override {
+        instance.game_dir_override = game_dir_override.clone();
     }
 
     instance.modified = now;

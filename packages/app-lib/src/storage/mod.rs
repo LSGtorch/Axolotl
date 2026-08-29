@@ -623,8 +623,7 @@ async fn scan_instance(
     instance: &InstanceMetadata,
 ) -> crate::Result<Option<StorageNode>> {
     let directories = dirs()?;
-    let instance_path =
-        directories.instances_dir().join(&instance.instance.path);
+    let instance_path = directories.instance_game_dir(&instance.instance);
 
     let mut visited = HashSet::new();
     let total = match fs::symlink_metadata(&instance_path).await {
@@ -709,6 +708,11 @@ pub async fn scan_instances_category() -> crate::Result<Option<StorageNode>> {
         ));
     }
 
+    // The category total reflects the launcher-managed instances root. External
+    // `game_dir_override` content is reported on each instance's own node; it is
+    // intentionally not folded into the aggregate (which is bounded by the
+    // managed root) to avoid double counting and the empty-instances case where
+    // the root still holds files.
     let total = root_total;
     if total.total() == 0 {
         return Ok(None);

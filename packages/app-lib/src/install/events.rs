@@ -3,7 +3,7 @@ use super::model::{
     InstallErrorContext, InstallJobEventKind, InstallJobSnapshot,
     InstallJobState, InstallParallelProgress, InstallPauseReason,
     InstallPhaseDetails, InstallPhaseId, InstallProgress, InstallRollbackState,
-    MissingModpackContentState,
+    InstanceUpgradeResult, MissingModpackContentState,
 };
 use super::store;
 use chrono::Utc;
@@ -397,6 +397,20 @@ impl InstallProgressReporter {
         let mut state = self.state.lock().await;
         self.sync_latest(&mut state, &app_state).await?;
         state.job.missing_content = missing_content;
+        let record =
+            store::update_state(self.job_id, &state.job, &app_state).await?;
+        state.mark_persisted();
+        emit_install_job(&record.snapshot()).await
+    }
+
+    pub async fn set_upgrade_result(
+        &self,
+        result: InstanceUpgradeResult,
+    ) -> crate::Result<()> {
+        let app_state = crate::State::get().await?;
+        let mut state = self.state.lock().await;
+        self.sync_latest(&mut state, &app_state).await?;
+        state.job.upgrade_result = Some(result);
         let record =
             store::update_state(self.job_id, &state.job, &app_state).await?;
         state.mark_persisted();
@@ -1051,11 +1065,13 @@ mod tests {
     use crate::api::pack::install_from::CreatePackLocation;
     use crate::install::InstallRequest;
     #[cfg(not(feature = "tauri"))]
+    use crate::install::model::InstallProgress;
+    #[cfg(not(feature = "tauri"))]
     use crate::install::model::InstallProgressSecondary;
     use crate::install::model::{
         InstallJobEventKind, InstallJobExecutionMode, InstallJobKind,
         InstallJobStatus, InstallPauseReason, InstallPhaseDetails,
-        InstallPhaseId, InstallProgress, MissingModpackContentState,
+        InstallPhaseId, MissingModpackContentState,
     };
     use crate::state::{InstanceLink, ModLoader};
 
@@ -1096,6 +1112,7 @@ mod tests {
             adjuncts: Vec::new(),
             icon_path: None,
             link: InstanceLink::Unmanaged,
+            game_dir_override: None,
         });
         job.set_progress(
             InstallPhaseId::DownloadingMinecraft,
@@ -1120,6 +1137,7 @@ mod tests {
             adjuncts: Vec::new(),
             icon_path: None,
             link: InstanceLink::Unmanaged,
+            game_dir_override: None,
         });
 
         let first = InstallProgressReporter::new(job_id, state.clone());
@@ -1139,6 +1157,7 @@ mod tests {
             adjuncts: Vec::new(),
             icon_path: None,
             link: InstanceLink::Unmanaged,
+            game_dir_override: None,
         });
         let first = InstallProgressReporter::new(job_id, state.clone());
         let second = InstallProgressReporter::new(job_id, state);
@@ -1213,6 +1232,7 @@ mod tests {
             adjuncts: Vec::new(),
             icon_path: None,
             link: InstanceLink::Unmanaged,
+            game_dir_override: None,
         });
         job.record_event(InstallJobEventKind::ContentDownloadStarted {
             files: 1,
@@ -1386,6 +1406,7 @@ mod tests {
                 project_id: "123".to_string(),
                 version_id: "456".to_string(),
             },
+            game_dir_override: None,
         });
         job.record_event(InstallJobEventKind::ContentFileSkipped {
             path: path.clone(),

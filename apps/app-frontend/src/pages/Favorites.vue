@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { Labrinth } from '@modrinth/api-client'
 import {
+	BookmarkFilledIcon,
 	BookmarkIcon,
 	CheckIcon,
 	ChevronDownIcon,
@@ -347,12 +348,18 @@ function typeLabel(type: FavoriteContentType): string {
 }
 
 function toUnavailable(favorite: ContentFavorite): FavoriteProject {
+	const provider =
+		favorite.provider === 'curseforge'
+			? 'CurseForge'
+			: favorite.provider === 'mcarchive'
+				? 'MCArchive'
+				: 'Modrinth'
 	return {
 		favorite,
 		provider: favorite.provider,
 		projectId: favorite.project_id,
 		title: formatMessage(messages.unavailableTitle, {
-			provider: favorite.provider === 'curseforge' ? 'CurseForge' : 'Modrinth',
+			provider,
 			projectId: favorite.project_id,
 		}),
 		description: formatMessage(messages.unavailableDescription),
@@ -472,8 +479,11 @@ async function refreshProjects() {
 				const project = modrinthById.get(favorite.project_id)
 				return project ? toModrinthFavorite(project, favorite) : toUnavailable(favorite)
 			}
-			const project = curseForgeById.get(favorite.project_id)
-			return project ? toCurseForgeFavorite(project, favorite) : toUnavailable(favorite)
+			if (favorite.provider === 'curseforge') {
+				const project = curseForgeById.get(favorite.project_id)
+				return project ? toCurseForgeFavorite(project, favorite) : toUnavailable(favorite)
+			}
+			return toUnavailable(favorite)
 		})
 	} catch (error) {
 		handleError(error)
@@ -898,7 +908,7 @@ onMounted(async () => {
 									v-if="contentFavorites.isPending(project.provider, project.projectId)"
 									class="animate-spin"
 								/>
-								<BookmarkIcon v-else />
+								<BookmarkFilledIcon v-else />
 							</button>
 						</ButtonStyled>
 					</div>

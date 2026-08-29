@@ -225,6 +225,7 @@ const selectedDisplayMode = computed(() =>
 		:filters="ctx.serverFilterTypes.value"
 		:provided-filters="[]"
 		:overridden-provided-filter-types="[]"
+		:project-type="ctx.projectType.value"
 	/>
 	<SearchFilterControl
 		v-else
@@ -236,8 +237,11 @@ const selectedDisplayMode = computed(() =>
 		"
 		:provided-filters="ctx.providedFilters?.value ?? []"
 		:overridden-provided-filter-types="ctx.overriddenProvidedFilterTypes.value"
+		:project-type="ctx.projectType.value"
 		:provided-message="lockedMessages?.providedBy"
 	/>
+
+	<slot name="above-results" />
 
 	<div class="search">
 		<section v-if="ctx.loading.value" class="offline">

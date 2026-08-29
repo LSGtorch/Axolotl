@@ -7,11 +7,7 @@ import {
 	hasCompatibleCurseForgeFile,
 } from './curseforge.ts'
 
-function curseForgeFile(
-	id: number,
-	isAvailable: boolean,
-	gameVersions: string[],
-): CurseForgeFile {
+function curseForgeFile(id: number, isAvailable: boolean, gameVersions: string[]): CurseForgeFile {
 	return {
 		id,
 		modId: 322385,

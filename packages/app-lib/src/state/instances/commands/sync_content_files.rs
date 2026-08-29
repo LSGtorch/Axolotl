@@ -16,12 +16,13 @@ use uuid::Uuid;
 /// belongs to this instance.
 ///
 /// Ordinary instances own their profile directory under Axolotl's instances
-/// folder. Directly associated instances have no profile directory: their
-/// content lives inside the externally managed installation, resolved through
-/// the launcher dialect so PCL version isolation (`versions/<id>` gameDir) is
-/// honored; the shared linked `.minecraft` root is the fallback when the
-/// dialect resolution cannot be completed (see
-/// `launcher::linked_game_dir`).
+/// folder, honouring a per-instance `game_dir_override`
+/// (`DirectoryInfo::instance_game_dir`). Directly associated instances have no
+/// profile directory: their content lives inside the externally managed
+/// installation, resolved through the launcher dialect so PCL version
+/// isolation (`versions/<id>` gameDir) is honored; the shared linked
+/// `.minecraft` root is the fallback when the dialect resolution cannot be
+/// completed (see `launcher::linked_game_dir`).
 pub(crate) fn instance_content_root(
     directories: &DirectoryInfo,
     instance: &Instance,
@@ -39,9 +40,7 @@ pub(crate) fn instance_content_root(
         return Ok(io::canonicalize(game_dir)?);
     }
 
-    Ok(io::canonicalize(
-        directories.instances_dir().join(&instance.path),
-    )?)
+    Ok(io::canonicalize(directories.instance_game_dir(instance))?)
 }
 
 pub(crate) async fn sync_content_files(
@@ -66,15 +65,25 @@ pub(crate) async fn sync_instance_content_files(
     let _instance_lock = state.lock_instance_content(&instance.id).await;
     let content_root = instance_content_root(&state.directories, instance)?;
     // The hash-cache layer resolves key paths against Axolotl's own instances
-    // folder (`state/cache.rs`). Passing the absolute content root as the
-    // "instance path" keeps every layer on the same directory for directly
-    // associated instances: joining an absolute path replaces the base, so the
-    // scanner reads the linked installation and hash-cache misses hash the
-    // linked files instead of failing on the nonexistent profile path.
-    let scanned = filesystem::scan_content_files(
-        &content_root,
-        &content_root.to_string_lossy(),
-    )?;
+    // folder (`state/cache.rs`). For directly associated instances the
+    // absolute linked root is passed as the "instance path": joining an
+    // absolute path replaces the base, so the cache layer hashes the linked
+    // files instead of failing on the nonexistent profile path. Managed
+    // instances keep the relative profile path so the cache layer can resolve
+    // a `game_dir_override` target from the database.
+    let is_direct_linked = crate::launcher::linked_game_dir(instance).is_some()
+        || instance
+            .linked_dot_minecraft
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|linked| !linked.is_empty());
+    let cache_key_path = if is_direct_linked {
+        content_root.to_string_lossy().into_owned()
+    } else {
+        instance.path.clone()
+    };
+    let scanned =
+        filesystem::scan_content_files_from(&content_root, &cache_key_path)?;
     let scanned_paths = scanned
         .iter()
         .map(|file| file.relative_path.clone())
@@ -116,12 +125,12 @@ pub(crate) async fn sync_instance_content_files(
             .push(file.clone());
         existing_files_by_path.insert(file.relative_path.clone(), file);
     }
-    let entry_file_ids = match sqlite::content_rows::get_applied_content_set(
+    let content_set = sqlite::content_rows::get_applied_content_set(
         &instance.id,
         &state.pool,
     )
-    .await?
-    {
+    .await?;
+    let entry_file_ids = match content_set.as_ref() {
         Some(content_set) => sqlite::content_rows::get_content_entries(
             &content_set.id,
             &state.pool,
@@ -138,18 +147,30 @@ pub(crate) async fn sync_instance_content_files(
     let mut reclaims: HashMap<String, String> = HashMap::new();
     let mut merges: HashMap<String, String> = HashMap::new();
     let mut claimed_reclaim_ids = HashSet::new();
+    let mut externally_changed_file_ids = HashSet::new();
 
     for file in scanned {
         let hash_key = file.hash_cache_key.trim_end_matches(".disabled");
-        let Some(hash) = hashes_by_key.get(hash_key) else {
-            continue;
-        };
         let existing_file = existing_files_by_path.get(&file.relative_path);
+        let (scanned_sha1, scanned_size) = if existing_file.is_some() {
+            let path = state
+                .directories
+                .instances_dir()
+                .join(&instance.path)
+                .join(&file.relative_path);
+            let (_, sha1) = fetch::sha1_file_async(&path).await?;
+            (sha1, file.size)
+        } else {
+            let Some(hash) = hashes_by_key.get(hash_key) else {
+                continue;
+            };
+            (hash.hash.clone(), hash.size)
+        };
         let reclaim_candidate = if existing_file.is_some() {
             None
         } else {
             reclaimable_existing_file(
-                &hash.hash,
+                &scanned_sha1,
                 &file.relative_path,
                 &existing_files_by_sha1,
                 &scanned_paths,
@@ -160,7 +181,7 @@ pub(crate) async fn sync_instance_content_files(
             .filter(|file| !entry_file_ids.contains(&file.id))
             .and_then(|file| {
                 mergeable_tracked_file(
-                    &hash.hash,
+                    &scanned_sha1,
                     &file.relative_path,
                     &file.id,
                     &existing_files_by_sha1,
@@ -170,6 +191,15 @@ pub(crate) async fn sync_instance_content_files(
                 )
             });
         let source_file = existing_file.or(reclaim_candidate);
+        if let Some(existing_file) = existing_file
+            && physical_file_identity_changed(
+                existing_file,
+                &scanned_sha1,
+                scanned_size,
+            )
+        {
+            externally_changed_file_ids.insert(existing_file.id.clone());
+        }
         if let Some(candidate) = reclaim_candidate {
             claimed_reclaim_ids.insert(candidate.id.clone());
             reclaims.insert(
@@ -190,8 +220,8 @@ pub(crate) async fn sync_instance_content_files(
             relative_path: file.relative_path,
             file_name: file.file_name,
             enabled: file.enabled,
-            sha1: hash.hash.clone(),
-            size: file.size,
+            sha1: scanned_sha1,
+            size: scanned_size,
             missing: false,
             added_at: source_file.map(|file| file.added_at).unwrap_or(now),
             modified_at: now,
@@ -204,6 +234,8 @@ pub(crate) async fn sync_instance_content_files(
     // resource packs) for files that don't have them yet. This also backfills
     // rows created before these features existed; `icon_path` distinguishes
     // not-attempted (NULL), no-icon (empty string), and cached (path).
+    // `content_root` already resolves the override / linked root consistently
+    // for both managed and directly associated instances.
     let instance_dir = content_root;
     let icon_cache_dir = state.directories.caches_dir().join("icons");
     for file in &mut files {
@@ -287,6 +319,17 @@ pub(crate) async fn sync_instance_content_files(
     sqlite::content_rows::ensure_instance_exists(&instance.id, &mut tx).await?;
     sqlite::content_rows::mark_instance_files_missing(&instance.id, &mut tx)
         .await?;
+    let mut invalidated_provider_identity = false;
+    if let Some(content_set) = content_set.as_ref() {
+        for file_id in &externally_changed_file_ids {
+            invalidated_provider_identity |= sqlite::content_rows::invalidate_exact_provider_refs_for_file_in_transaction(
+                &content_set.id,
+                file_id,
+                &mut tx,
+            )
+            .await?;
+        }
+    }
 
     // Upsert with a fresh id lookup inside the transaction. The ids assigned
     // during the scan may be stale if a concurrent operation (e.g. batch
@@ -331,6 +374,16 @@ pub(crate) async fn sync_instance_content_files(
                 upsert_scanned_file(&instance.id, file, &mut tx).await?
             };
         synced_files.push(synced);
+    }
+
+    if invalidated_provider_identity
+        && let Some(content_set) = content_set.as_ref()
+    {
+        sqlite::content_rows::bump_content_set_revision_in_transaction(
+            &content_set.id,
+            &mut tx,
+        )
+        .await?;
     }
 
     tx.commit().await?;
@@ -386,7 +439,8 @@ pub(crate) fn installed_modrinth_version_id(
         ContentProviderRef::Modrinth { version_id, .. } => {
             version_id.as_ref().cloned()
         }
-        ContentProviderRef::CurseForge { .. } => None,
+        ContentProviderRef::CurseForge { .. }
+        | ContentProviderRef::McArchive { .. } => None,
     })
 }
 
@@ -440,9 +494,9 @@ pub(crate) fn modrinth_update_enabled(
 ) -> bool {
     match origin_provider {
         Some(ContentProvider::Modrinth) => true,
-        Some(ContentProvider::CurseForge) | Some(ContentProvider::Local) => {
-            false
-        }
+        Some(ContentProvider::CurseForge)
+        | Some(ContentProvider::McArchive)
+        | Some(ContentProvider::Local) => false,
         None => provider_refs.iter().all(|reference| {
             matches!(reference, ContentProviderRef::Modrinth { .. })
         }),
@@ -451,6 +505,14 @@ pub(crate) fn modrinth_update_enabled(
 
 fn instance_file_id() -> String {
     format!("instance-file:{}", Uuid::new_v4())
+}
+
+fn physical_file_identity_changed(
+    existing: &InstanceFile,
+    scanned_sha1: &str,
+    scanned_size: u64,
+) -> bool {
+    existing.sha1 != scanned_sha1 || existing.size != scanned_size
 }
 
 async fn upsert_scanned_file(
@@ -758,6 +820,7 @@ mod tests {
             None,
             crate::state::InstanceLink::Unmanaged,
             None,
+            None,
         )
         .await
         .unwrap();
@@ -785,5 +848,102 @@ mod tests {
                 .map(|file| &file.relative_path)
                 .collect::<Vec<_>>(),
         );
+    }
+
+    /// Regression probe: an instance whose `game_dir_override` points to an
+    /// external `.minecraft` root must have its content scanned from that root,
+    /// not from the (empty) managed instance folder. This is the split-brain
+    /// the content page empty-state used to hit.
+    #[cfg(not(feature = "tauri"))]
+    #[tokio::test]
+    async fn content_scan_uses_game_dir_override() {
+        crate::event::EventState::init().await.unwrap();
+        let root = tempfile::tempdir().unwrap().keep();
+        let state =
+            crate::State::init_for_test(root.to_string_lossy().to_string())
+                .await
+                .unwrap();
+
+        // Create an external .minecraft root with a mod, outside the managed
+        // profiles dir.
+        let mc_root = tempfile::tempdir().unwrap();
+        let mods_dir = mc_root.path().join("mods");
+        fs::create_dir_all(&mods_dir).unwrap();
+        fs::write(mods_dir.join("my-mod.jar"), "mod").unwrap();
+
+        let created = crate::api::instance::create(
+            "Override Instance".to_string(),
+            "1.20.1".to_string(),
+            crate::state::ModLoader::Vanilla,
+            None,
+            None,
+            crate::state::InstanceLink::Unmanaged,
+            None,
+            Some(mc_root.path().to_string_lossy().to_string()),
+        )
+        .await
+        .unwrap();
+        crate::state::instances::commands::set_instance_install_stage(
+            &created.instance.id,
+            crate::state::InstanceInstallStage::Installed,
+            &state.pool,
+        )
+        .await
+        .unwrap();
+
+        let instance =
+            crate::state::instances::adapters::sqlite::instance_rows::get_instance_by_id(
+                &created.instance.id,
+                &state.pool,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            state.directories.instance_game_dir(&instance),
+            mc_root.path(),
+            "instance_game_dir must resolve to the override root"
+        );
+        let direct =
+            filesystem::scan_content_files_from(mc_root.path(), &instance.path)
+                .unwrap();
+        assert_eq!(
+            direct.len(),
+            1,
+            "direct scan of override root should find the mod"
+        );
+        let files = sync_instance_content_files(&instance, &state)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            files.len(),
+            1,
+            "expected the override-root mod to be scanned"
+        );
+        assert!(files[0].relative_path.ends_with("mods/my-mod.jar"));
+    }
+
+    #[test]
+    fn external_hash_or_size_change_invalidates_physical_identity() {
+        let now = Utc::now();
+        let file = InstanceFile {
+            id: "file".to_string(),
+            instance_id: "instance".to_string(),
+            relative_path: "mods/lithium.jar".to_string(),
+            file_name: "lithium.jar".to_string(),
+            enabled: true,
+            sha1: "official".to_string(),
+            size: 10,
+            missing: false,
+            added_at: now,
+            modified_at: now,
+            local_mod_data: None,
+            icon_path: None,
+        };
+
+        assert!(!physical_file_identity_changed(&file, "official", 10));
+        assert!(physical_file_identity_changed(&file, "external", 10));
+        assert!(physical_file_identity_changed(&file, "official", 11));
     }
 }

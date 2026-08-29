@@ -14,3 +14,7 @@ MODRINTH_API_URL_V3 = "https://api.modrinth.com/v3/"
 MODRINTH_LAUNCHER_META_URL = "https://launcher-meta.modrinth.com/"
 MODRINTH_URL = "https://modrinth.com/"
 MODRINTH_SOCKET_URL = "wss://disabled.invalid/"
+# Matches the tokio thread stack size the app runtime is created with; merged
+# instance/install call paths exceed 2 MiB (the default test-thread stack),
+# which otherwise aborts `cargo test` binaries with a stack overflow.
+RUST_MIN_STACK = "16777216"

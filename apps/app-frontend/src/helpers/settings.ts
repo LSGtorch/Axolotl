@@ -76,14 +76,25 @@ export function setUpdateSource(source: UpdateSource) {
 	localStorage.setItem(UPDATE_SOURCE_STORAGE_KEY, source)
 }
 
-export type BrowseContentSource = 'all' | 'modrinth' | 'curseforge'
+export type BrowseContentSource =
+	| 'all'
+	| 'modrinth'
+	| 'curseforge'
+	| 'mcarchive'
+	| 'planet_minecraft'
 
 const BROWSE_CONTENT_SOURCE_STORAGE_KEY = 'axolotl-browse-content-source'
 const BROWSE_DEFAULT_INSTANCE_STORAGE_KEY = 'axolotl-browse-default-instance'
 
 export function getLastBrowseContentSource(): BrowseContentSource | null {
 	const value = localStorage.getItem(BROWSE_CONTENT_SOURCE_STORAGE_KEY)
-	return value === 'all' || value === 'modrinth' || value === 'curseforge' ? value : null
+	return value === 'all' ||
+		value === 'modrinth' ||
+		value === 'curseforge' ||
+		value === 'mcarchive' ||
+		value === 'planet_minecraft'
+		? value
+		: null
 }
 
 export function setLastBrowseContentSource(source: BrowseContentSource) {

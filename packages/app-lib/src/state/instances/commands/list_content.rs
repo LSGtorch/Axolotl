@@ -1327,7 +1327,6 @@ async fn content_projects_for_files(
             resolved,
             &files,
             &file_info_by_hash,
-            &entry_maps,
             state,
         )
         .await?
@@ -1431,6 +1430,7 @@ async fn content_projects_for_files(
                                 project_id, ..
                             } => Some(project_id.as_str()),
                             ContentProviderRef::CurseForge { .. } => None,
+                            ContentProviderRef::McArchive { .. } => None,
                         },
                     ),
                 ) {
@@ -1468,6 +1468,7 @@ async fn content_projects_for_files(
                                 project_id, ..
                             } => Some(project_id.as_str()),
                             ContentProviderRef::CurseForge { .. } => None,
+                            ContentProviderRef::McArchive { .. } => None,
                         },
                     ),
                 ) {
@@ -1527,28 +1528,52 @@ async fn reconcile_hash_matched_entries(
     resolved: &ResolvedContentScope,
     files: &[InstanceFile],
     file_info_by_hash: &HashMap<String, crate::state::ModrinthHashMatch>,
-    entry_maps: &EntryMaps,
     state: &State,
 ) -> crate::Result<bool> {
+    let _instance_lock =
+        state.lock_instance_content(&resolved.instance.id).await;
+    let entry_maps =
+        load_entry_maps(&resolved.content_set.id, &state.pool).await?;
     let candidates = files
         .iter()
         .filter_map(|file| {
-            if file.missing
-                || entry_maps.entries_by_file_id.contains_key(&file.id)
-            {
+            if file.missing {
                 return None;
             }
             let metadata = file_info_by_hash.get(&file.sha1)?;
+            let provider_ref = ContentProviderRef::Modrinth {
+                project_id: ModrinthProjectId::new(metadata.project_id.clone())
+                    .ok()?,
+                version_id: Some(
+                    ModrinthVersionId::new(metadata.version_id.clone()).ok()?,
+                ),
+            };
+            let provider_refs = entry_maps
+                .provider_refs_by_file_id
+                .get(&file.id)
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            if provider_refs.iter().any(|reference| {
+                matches!(
+                    reference,
+                    ContentProviderRef::Modrinth {
+                        project_id,
+                        version_id: Some(version_id),
+                    } if project_id.as_str() == metadata.project_id
+                        && version_id.as_str() == metadata.version_id
+                )
+            }) {
+                return None;
+            }
             let project_type = project_type_for_file(file)?;
-            Some((file, metadata, project_type))
+            let entry = entry_maps.entries_by_file_id.get(&file.id);
+            Some((file, project_type, entry, provider_ref))
         })
         .collect::<Vec<_>>();
     if candidates.is_empty() {
         return Ok(false);
     }
 
-    let _instance_lock =
-        state.lock_instance_content(&resolved.instance.id).await;
     let mut tx = state.pool.begin_with("BEGIN IMMEDIATE").await?;
     sqlite::content_rows::ensure_content_write_parents(
         &resolved.instance.id,
@@ -1556,33 +1581,32 @@ async fn reconcile_hash_matched_entries(
         &mut tx,
     )
     .await?;
-    for (file, metadata, project_type) in &candidates {
-        let entry = sqlite::content_rows::upsert_content_entry_from_parts_in_transaction(
-            sqlite::content_rows::UpsertContentEntry {
-                instance_id: &resolved.instance.id,
-                content_set_id: &resolved.content_set.id,
-                file_id: Some(&file.id),
-                project_type: *project_type,
-                source_kind: ContentSourceKind::Local,
-                ownership_kind: ContentOwnershipKind::UserAdded,
-                auto_dependency: false,
-                server_requirement: ContentRequirement::Required,
-                client_requirement: ContentRequirement::Required,
-                enabled: file.enabled,
-            },
-            &mut tx,
-        )
-        .await?;
-        let provider_ref = ContentProviderRef::Modrinth {
-            project_id: ModrinthProjectId::new(metadata.project_id.clone())?,
-            version_id: Some(ModrinthVersionId::new(
-                metadata.version_id.clone(),
-            )?),
+    for (file, project_type, existing_entry, provider_ref) in &candidates {
+        let entry_id = if let Some(entry) = existing_entry {
+            entry.id.clone()
+        } else {
+            sqlite::content_rows::upsert_content_entry_from_parts_in_transaction(
+                sqlite::content_rows::UpsertContentEntry {
+                    instance_id: &resolved.instance.id,
+                    content_set_id: &resolved.content_set.id,
+                    file_id: Some(&file.id),
+                    project_type: *project_type,
+                    source_kind: ContentSourceKind::Local,
+                    ownership_kind: ContentOwnershipKind::UserAdded,
+                    auto_dependency: false,
+                    server_requirement: ContentRequirement::Required,
+                    client_requirement: ContentRequirement::Required,
+                    enabled: file.enabled,
+                },
+                &mut tx,
+            )
+            .await?
+            .id
         };
         sqlite::content_rows::upsert_content_provider_ref_in_transaction(
-            &entry.id,
-            &provider_ref,
-            true,
+            &entry_id,
+            provider_ref,
+            false,
             &mut tx,
         )
         .await?;
@@ -1675,12 +1699,15 @@ async fn content_files_to_content_items(
     let mut source_kind_by_path = HashMap::<String, ContentSourceKind>::new();
     let provider_rows = sqlx::query(
         "SELECT file.relative_path, ref.provider, ref.provider_project_id,
-                ref.provider_release_id, ref.is_origin, entry.source_kind
+                ref.provider_release_id, ref.provider_file_id, ref.is_origin, entry.source_kind
          FROM instance_files file
          INNER JOIN instance_content_entries entry ON entry.file_id = file.id
          INNER JOIN instance_content_provider_refs ref
             ON ref.content_entry_id = entry.id
-         WHERE file.instance_id = ?",
+         WHERE file.instance_id = ?
+         ORDER BY file.relative_path, ref.is_origin DESC, ref.provider,
+            ref.provider_project_id, ref.provider_release_id IS NULL,
+            ref.provider_release_id",
     )
     .bind(&instance.id)
     .fetch_all(&state.pool)
@@ -1694,6 +1721,8 @@ async fn content_files_to_content_items(
                 provider.as_str(),
                 row.try_get("provider_project_id")?,
                 row.try_get::<Option<String>, _>("provider_release_id")?
+                    .as_deref(),
+                row.try_get::<Option<String>, _>("provider_file_id")?
                     .as_deref(),
             )?);
         if row.try_get::<i64, _>("is_origin")? != 0 {
@@ -1716,6 +1745,7 @@ async fn content_files_to_content_items(
                 Some(project_id.get())
             }
             ContentProviderRef::Modrinth { .. } => None,
+            ContentProviderRef::McArchive { .. } => None,
         })
         .collect::<HashSet<_>>();
     let curseforge_projects = if cache_behaviour
@@ -1788,13 +1818,12 @@ async fn content_files_to_content_items(
                 .collect()
         })
         .await?;
-    // Same join-replacement trick as the content scan: the absolute resolved
-    // root is passed as the "instance path" so backups are read from the
-    // linked installation of directly associated instances.
+    // Backups are read from the resolved root: the linked installation for
+    // directly associated instances, the `game_dir_override` target (or the
+    // profile directory) otherwise.
     let content_backups =
-        crate::state::instances::adapters::filesystem::scan_content_backups(
+        crate::state::instances::adapters::filesystem::scan_content_backups_from(
             &instance_path,
-            &instance_path.to_string_lossy(),
         )?;
     let mut items = files
         .iter()
@@ -2702,11 +2731,123 @@ fn sort_content_items(items: &mut [ContentItem]) {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        InstanceInstallTarget, ProjectType, instance_matches_targets,
-        linked_curseforge_modpack_ids, linked_modrinth_modpack_ids,
-    };
-    use crate::state::instances::InstanceLink;
+    use super::*;
+    use crate::state::instances::{CreateInstance, InstanceLink};
+    use chrono::Utc;
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+
+    async fn reconciliation_fixture() -> (
+        tempfile::TempDir,
+        std::sync::Arc<State>,
+        ResolvedContentScope,
+    ) {
+        let temp = tempfile::tempdir().unwrap();
+        let directories = crate::state::DirectoryInfo {
+            settings_dir: temp.path().to_path_buf(),
+            config_dir: temp.path().to_path_buf(),
+            app_identifier: "provider-reconciliation-test".to_string(),
+        };
+        std::fs::create_dir_all(directories.instances_dir()).unwrap();
+        let pool = SqlitePoolOptions::new()
+            .max_connections(4)
+            .connect_with(
+                SqliteConnectOptions::new()
+                    .filename(temp.path().join("state.db"))
+                    .create_if_missing(true)
+                    .foreign_keys(true),
+            )
+            .await
+            .unwrap();
+        sqlx::migrate!().run(&pool).await.unwrap();
+        let state = crate::state::test_state(directories, pool).await.unwrap();
+        let instance = crate::state::instances::create_instance(
+            CreateInstance {
+                name: "Provider reconciliation".to_string(),
+                path: Some("provider-reconciliation".to_string()),
+                game_version: "1.21.4".to_string(),
+                loader: ModLoader::Vanilla,
+                loader_version: None,
+                icon_path: None,
+                link: InstanceLink::Unmanaged,
+                symlink_target: None,
+                game_dir_override: None,
+            },
+            &state,
+        )
+        .await
+        .unwrap();
+        let content_set = sqlite::content_rows::get_applied_content_set(
+            &instance.id,
+            &state.pool,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let resolved = ResolvedContentScope {
+            instance,
+            content_set,
+        };
+        (temp, state, resolved)
+    }
+
+    async fn insert_test_file(
+        resolved: &ResolvedContentScope,
+        state: &State,
+        id: &str,
+        path: &str,
+        sha1: &str,
+        enabled: bool,
+    ) -> InstanceFile {
+        let now = Utc::now();
+        let file = InstanceFile {
+            id: id.to_string(),
+            instance_id: resolved.instance.id.clone(),
+            relative_path: path.to_string(),
+            file_name: path.rsplit('/').next().unwrap().to_string(),
+            enabled,
+            sha1: sha1.to_string(),
+            size: 1,
+            missing: false,
+            added_at: now,
+            modified_at: now,
+            local_mod_data: None,
+            icon_path: None,
+        };
+        let mut tx = state.pool.begin().await.unwrap();
+        sqlite::content_rows::upsert_instance_file(&file, &mut tx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        file
+    }
+
+    async fn insert_test_entry(
+        resolved: &ResolvedContentScope,
+        state: &State,
+        file: &InstanceFile,
+        enabled: bool,
+    ) -> ContentEntry {
+        let mut tx = state.pool.begin().await.unwrap();
+        let entry = sqlite::content_rows::upsert_content_entry_from_parts_in_transaction(
+            sqlite::content_rows::UpsertContentEntry {
+                instance_id: &resolved.instance.id,
+                content_set_id: &resolved.content_set.id,
+                file_id: Some(&file.id),
+                project_type: ProjectType::Mod,
+                source_kind: ContentSourceKind::Local,
+                ownership_kind: ContentOwnershipKind::UserAdded,
+                auto_dependency: false,
+                server_requirement: ContentRequirement::Optional,
+                client_requirement: ContentRequirement::Required,
+                enabled,
+            },
+            &mut tx,
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        entry
+    }
 
     #[test]
     fn resource_pack_install_candidates_ignore_game_version() {
@@ -2765,5 +2906,382 @@ mod tests {
         );
         assert_eq!(linked_modrinth_modpack_ids(&imported), None);
         assert_eq!(linked_curseforge_modpack_ids(&imported), None);
+    }
+
+    #[tokio::test]
+    async fn exact_hash_backfill_preserves_entry_origin_aliases_and_revision() {
+        let (_temp, state, resolved) = reconciliation_fixture().await;
+        let file = insert_test_file(
+            &resolved,
+            &state,
+            "file-existing",
+            "mods/vuurkrabs-tweaks-1.0.0.jar",
+            "exact-sha1",
+            false,
+        )
+        .await;
+        let entry = insert_test_entry(&resolved, &state, &file, false).await;
+        let curseforge_ref = ContentProviderRef::CurseForge {
+            project_id: crate::state::CurseForgeProjectId::new(123).unwrap(),
+            file_id: Some(crate::state::CurseForgeFileId::new(456).unwrap()),
+        };
+        let mut tx = state.pool.begin().await.unwrap();
+        sqlite::content_rows::upsert_content_provider_ref_in_transaction(
+            &entry.id,
+            &curseforge_ref,
+            true,
+            &mut tx,
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        let revision = sqlite::content_rows::get_applied_content_set(
+            &resolved.instance.id,
+            &state.pool,
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .revision;
+        let matches = HashMap::from([(
+            file.sha1.clone(),
+            crate::state::ModrinthHashMatch {
+                hash: file.sha1.clone(),
+                project_id: "5LTBDHXu".to_string(),
+                version_id: "eKsF3BdO".to_string(),
+            },
+        )]);
+
+        assert!(
+            reconcile_hash_matched_entries(
+                &resolved,
+                std::slice::from_ref(&file),
+                &matches,
+                &state,
+            )
+            .await
+            .unwrap()
+        );
+        let stored_entry = sqlite::content_rows::get_content_entries(
+            &resolved.content_set.id,
+            &state.pool,
+        )
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|candidate| candidate.id == entry.id)
+        .unwrap();
+        assert_eq!(
+            stored_entry.ownership_kind,
+            ContentOwnershipKind::UserAdded
+        );
+        assert!(!stored_entry.auto_dependency);
+        assert!(!stored_entry.enabled);
+        assert_eq!(
+            stored_entry.server_requirement,
+            ContentRequirement::Optional
+        );
+        let refs = sqlite::content_rows::get_content_provider_refs_with_origin(
+            &entry.id,
+            &state.pool,
+        )
+        .await
+        .unwrap();
+        assert_eq!(refs.len(), 2);
+        assert!(refs.iter().any(|(reference, origin)| {
+            reference == &curseforge_ref && *origin
+        }));
+        assert!(refs.iter().any(|(reference, origin)| {
+            matches!(
+                reference,
+                ContentProviderRef::Modrinth {
+                    project_id,
+                    version_id: Some(version_id),
+                } if project_id.as_str() == "5LTBDHXu"
+                    && version_id.as_str() == "eKsF3BdO"
+            ) && !origin
+        }));
+        let bumped_revision = sqlite::content_rows::get_applied_content_set(
+            &resolved.instance.id,
+            &state.pool,
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .revision;
+        assert_eq!(bumped_revision, revision + 1);
+
+        assert!(
+            !reconcile_hash_matched_entries(
+                &resolved,
+                std::slice::from_ref(&file),
+                &matches,
+                &state,
+            )
+            .await
+            .unwrap()
+        );
+        assert_eq!(
+            sqlite::content_rows::get_applied_content_set(
+                &resolved.instance.id,
+                &state.pool,
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .revision,
+            bumped_revision
+        );
+        assert_eq!(
+            sqlite::content_rows::get_content_provider_refs_with_origin(
+                &entry.id,
+                &state.pool,
+            )
+            .await
+            .unwrap()
+            .len(),
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn external_file_edit_invalidates_exact_provider_refs() {
+        let (_temp, state, resolved) = reconciliation_fixture().await;
+        let relative_path = "mods/lithium.jar";
+        let file = insert_test_file(
+            &resolved,
+            &state,
+            "file-lithium",
+            relative_path,
+            "official-sha1",
+            true,
+        )
+        .await;
+        let entry = insert_test_entry(&resolved, &state, &file, true).await;
+        let modrinth = ContentProviderRef::Modrinth {
+            project_id: ModrinthProjectId::new("gvQqBUqZ").unwrap(),
+            version_id: Some(ModrinthVersionId::new("Oqq8TOAV").unwrap()),
+        };
+        let curseforge = ContentProviderRef::CurseForge {
+            project_id: crate::state::CurseForgeProjectId::new(123).unwrap(),
+            file_id: Some(crate::state::CurseForgeFileId::new(456).unwrap()),
+        };
+        let mut tx = state.pool.begin().await.unwrap();
+        sqlite::content_rows::upsert_content_provider_ref_in_transaction(
+            &entry.id, &modrinth, true, &mut tx,
+        )
+        .await
+        .unwrap();
+        sqlite::content_rows::upsert_content_provider_ref_in_transaction(
+            &entry.id,
+            &curseforge,
+            false,
+            &mut tx,
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        let mut tx = state.pool.begin().await.unwrap();
+        assert!(
+            sqlite::content_rows::invalidate_exact_provider_refs_for_file_in_transaction(
+                &resolved.content_set.id,
+                &file.id,
+                &mut tx,
+            )
+            .await
+            .unwrap()
+        );
+        sqlite::content_rows::bump_content_set_revision_in_transaction(
+            &resolved.content_set.id,
+            &mut tx,
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+
+        let refs = sqlite::content_rows::get_content_provider_refs_with_origin(
+            &entry.id,
+            &state.pool,
+        )
+        .await
+        .unwrap();
+        assert_eq!(refs.len(), 2);
+        assert!(refs.iter().any(|(reference, origin)| {
+            *origin
+                && matches!(
+                    reference,
+                    ContentProviderRef::Modrinth {
+                        project_id,
+                        version_id: None,
+                    } if project_id.as_str() == "gvQqBUqZ"
+                )
+        }));
+        assert!(refs.iter().any(|(reference, origin)| {
+            !origin
+                && matches!(
+                    reference,
+                    ContentProviderRef::CurseForge {
+                        project_id,
+                        file_id: None,
+                    } if project_id.get() == 123
+                )
+        }));
+        let snapshot = super::super::content_snapshot::get_content_snapshot(
+            &resolved.instance.id,
+            false,
+            &state,
+        )
+        .await
+        .unwrap();
+        let item = snapshot
+            .items
+            .iter()
+            .find(|item| item.entry_id.as_deref() == Some(&entry.id))
+            .unwrap();
+        assert_eq!(item.provider_project_id.as_deref(), Some("gvQqBUqZ"));
+        assert_eq!(item.provider_release_id, None);
+    }
+
+    #[tokio::test]
+    async fn exact_hash_creates_local_entry_but_similarity_and_invalid_match_do_not()
+     {
+        let (_temp, state, resolved) = reconciliation_fixture().await;
+        let exact = insert_test_file(
+            &resolved,
+            &state,
+            "file-exact",
+            "mods/exact.disabled",
+            "exact",
+            false,
+        )
+        .await;
+        let similar = insert_test_file(
+            &resolved,
+            &state,
+            "file-similar",
+            "mods/5LTBDHXu-eKsF3BdO.jar",
+            "similar",
+            true,
+        )
+        .await;
+        let invalid = insert_test_file(
+            &resolved,
+            &state,
+            "file-invalid",
+            "mods/invalid.jar",
+            "invalid",
+            true,
+        )
+        .await;
+        let matches = HashMap::from([
+            (
+                exact.sha1.clone(),
+                crate::state::ModrinthHashMatch {
+                    hash: exact.sha1.clone(),
+                    project_id: "5LTBDHXu".to_string(),
+                    version_id: "eKsF3BdO".to_string(),
+                },
+            ),
+            (
+                invalid.sha1.clone(),
+                crate::state::ModrinthHashMatch {
+                    hash: invalid.sha1.clone(),
+                    project_id: "5LTBDHXu".to_string(),
+                    version_id: String::new(),
+                },
+            ),
+        ]);
+
+        assert!(
+            reconcile_hash_matched_entries(
+                &resolved,
+                &[exact.clone(), similar.clone(), invalid.clone()],
+                &matches,
+                &state,
+            )
+            .await
+            .unwrap()
+        );
+        let entries = sqlite::content_rows::get_content_entries(
+            &resolved.content_set.id,
+            &state.pool,
+        )
+        .await
+        .unwrap();
+        let exact_entry = entries
+            .iter()
+            .find(|entry| entry.file_id.as_deref() == Some(&exact.id))
+            .unwrap();
+        assert_eq!(exact_entry.ownership_kind, ContentOwnershipKind::UserAdded);
+        assert!(!exact_entry.auto_dependency);
+        assert!(!exact_entry.enabled);
+        assert_eq!(
+            sqlite::content_rows::get_content_provider_refs_with_origin(
+                &exact_entry.id,
+                &state.pool,
+            )
+            .await
+            .unwrap(),
+            vec![(
+                ContentProviderRef::Modrinth {
+                    project_id: ModrinthProjectId::new("5LTBDHXu").unwrap(),
+                    version_id: Some(
+                        ModrinthVersionId::new("eKsF3BdO").unwrap(),
+                    ),
+                },
+                false,
+            )]
+        );
+        assert!(!entries.iter().any(|entry| {
+            entry.file_id.as_deref() == Some(&similar.id)
+                || entry.file_id.as_deref() == Some(&invalid.id)
+        }));
+    }
+
+    #[tokio::test]
+    async fn ordinary_snapshot_does_not_backfill_verified_identity() {
+        let (_temp, state, resolved) = reconciliation_fixture().await;
+        let file = insert_test_file(
+            &resolved,
+            &state,
+            "file-read-only",
+            "mods/read-only.jar",
+            "read-only-hash",
+            true,
+        )
+        .await;
+        let revision = resolved.content_set.revision;
+
+        let snapshot = super::super::content_snapshot::get_content_snapshot(
+            &resolved.instance.id,
+            false,
+            &state,
+        )
+        .await
+        .unwrap();
+
+        assert!(snapshot.items.iter().any(|item| {
+            item.file_id.as_deref() == Some(&file.id) && item.provider.is_none()
+        }));
+        assert!(
+            sqlite::content_rows::get_content_entries(
+                &resolved.content_set.id,
+                &state.pool,
+            )
+            .await
+            .unwrap()
+            .is_empty()
+        );
+        assert_eq!(
+            sqlite::content_rows::get_applied_content_set(
+                &resolved.instance.id,
+                &state.pool,
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .revision,
+            revision
+        );
     }
 }

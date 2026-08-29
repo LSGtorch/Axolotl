@@ -83,7 +83,9 @@ const props = defineProps({
 
 const internalPlaying = ref(false)
 const isPlaying = computed(() => props.playing ?? internalPlaying.value)
-const displayIcon = computed(() => getDisplayInstanceIcon(props.instance.icon_path, props.instance.loader))
+const displayIcon = computed(() =>
+	getDisplayInstanceIcon(props.instance.icon_path, props.instance.loader),
+)
 const loading = ref(false)
 const modLoading = computed(
 	() =>
@@ -271,7 +273,9 @@ onUnmounted(() => unlisten())
 			@click="seeInstance"
 			@mouseenter="checkProcess"
 		>
-			<div class="relative flex aspect-square w-full shrink-0 items-center overflow-clip rounded-2xl">
+			<div
+				class="relative flex aspect-square w-full shrink-0 items-center overflow-clip rounded-2xl"
+			>
 				<Avatar
 					size="100%"
 					:src="displayIcon.url"

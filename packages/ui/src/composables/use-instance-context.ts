@@ -1,10 +1,10 @@
-import { computed } from 'vue'
+import { computed, type ComputedRef } from 'vue'
 import { useRoute } from 'vue-router'
 
 export interface InstanceContext {
-	isInInstance: boolean
-	instanceId: string | null
-	currentPage: string | null
+	isInInstance: ComputedRef<boolean>
+	instanceId: ComputedRef<string | null>
+	currentPage: ComputedRef<string | null>
 }
 
 export function useInstanceContext(): InstanceContext {
