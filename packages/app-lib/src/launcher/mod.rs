@@ -40,11 +40,13 @@ use tokio_util::sync::CancellationToken;
 use winreg::{RegKey, enums::HKEY_CURRENT_USER};
 
 mod args;
+mod direct_link;
 mod natives;
 
 pub mod download;
 pub mod jvm_args;
 pub mod language;
+pub mod local_version;
 pub mod optifine;
 pub mod quick_play_version;
 
