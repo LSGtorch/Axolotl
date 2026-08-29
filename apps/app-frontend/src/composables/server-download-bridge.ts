@@ -77,7 +77,9 @@ export function createServerDownloadBridge(
 
 	return {
 		update(progress, speed, eta) {
-			downloadManager.setSyntheticJob(snapshot('running', 'downloading_content', progress, speed, eta))
+			downloadManager.setSyntheticJob(
+				snapshot('running', 'downloading_content', progress, speed, eta),
+			)
 		},
 		complete(success, progress) {
 			downloadManager.offSyntheticCancel(jobId)

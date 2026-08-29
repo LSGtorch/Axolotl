@@ -37,6 +37,42 @@ pub fn get_class_paths(
     java_arch: &str,
     minecraft_updated: bool,
 ) -> crate::Result<String> {
+    // A version manifest can contain platform-specific revisions of the same
+    // Maven module (for example LWJGL 3.2.1 for macOS and 3.2.2 elsewhere).
+    // Rules normally leave only one revision enabled. Keep the last enabled
+    // revision as a safety net for stale or partially merged metadata; putting
+    // both JARs on the classpath lets the older one shadow the native ABI.
+    let mut seen_artifacts = HashSet::new();
+    let libraries = libraries
+        .iter()
+        .rev()
+        .filter(|library| {
+            if let Some(rules) = &library.rules
+                && !parse_rules(
+                    rules,
+                    java_arch,
+                    &QuickPlayType::None,
+                    minecraft_updated,
+                )
+            {
+                return false;
+            }
+            if !library.include_in_classpath {
+                return false;
+            }
+            // Modern Mojang manifests express native archives as separate
+            // classifier coordinates. A classifier must not displace the
+            // unclassified JAR that contains the Java classes.
+            let mut coordinates = library.name.split(':');
+            let group = coordinates.next().unwrap_or_default();
+            let artifact = coordinates.next().unwrap_or_default();
+            let _version = coordinates.next();
+            let classifier = coordinates.next().unwrap_or_default();
+            let key = format!("{group}:{artifact}:{classifier}");
+            seen_artifacts.insert(key)
+        })
+        .collect::<Vec<_>>();
+
     launcher_class_path
         .iter()
         .map(|path| {
@@ -51,27 +87,12 @@ pub fn get_class_paths(
                 .to_string_lossy()
                 .to_string())
         })
-        .chain(libraries.iter().filter_map(|library| {
-            if let Some(rules) = &library.rules
-                && !parse_rules(
-                    rules,
-                    java_arch,
-                    &QuickPlayType::None,
-                    minecraft_updated,
-                )
-            {
-                return None;
-            }
-
-            if !library.include_in_classpath {
-                return None;
-            }
-
-            Some(get_lib_path(
+        .chain(libraries.into_iter().rev().map(|library| {
+            get_lib_path(
                 libraries_path,
                 &library.name,
                 library.natives.is_some(),
-            ))
+            )
         }))
         .process_results(|iter| {
             iter.unique().join(classpath_separator(java_arch))
@@ -925,5 +946,67 @@ mod tests {
             get_class_paths(directory.path(), &[missing], &[], "x86_64", true)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn classpath_prefers_the_last_revision_of_a_duplicate_artifact() {
+        let directory = tempfile::tempdir().unwrap();
+        let old = directory
+            .path()
+            .join("org/lwjgl/lwjgl/3.2.1/lwjgl-3.2.1.jar");
+        let current = directory
+            .path()
+            .join("org/lwjgl/lwjgl/3.2.2/lwjgl-3.2.2.jar");
+        std::fs::create_dir_all(old.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(current.parent().unwrap()).unwrap();
+        std::fs::write(&old, b"old").unwrap();
+        std::fs::write(&current, b"current").unwrap();
+
+        let libraries: Vec<Library> =
+            ["org.lwjgl:lwjgl:3.2.1", "org.lwjgl:lwjgl:3.2.2"]
+                .into_iter()
+                .map(|name| {
+                    serde_json::from_value(serde_json::json!({
+                        "name": name,
+                    }))
+                    .unwrap()
+                })
+                .collect();
+        let class_paths =
+            get_class_paths(directory.path(), &libraries, &[], "x86_64", true)
+                .unwrap();
+
+        assert!(class_paths.contains("lwjgl-3.2.2.jar"));
+        assert!(!class_paths.contains("lwjgl-3.2.1.jar"));
+    }
+
+    #[test]
+    fn classpath_keeps_main_artifact_with_native_classifier() {
+        let directory = tempfile::tempdir().unwrap();
+        let main = directory
+            .path()
+            .join("org/lwjgl/lwjgl-glfw/3.3.3/lwjgl-glfw-3.3.3.jar");
+        let native = directory.path().join(
+            "org/lwjgl/lwjgl-glfw/3.3.3/lwjgl-glfw-3.3.3-natives-windows.jar",
+        );
+        std::fs::create_dir_all(main.parent().unwrap()).unwrap();
+        std::fs::write(&main, b"main").unwrap();
+        std::fs::write(&native, b"native").unwrap();
+
+        let libraries: Vec<Library> = [
+            "org.lwjgl:lwjgl-glfw:3.3.3",
+            "org.lwjgl:lwjgl-glfw:3.3.3:natives-windows",
+        ]
+        .into_iter()
+        .map(|name| {
+            serde_json::from_value(serde_json::json!({ "name": name })).unwrap()
+        })
+        .collect();
+        let class_paths =
+            get_class_paths(directory.path(), &libraries, &[], "x86_64", true)
+                .unwrap();
+
+        assert!(class_paths.contains("lwjgl-glfw-3.3.3.jar"));
+        assert!(class_paths.contains("lwjgl-glfw-3.3.3-natives-windows.jar"));
     }
 }

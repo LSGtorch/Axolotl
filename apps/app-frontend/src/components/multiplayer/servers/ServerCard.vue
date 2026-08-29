@@ -1,5 +1,11 @@
 <script setup lang="ts">
-import { DownloadIcon, PlayIcon, RefreshCwIcon, SpinnerIcon, StopCircleIcon } from '@modrinth/assets'
+import {
+	DownloadIcon,
+	PlayIcon,
+	RefreshCwIcon,
+	SpinnerIcon,
+	StopCircleIcon,
+} from '@modrinth/assets'
 import { ButtonStyled, defineMessages, TagItem, useVIntl } from '@modrinth/ui'
 import { computed } from 'vue'
 
@@ -216,12 +222,7 @@ const setupTooltip = computed(() => {
 						<RefreshCwIcon />
 					</button>
 				</ButtonStyled>
-				<ButtonStyled
-					v-else-if="server.status !== 'running'"
-					color="brand"
-					size="large"
-					circular
-				>
+				<ButtonStyled v-else-if="server.status !== 'running'" color="brand" size="large" circular>
 					<button
 						v-tooltip="formatMessage(messages.start)"
 						type="button"

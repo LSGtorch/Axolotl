@@ -89,9 +89,7 @@
 			</div>
 		</div>
 
-		<div
-			class="relative min-h-0 flex-1 overflow-hidden rounded-[20px]"
-		>
+		<div class="relative min-h-0 flex-1 overflow-hidden rounded-[20px]">
 			<LogViewport
 				ref="viewportRef"
 				class="h-full"

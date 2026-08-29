@@ -8184,10 +8184,10 @@
     "message": "即将支持"
   },
   "app.servers.wizard.type-heading": {
-    "message": "选择服务端类型"
+    "message": "选择服务器核心"
   },
   "app.servers.wizard.type-title": {
-    "message": "服务端类型"
+    "message": "服务器类型"
   },
   "app.servers.console.command-echo": {
     "message": "> {command}"
@@ -10180,5 +10180,8 @@
   },
   "app.settings.about.game.title": {
     "message": "合成美西螈"
+  },
+  "app.update-popup.apt-update": {
+    "message": "更新"
   }
 }

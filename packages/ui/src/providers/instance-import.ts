@@ -127,6 +127,8 @@ export interface SymlinkMethodInstance {
 	path?: string
 	launcherType?: string
 	basePath?: string
+	versionPath?: string
+	compatibleMode?: boolean
 }
 
 export type SymlinkImportMethod = 'copy' | 'symlink' | 'direct'

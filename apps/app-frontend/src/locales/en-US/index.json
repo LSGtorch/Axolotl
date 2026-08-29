@@ -7736,6 +7736,9 @@
   "app.update-popup.download": {
     "message": "Download ({size})"
   },
+  "app.update-popup.apt-update": {
+    "message": "Update"
+  },
   "app.update-popup.download-complete": {
     "message": "Download complete"
   },

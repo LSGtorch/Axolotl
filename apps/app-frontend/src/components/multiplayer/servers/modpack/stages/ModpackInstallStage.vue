@@ -64,9 +64,7 @@ const currentFile = computed(() => {
 })
 
 const isBusy = computed(
-	() =>
-		ctx.installPhase.value === 'preparing' ||
-		ctx.installPhase.value === 'downloading',
+	() => ctx.installPhase.value === 'preparing' || ctx.installPhase.value === 'downloading',
 )
 </script>
 
@@ -113,10 +111,7 @@ const isBusy = computed(
 			{{ ctx.installError.value }}
 		</Admonition>
 
-		<div
-			v-if="ctx.installPhase.value === 'error'"
-			class="flex flex-col gap-2"
-		>
+		<div v-if="ctx.installPhase.value === 'error'" class="flex flex-col gap-2">
 			<span class="text-sm font-semibold text-secondary">
 				{{ formatMessage(messages.installLog) }}
 			</span>

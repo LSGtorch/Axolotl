@@ -738,9 +738,10 @@ const activeGameRoot = computed(
 const gameDirOverride = computed(() => {
 	const root = activeGameRoot.value
 	if (method.value !== 'symlink' || !root) return null
-	return gameDirMode.value === 'isolated'
-		? `${root}/versions/${activeInstance.value?.name ?? ''}`
-		: root
+	if (gameDirMode.value === 'isolated') {
+		return activeInstance.value?.versionPath ?? activeInstance.value?.path ?? null
+	}
+	return root
 })
 const statsLoading = computed(() => Object.values(scanning.value).some(Boolean))
 const planError = computed(() => planErrors.value[activeIndex.value] ?? null)
@@ -1289,7 +1290,7 @@ function handleConfirm() {
 			gameDirOverride:
 				method.value === 'symlink' && root
 					? gameDirMode.value === 'isolated'
-						? `${root}/versions/${instance.name}`
+						? (instance.versionPath ?? instance.path ?? null)
 						: root
 					: null,
 		}

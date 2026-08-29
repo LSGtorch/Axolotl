@@ -4,6 +4,7 @@ import {
 	fetchJson,
 	resolveServerLauncher,
 } from '@/components/multiplayer/servers/server-flow-utils'
+import { refresh } from '@/composables/useServers'
 import { serverEventListener, servers } from '@/helpers/servers'
 import type { DownloadManager } from '@/providers/download-manager'
 
@@ -116,6 +117,11 @@ export async function runServerInstall(options: RunServerInstallOptions): Promis
 	try {
 		await strategy.install(serverId, inputs)
 		bridge?.complete(true)
+		// The server was created up front, but the shared list only refreshes on
+		// demand. When the modal was closed mid-install the `@created` event
+		// never fires, so refresh here (context-free) to render the new server
+		// as soon as the install finishes — regardless of modal state.
+		await refresh().catch(() => {})
 	} catch (error) {
 		bridge?.complete(false)
 		throw error

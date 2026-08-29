@@ -53,6 +53,7 @@ pub mod download;
 pub mod jvm_args;
 pub mod language;
 pub mod local_version;
+mod natives;
 pub mod optifine;
 pub mod quick_play_version;
 
@@ -1792,9 +1793,10 @@ pub async fn launch_minecraft(
         // directory and the bitness of the JVM chosen above.
         let (modable, opti_fine) =
             pcl_ram_profile(version_info.libraries.as_slice());
-        let is_32_bit_java = crate::util::platform::architecture_width(
-            &java_version.architecture,
-        ) == "32";
+        let is_32_bit_java =
+            crate::launcher::direct_link::linked_architecture_width(
+                &java_version.architecture,
+            ) == "32";
         if let Some(maximum) = pcl.resolve_ram_mb(
             &instance_path,
             modable,
@@ -1952,18 +1954,32 @@ pub async fn launch_minecraft(
         })
         .await??;
     } else if direct_launch.is_none() {
-        // Managed instances: restore missing or empty natives entries from
-        // the locally cached archives before launch, without re-downloading.
-        download::ensure_native_libraries_extracted(
-            &state.directories.natives_dir(),
-            &state.directories.libraries_dir(),
-            &state.directories.caches_dir(),
-            version_info.libraries.as_slice(),
-            &version_jar,
-            &java_version.architecture,
-            minecraft_updated,
-        )
-        .await?;
+        if offline_mode {
+            natives::prepare_native_libraries(
+                &state.directories.natives_dir(),
+                &state.directories.libraries_dir(),
+                &state.directories.caches_dir(),
+                version_info.libraries.as_slice(),
+                &version_jar,
+                &java_version.architecture,
+                minecraft_updated,
+            )
+            .await?;
+        } else {
+            download::download_libraries(
+                &state,
+                None,
+                version_info.libraries.as_slice(),
+                &version_jar,
+                None,
+                0.0,
+                &java_version.architecture,
+                false,
+                minecraft_updated,
+                None,
+            )
+            .await?;
+        }
     }
 
     tracing::debug!(

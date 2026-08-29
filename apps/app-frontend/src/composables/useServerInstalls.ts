@@ -110,9 +110,10 @@ export async function startModpackServerInstall(
 
 		const speed = smoothedSpeed > 100 ? smoothedSpeed : null
 		const total = payload.total ?? null
-		const eta = speed && total != null && total > payload.downloaded
-			? (total - payload.downloaded) / speed
-			: null
+		const eta =
+			speed && total != null && total > payload.downloaded
+				? (total - payload.downloaded) / speed
+				: null
 
 		bridge?.update({ downloaded: payload.downloaded, total }, speed, eta)
 	})

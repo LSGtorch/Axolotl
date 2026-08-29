@@ -1453,8 +1453,7 @@ pub(crate) fn native_download<'a>(
     library: &'a LinkedLibrary,
     java_arch: &str,
 ) -> Option<(String, Option<&'a LibraryDownload>)> {
-    let normalized_arch =
-        crate::util::platform::normalize_architecture(java_arch);
+    let normalized_arch = normalize_architecture(java_arch);
     let native_os = Os::native_arch(normalized_arch);
     let base_os = native_os.get_os();
     let classifiers = library
@@ -1466,10 +1465,7 @@ pub(crate) fn native_download<'a>(
         natives
             .get(&native_os)
             .or_else(|| natives.get(&base_os))?
-            .replace(
-                "${arch}",
-                crate::util::platform::architecture_width(java_arch),
-            )
+            .replace("${arch}", linked_architecture_width(java_arch))
     } else {
         let classifiers = classifiers?;
         native_classifier_candidates(normalized_arch)
@@ -1487,7 +1483,7 @@ fn native_classifier_candidates(java_arch: &str) -> Vec<String> {
         other => other,
     };
     let arch = java_arch.to_ascii_lowercase();
-    let width = crate::util::platform::architecture_width(java_arch);
+    let width = linked_architecture_width(java_arch);
     let mut candidates = Vec::new();
     for key in ["", arch.as_str(), width] {
         for variant in ["", "native", "natives"] {
@@ -1596,6 +1592,35 @@ fn extract_native_archive(
         output.flush()?;
     }
     Ok(())
+}
+
+fn normalize_architecture(java_arch: &str) -> &str {
+    if java_arch.eq_ignore_ascii_case("amd64") {
+        "x86_64"
+    } else if java_arch.eq_ignore_ascii_case("i386")
+        || java_arch.eq_ignore_ascii_case("i686")
+    {
+        "x86"
+    } else if java_arch.eq_ignore_ascii_case("arm64") {
+        "aarch64"
+    } else if java_arch.eq_ignore_ascii_case("arm32") {
+        "arm"
+    } else {
+        java_arch
+    }
+}
+
+pub(crate) fn linked_linked_architecture_width(
+    java_arch: &str,
+) -> &'static str {
+    match normalize_architecture(java_arch)
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "x86" | "arm" => "32",
+        "x86_64" | "aarch64" => "64",
+        _ => "64",
+    }
 }
 
 #[cfg(test)]
