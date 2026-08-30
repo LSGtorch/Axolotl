@@ -162,69 +162,6 @@ pub fn get_linked_class_paths(
         })
 }
 
-pub fn get_linked_class_paths(
-    direct: &DirectLinkedLaunch,
-    libraries: &[LinkedLibrary],
-    launcher_class_path: &[&Path],
-    java_arch: &str,
-    minecraft_updated: bool,
-) -> crate::Result<String> {
-    launcher_class_path
-        .iter()
-        .map(|path| {
-            Ok(canonicalize(path)
-                .map_err(|error| {
-                    crate::ErrorKind::LauncherError(format!(
-                        "Specified class path {} does not exist: {error}",
-                        path.display()
-                    ))
-                    .as_error()
-                })?
-                .to_string_lossy()
-                .to_string())
-        })
-        .chain(libraries.iter().filter_map(|library| {
-            if let Some(rules) = library.library.rules.as_deref()
-                && !parse_rules(
-                    rules,
-                    java_arch,
-                    &QuickPlayType::None,
-                    minecraft_updated,
-                )
-            {
-                return None;
-            }
-            if !library.library.include_in_classpath {
-                return None;
-            }
-            // A natives-only declaration (e.g. the 1.12.2
-            // `net.java.jinput:jinput-platform:2.0.5`) publishes no plain jar
-            // anywhere, so it must never become a classpath entry. This
-            // mirrors HMCL's `DefaultLauncher.getClasspath`, which contributes
-            // natives libraries only through native extraction; the same
-            // predicate keeps the ensure stage from planning the plain jar.
-            if is_native_only_library(&library.library) {
-                return None;
-            }
-
-            Some(direct.library_path(library).and_then(|path| {
-                canonicalize(&path)
-                    .map(|path| path.to_string_lossy().to_string())
-                    .map_err(|error| {
-                        crate::ErrorKind::LauncherError(format!(
-                            "Could not resolve linked library {} at {}: {error}",
-                            library.library.name,
-                            path.display()
-                        ))
-                        .as_error()
-                    })
-            }))
-        }))
-        .process_results(|paths| {
-            paths.unique().join(classpath_separator(java_arch))
-        })
-}
-
 pub fn get_class_paths_jar<T: AsRef<str>>(
     libraries_path: &Path,
     libraries: &[T],

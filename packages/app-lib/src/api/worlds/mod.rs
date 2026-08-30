@@ -327,30 +327,6 @@ async fn resolve_instance_data_dir(
         .resolve_game_dir(instance_path, game_dir_override))
 }
 
-/// Resolves the directory holding an instance's worlds, `servers.dat` and
-/// datapacks.
-///
-/// Directly associated instances keep that data inside the external
-/// installation rather than a profile directory under `instances`, mirroring
-/// `api::instance::paths::get_full_path`; PCL version isolation resolves to
-/// the version's own game directory. Unknown records fall back to the legacy
-/// profile path so the error surface stays unchanged.
-async fn resolve_instance_data_dir(
-    instance_id: &str,
-    instance_path: &str,
-    state: &State,
-) -> Result<PathBuf> {
-    if let Some(metadata) =
-        crate::state::get_instance(instance_id, &state.pool).await?
-    {
-        return Ok(crate::state::instances::instance_content_root(
-            &state.directories,
-            &metadata.instance,
-        )?);
-    }
-    Ok(state.directories.instances_dir().join(instance_path))
-}
-
 async fn get_all_worlds_in_instance(
     instance_id: &str,
     instance_dir: &Path,
