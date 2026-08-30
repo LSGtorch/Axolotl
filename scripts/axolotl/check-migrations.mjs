@@ -16,6 +16,16 @@ const knownPublishedDivergences = new Set([
 		'c6fdf52790db7e67905003216ee7c099ec9ac29df1ee1b62602eb791881f321470f7e2b965c39fc8733b10ad114eace5',
 	].join('\0'),
 ])
+// Retired migrations: published once, then intentionally removed from the
+// tree because keeping them breaks every install. v99.99.7 shipped
+// 20260901000000_instance-direct-link.sql, a byte-identical duplicate of the
+// already-published 20260823120000 direct-link migration, so every launch
+// failed with "duplicate column name: linked_launcher". The schema lives on
+// through 20260823120000; the duplicate is retired and must never re-enter
+// the canonical set.
+const knownRetiredMigrations = new Set([
+	'packages/app-lib/migrations/20260901000000_instance-direct-link.sql',
+])
 
 function git(args, encoding = 'utf8') {
 	return execFileSync('git', args, {
@@ -168,6 +178,12 @@ function auditPublishedReleases(currentRef) {
 		}
 
 		for (const [file, migration] of released) {
+			if (knownRetiredMigrations.has(file)) {
+				warnings.push(
+					`${release.tagName} contained the retired migration ${file}; it is excluded from the canonical set`,
+				)
+				continue
+			}
 			const expected = canonical.get(file)
 			if (!expected) {
 				canonical.set(file, migration)
