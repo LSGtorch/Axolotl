@@ -52,10 +52,19 @@ for (const target of targets) {
 	}
 
 	const signature = fs.readFileSync(signaturePath, 'utf8')
-	const url = asset.browser_download_url ?? asset.url
+	let url = asset.browser_download_url ?? asset.url
 	if (!url) {
 		throw new Error(`Release asset ${asset.name} does not contain a download URL`)
 	}
+
+	// The manifest is generated while the release is still a draft, so GitHub
+	// hands out temporary `untagged-*` download URLs that die once the release
+	// is published. The asset name is stable, so rewrite any github download
+	// URL onto the final tag path that becomes valid at publish time.
+	url = url.replace(
+		/^(https:\/\/github\.com\/[^/]+\/[^/]+\/releases\/download\/)[^/]+(\/.+)$/,
+		`$1${tag}$2`,
+	)
 
 	for (const platform of target.platforms) {
 		platforms[platform] = { signature, url }

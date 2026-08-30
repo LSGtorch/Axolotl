@@ -33,6 +33,30 @@ export const ANNOUNCEMENT_CHANGE_TYPES: readonly AnnouncementChangeType[] = [
 
 export const launcherAnnouncements: readonly LauncherAnnouncement[] = [
 	{
+		id: 'launcher-99.99.8',
+		version: '99.99.8',
+		publishedAt: '2026-08-30',
+		title: {
+			'en-US': 'Axolotl Launcher 99.99.8 (test)',
+			'zh-CN': 'Axolotl Launcher 99.99.8（测试版）',
+		},
+		changes: {
+			fixed: [
+				{
+					'en-US':
+						'Fixed a startup failure (duplicate column name: linked_launcher) caused by a duplicated direct-link database migration in 99.99.7.',
+					'zh-CN':
+						'修复 99.99.7 因 direct-link 数据库迁移重复导致的启动失败（duplicate column name: linked_launcher）。',
+				},
+				{
+					'en-US':
+						'Fixed the in-app updater manifest pointing at temporary download URLs that stopped resolving after publishing.',
+					'zh-CN': '修复应用内自动更新清单指向发布后失效的临时下载地址的问题。',
+				},
+			],
+		},
+	},
+	{
 		id: 'launcher-99.99.7',
 		version: '99.99.7',
 		publishedAt: '2026-08-30',
