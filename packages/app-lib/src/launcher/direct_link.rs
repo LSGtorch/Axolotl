@@ -210,19 +210,42 @@ impl DirectLinkedLaunch {
 /// merge, reusing the shared `daedalus::modded::normalize_loader_libraries`
 /// rule without duplicating its coordinates.
 ///
-/// Only Cleanroom-linked versions are affected: the rule drops the legacy
-/// Mojang conflicts (the LWJGL 2 binding `org.lwjgl.lwjgl:lwjgl`, JNA
-/// platform, and Mojang ICU bundle) from the merged list. The merged list
-/// drives the direct ensure pass, native extraction, the launch classpath,
-/// and the `VersionInfo` projection, so normalizing it before those
-/// consumers run covers direct ensure, classpath, and launch at once. The
-/// Cleanroom LWJGL 3 line, `com.cleanroommc:lwjglxx`, and all other
-/// libraries are untouched. Returns the removed coordinates for logging.
+/// Only Cleanroom-linked versions are affected: the shared rule drops the
+/// whole vanilla LWJGL 2 family at `2.9.4-nightly-20150209` from the merged
+/// list — the `org.lwjgl.lwjgl:lwjgl` binding, `org.lwjgl.lwjgl:lwjgl_util`,
+/// and the natives-only carrier `org.lwjgl.lwjgl:lwjgl-platform` whose
+/// root-level extracted `lwjgl.dll` / `liblwjgl.so` / `liblwjgl.dylib` is
+/// what `System.loadLibrary("lwjgl")` (org.lwjgl.Sys) resolves first in the
+/// natives directory, while the Cleanroom LWJGL 3 natives are nested.
+/// HMCL never classpaths native jars and its first-wins unzip protects its
+/// natives directory; a direct link merges the vanilla parent after the
+/// loader (last-writer-wins extraction) and ships the old root-level
+/// LWJGL 2 native, so the carrier must not reach the extraction pass at
+/// all. The merged list drives the direct ensure pass, native extraction,
+/// the launch classpath, and the `VersionInfo` projection, so normalizing
+/// it before those consumers run covers direct ensure, classpath, and
+/// launch at once. The Cleanroom LWJGL 3 line, `com.cleanroommc:lwjglxx`,
+/// the vanilla JNA platform and the Mojang ICU bundle are untouched,
+/// exactly as in HMCL. Returns the removed coordinates for logging.
 pub(crate) fn normalize_merged_loader_libraries(
     loader: ModLoader,
     merged: &mut MergedVersion,
 ) -> Vec<String> {
-    if loader != ModLoader::Cleanroom {
+    // The frozen content-set label can mislabel a directly linked Cleanroom
+    // installation as vanilla when the association predates Cleanroom loader
+    // detection. Fall back only for a strictly vanilla label: a merged
+    // library carrying the Cleanroom loader jar itself (`com.cleanroommc:cleanroom`)
+    // is then authoritative. Any other frozen label (Forge and friends) keeps
+    // the launcher's own classification untouched.
+    let is_cleanroom = loader == ModLoader::Cleanroom
+        || (loader == ModLoader::Vanilla
+            && merged.libraries.iter().any(|library| {
+                library
+                    .library
+                    .name
+                    .starts_with("com.cleanroommc:cleanroom:")
+            }));
+    if !is_cleanroom {
         return Vec::new();
     }
 
@@ -2650,8 +2673,12 @@ mod tests {
     fn cleanroom_mixed_fixture() -> serde_json::Value {
         // The reported 1.12.2 + Cleanroom 0.6.11-alpha direct-link failure:
         // the vanilla parent contributes the LWJGL 2 binding
-        // (`org.lwjgl.lwjgl:lwjgl`) while Cleanroom contributes the LWJGL 3
-        // line; both must never share a classpath.
+        // (`org.lwjgl.lwjgl:lwjgl`) plus its native carrier
+        // (`org.lwjgl.lwjgl:lwjgl-platform`) while Cleanroom contributes the
+        // LWJGL 3 line; neither the binding nor the same-named natives may
+        // ever share a launch with the LWJGL 3 files. The vanilla JNA
+        // platform and Mojang ICU bundle conflict with Cleanroom's own
+        // runtime and are dropped by the shared loader rule as well.
         json!([
             {"name": "com.cleanroommc:cleanroom:0.6.11-alpha"},
             {"name": "org.lwjgl.lwjgl:lwjgl:2.9.4-nightly-20150209"},
@@ -2664,6 +2691,131 @@ mod tests {
             {"name": "net.java.dev.jna:platform:3.4.0"},
             {"name": "com.ibm.icu:icu4j-core-mojang:51.2"}
         ])
+    }
+
+    #[test]
+    fn hmcl_child_before_parent_merge_and_cleanroom_normalization_leave_lwjgl3_only()
+     {
+        // Realistic HMCL 1.12.2 + Cleanroom layout: the Cleanroom version
+        // document inherits the vanilla `1.12.2` document. The merger puts
+        // the child (loader) libraries before the parent (vanilla) ones, so
+        // without normalization the vanilla LWJGL 2 binding and its native
+        // carrier would sit after the Cleanroom LWJGL 3 line.
+        let root = tempfile::tempdir().unwrap();
+        let vanilla_dir = root.path().join("versions/1.12.2");
+        std::fs::create_dir_all(&vanilla_dir).unwrap();
+        std::fs::write(
+            vanilla_dir.join("1.12.2.json"),
+            serde_json::to_vec(&json!({
+                "id": "1.12.2",
+                "mainClass": "net.minecraft.client.main.Main",
+                "libraries": [
+                    {"name": "org.lwjgl.lwjgl:lwjgl:2.9.4-nightly-20150209"},
+                    {"name": "org.lwjgl.lwjgl:lwjgl_util:2.9.4-nightly-20150209"},
+                    {"name": "org.lwjgl.lwjgl:lwjgl-platform:2.9.4-nightly-20150209", "natives": {"windows": "natives-windows"}},
+                    {"name": "net.java.dev.jna:platform:3.4.0"},
+                    {"name": "com.ibm.icu:icu4j-core-mojang:51.2"}
+                ]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let cleanroom_dir =
+            root.path().join("versions/1.12.2-Cleanroom-0.6.11-alpha");
+        std::fs::create_dir_all(&cleanroom_dir).unwrap();
+        std::fs::write(
+            cleanroom_dir.join("1.12.2-Cleanroom-0.6.11-alpha.json"),
+            serde_json::to_vec(&json!({
+                "id": "1.12.2-Cleanroom-0.6.11-alpha",
+                "inheritsFrom": "1.12.2",
+                "mainClass": "net.minecraft.launchwrapper.Launch",
+                "libraries": [
+                    {"name": "com.cleanroommc:cleanroom:0.6.11-alpha"},
+                    {"name": "org.lwjgl:lwjgl:3.4.1-unsafe"},
+                    {"name": "org.lwjgl:lwjgl:3.4.1-unsafe", "natives": {"windows": "natives-windows"}},
+                    {"name": "com.cleanroommc:lwjglxx:1.1.22"},
+                    {"name": "net.java.dev.jna:jna:5.19.1"}
+                ]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let resolved = DirectLinkedLaunch {
+            dot_minecraft: root.path().to_path_buf(),
+            launcher_root: None,
+            version_id: "1.12.2-Cleanroom-0.6.11-alpha".to_string(),
+            version_json: None,
+            dialect: LinkedLauncherDialect::Hmcl,
+        }
+        .resolve()
+        .unwrap();
+        let mut merged = resolved.merged;
+        let names = merged
+            .libraries
+            .iter()
+            .map(|library| library.library.name.clone())
+            .collect::<Vec<_>>();
+        let lwjgl3_pos = names
+            .iter()
+            .position(|name| name == "org.lwjgl:lwjgl:3.4.1-unsafe")
+            .expect("Cleanroom LWJGL 3 line merged");
+        let lwjgl2_pos = names
+            .iter()
+            .position(|name| {
+                name == "org.lwjgl.lwjgl:lwjgl:2.9.4-nightly-20150209"
+            })
+            .expect("vanilla LWJGL 2 binding merged");
+        let platform_pos = names
+            .iter()
+            .position(|name| {
+                name == "org.lwjgl.lwjgl:lwjgl-platform:2.9.4-nightly-20150209"
+            })
+            .expect("vanilla LWJGL 2 native carrier merged");
+        // Child-first/parent-last: the LWJGL 2 family sits after the
+        // Cleanroom LWJGL 3 natives, which is exactly the shadowing order
+        // the normalization below must remove.
+        assert!(
+            lwjgl3_pos < lwjgl2_pos && lwjgl2_pos < platform_pos,
+            "unexpected merge order: {names:?}"
+        );
+        assert_eq!(
+            names
+                .iter()
+                .filter(|name| { *name == "org.lwjgl:lwjgl:3.4.1-unsafe" })
+                .count(),
+            2,
+            "HMCL keeps the LWJGL 3 main jar and its native classifier"
+        );
+
+        let removed = normalize_merged_loader_libraries(
+            ModLoader::Cleanroom,
+            &mut merged,
+        );
+        assert_eq!(
+            removed,
+            [
+                "org.lwjgl.lwjgl:lwjgl:2.9.4-nightly-20150209",
+                "org.lwjgl.lwjgl:lwjgl-platform:2.9.4-nightly-20150209",
+                "net.java.dev.jna:platform:3.4.0",
+                "com.ibm.icu:icu4j-core-mojang:51.2",
+            ]
+        );
+        let names = merged
+            .libraries
+            .iter()
+            .map(|library| library.library.name.as_str())
+            .collect::<Vec<_>>();
+        for kept in [
+            "com.cleanroommc:cleanroom:0.6.11-alpha",
+            "org.lwjgl:lwjgl:3.4.1-unsafe",
+            "com.cleanroommc:lwjglxx:1.1.22",
+            "net.java.dev.jna:jna:5.19.1",
+            "org.lwjgl.lwjgl:lwjgl_util:2.9.4-nightly-20150209",
+        ] {
+            assert!(names.contains(&kept), "{kept}");
+        }
+        assert_eq!(names.len(), 6);
     }
 
     #[test]
@@ -2683,8 +2835,9 @@ mod tests {
             removed,
             [
                 "org.lwjgl.lwjgl:lwjgl:2.9.4-nightly-20150209",
+                "org.lwjgl.lwjgl:lwjgl-platform:2.9.4-nightly-20150209",
                 "net.java.dev.jna:platform:3.4.0",
-                "com.ibm.icu:icu4j-core-mojang:51.2"
+                "com.ibm.icu:icu4j-core-mojang:51.2",
             ]
         );
 
@@ -2699,19 +2852,103 @@ mod tests {
         for kept in [
             "com.cleanroommc:cleanroom:0.6.11-alpha",
             "org.lwjgl.lwjgl:lwjgl_util:2.9.4-nightly-20150209",
-            "org.lwjgl.lwjgl:lwjgl-platform:2.9.4-nightly-20150209",
             "org.lwjgl:lwjgl:3.4.1-unsafe",
             "com.cleanroommc:lwjglxx:1.1.22",
             "net.java.dev.jna:jna:5.19.1",
         ] {
             assert!(names.contains(&kept), "{kept}");
         }
-        assert_eq!(names.len(), 7);
+        assert_eq!(names.len(), 6);
     }
 
     #[test]
     fn non_cleanroom_loaders_leave_linked_libraries_untouched() {
+        // No `com.cleanroommc:cleanroom` coordinate: the launcher label alone
+        // decides, so other loaders (and vanilla) keep the legacy Mojang
+        // LWJGL 2/@JNA/ICU libraries exactly as the linked installation
+        // defines them.
+        let non_cleanroom_fixture = || {
+            json!([
+                {"name": "net.minecraftforge:forge:1.12.2-14.23.5.2864"},
+                {"name": "org.lwjgl.lwjgl:lwjgl:2.9.4-nightly-20150209"},
+                {"name": "org.lwjgl.lwjgl:lwjgl_util:2.9.4-nightly-20150209"},
+                {"name": "org.lwjgl.lwjgl:lwjgl-platform:2.9.4-nightly-20150209", "natives": {"windows": "natives-windows"}},
+                {"name": "net.java.dev.jna:platform:3.4.0"},
+                {"name": "com.ibm.icu:icu4j-core-mojang:51.2"}
+            ])
+        };
         for loader in [ModLoader::Vanilla, ModLoader::Forge] {
+            let root = tempfile::tempdir().unwrap();
+            let mut merged = resolve_linked_fixture(
+                root.path(),
+                "1.12.2",
+                non_cleanroom_fixture(),
+            );
+            let original = merged
+                .libraries
+                .iter()
+                .map(|library| library.library.name.clone())
+                .collect::<Vec<_>>();
+
+            let removed =
+                normalize_merged_loader_libraries(loader, &mut merged);
+            assert!(removed.is_empty(), "{loader:?}");
+            assert_eq!(
+                merged
+                    .libraries
+                    .iter()
+                    .map(|library| library.library.name.clone())
+                    .collect::<Vec<_>>(),
+                original
+            );
+        }
+    }
+
+    #[test]
+    fn cleanroom_library_coordinate_falls_back_when_vanilla_label_misses() {
+        // The frozen content-set loader label can mislabel a directly linked
+        // Cleanroom installation as vanilla (e.g. associations created before
+        // loader detection covered Cleanroom); the merged
+        // `com.cleanroommc:cleanroom` coordinate is then authoritative.
+        let root = tempfile::tempdir().unwrap();
+        let mut merged = resolve_linked_fixture(
+            root.path(),
+            "1.12.2",
+            cleanroom_mixed_fixture(),
+        );
+
+        let removed =
+            normalize_merged_loader_libraries(ModLoader::Vanilla, &mut merged);
+        assert_eq!(
+            removed,
+            [
+                "org.lwjgl.lwjgl:lwjgl:2.9.4-nightly-20150209",
+                "org.lwjgl.lwjgl:lwjgl-platform:2.9.4-nightly-20150209",
+                "net.java.dev.jna:platform:3.4.0",
+                "com.ibm.icu:icu4j-core-mojang:51.2",
+            ]
+        );
+        let names = merged
+            .libraries
+            .iter()
+            .map(|library| library.library.name.as_str())
+            .collect::<Vec<_>>();
+        for name in &removed {
+            assert!(!names.contains(&name.as_str()), "{name}");
+        }
+    }
+
+    #[test]
+    fn non_cleanroom_loader_labels_never_fall_back_on_cleanroom_coordinate() {
+        // A Forge/other frozen label is authoritative even when the merged
+        // list happens to carry the Cleanroom coordinate: the fallback is
+        // strictly limited to the vanilla label.
+        for loader in [
+            ModLoader::Forge,
+            ModLoader::NeoForge,
+            ModLoader::Fabric,
+            ModLoader::OptiFine,
+        ] {
             let root = tempfile::tempdir().unwrap();
             let mut merged = resolve_linked_fixture(
                 root.path(),
@@ -2736,5 +2973,164 @@ mod tests {
                 original
             );
         }
+    }
+
+    #[test]
+    fn cleanroom_normalization_keeps_lwjgl3_line_and_lwjglxx() {
+        // Cleanroom normalization removes the LWJGL 2 carrier but keeps the
+        // Cleanroom LWJGL 3 line (main plus native classifier) and lwjglxx.
+        let root = tempfile::tempdir().unwrap();
+        let mut merged = resolve_linked_fixture(
+            root.path(),
+            "1.12.2",
+            json!([
+                {"name": "org.lwjgl.lwjgl:lwjgl-platform:2.9.4-nightly-20150209", "natives": {"windows": "natives-windows"}},
+                {"name": "org.lwjgl:lwjgl:3.4.1-unsafe"},
+                {"name": "org.lwjgl:lwjgl:3.4.1-unsafe", "natives": {"windows": "natives-windows"}},
+                {"name": "com.cleanroommc:lwjglxx:1.1.22"}
+            ]),
+        );
+
+        let removed = normalize_merged_loader_libraries(
+            ModLoader::Cleanroom,
+            &mut merged,
+        );
+        assert_eq!(
+            removed,
+            ["org.lwjgl.lwjgl:lwjgl-platform:2.9.4-nightly-20150209"]
+        );
+        let names = merged
+            .libraries
+            .iter()
+            .map(|library| library.library.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names,
+            [
+                "org.lwjgl:lwjgl:3.4.1-unsafe",
+                "org.lwjgl:lwjgl:3.4.1-unsafe",
+                "com.cleanroommc:lwjglxx:1.1.22",
+            ]
+        );
+    }
+
+    #[test]
+    fn cleanroom_normalization_keeps_vanilla_lwjgl2_native_out_of_extraction() {
+        // The real 1.12.2 hazard: the vanilla LWJGL 2 carrier
+        // (`lwjgl-platform-2.9.4-nightly-20150209-natives-windows.jar`) ships
+        // a root-level `lwjgl.dll`, while Cleanroom's LWJGL 3 natives live
+        // nested (e.g. `windows/x64/org/lwjgl/lwjgl.dll`). Merged links order
+        // loader libraries before inherited vanilla ones and direct native
+        // extraction is last-writer-wins for same-named entries, so without
+        // normalization the carrier extracts after the LWJGL 3 natives and
+        // leaves its root-level `lwjgl.dll` in the natives directory — the
+        // bare name `System.loadLibrary("lwjgl")` (org.lwjgl.Sys) resolves
+        // first. Normalizing the merge for Cleanroom removes the carrier so
+        // the vanilla native never reaches the natives directory.
+        let root = tempfile::tempdir().unwrap();
+        let os = serde_json::to_value(Os::native().get_os()).unwrap();
+        let natives = |classifier: &str| {
+            let mut map = serde_json::Map::new();
+            map.insert(os.as_str().unwrap().to_string(), json!(classifier));
+            map
+        };
+        let lwjgl3_natives =
+            root.path().join("libraries/org/lwjgl/lwjgl/3.4.1-unsafe");
+        let lwjgl2_natives = root.path().join(
+            "libraries/org/lwjgl/lwjgl/lwjgl-platform/2.9.4-nightly-20150209",
+        );
+        std::fs::create_dir_all(&lwjgl3_natives).unwrap();
+        std::fs::create_dir_all(&lwjgl2_natives).unwrap();
+        write_native_jar(
+            &lwjgl3_natives.join("native3.jar"),
+            "windows/x64/org/lwjgl/lwjgl.dll",
+            b"LWJGL3",
+        );
+        write_native_jar(
+            &lwjgl2_natives.join("native2.jar"),
+            "lwjgl.dll",
+            b"LWJGL2",
+        );
+
+        let direct = DirectLinkedLaunch {
+            dot_minecraft: root.path().to_path_buf(),
+            launcher_root: None,
+            version_id: "1.12.2".to_string(),
+            version_json: None,
+            dialect: LinkedLauncherDialect::Hmcl,
+        };
+        let lwjgl3_library: LinkedLibrary = serde_json::from_value(json!({
+            "name": "org.lwjgl:lwjgl:3.4.1-unsafe",
+            "natives": natives("natives-lwjgl3"),
+            "downloads": {"classifiers": {"natives-lwjgl3": {"path": "org/lwjgl/lwjgl/3.4.1-unsafe/native3.jar", "sha1": "", "size": 0, "url": ""}}}
+        }))
+        .unwrap();
+        let lwjgl2_library: LinkedLibrary = serde_json::from_value(json!({
+            "name": "org.lwjgl.lwjgl:lwjgl-platform:2.9.4-nightly-20150209",
+            "natives": natives("natives-lwjgl2"),
+            "downloads": {"classifiers": {"natives-lwjgl2": {"path": "org/lwjgl/lwjgl/lwjgl-platform/2.9.4-nightly-20150209/native2.jar", "sha1": "", "size": 0, "url": ""}}}
+        }))
+        .unwrap();
+
+        // Unnormalized merge order (loader libraries first, vanilla last):
+        // the LWJGL 2 carrier's root-level `lwjgl.dll` lands in the natives
+        // directory after the LWJGL 3 nested files were written.
+        let unnormalized = vec![lwjgl3_library.clone(), lwjgl2_library.clone()];
+        let shadowed = root.path().join("shadowed");
+        extract_linked_natives(
+            &direct,
+            &unnormalized,
+            &shadowed,
+            std::env::consts::ARCH,
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read(shadowed.join("lwjgl.dll")).unwrap(),
+            b"LWJGL2",
+            "root-level LWJGL 2 dll lands in the natives directory"
+        );
+        assert_eq!(
+            std::fs::read(shadowed.join("windows/x64/org/lwjgl/lwjgl.dll"))
+                .unwrap(),
+            b"LWJGL3"
+        );
+
+        // Cleanroom normalization drops the carrier from the merged list, so
+        // the extraction pass that follows the normalize point in the launch
+        // pipeline never writes the vanilla native.
+        let mut merged = minimal_merged();
+        merged.libraries = vec![lwjgl3_library, lwjgl2_library];
+        normalize_merged_loader_libraries(ModLoader::Cleanroom, &mut merged);
+        let normalized = merged.libraries.iter().cloned().collect::<Vec<_>>();
+        assert_eq!(normalized.len(), 1);
+        let target = root.path().join("normalized");
+        extract_linked_natives(
+            &direct,
+            &normalized,
+            &target,
+            std::env::consts::ARCH,
+            true,
+        )
+        .unwrap();
+        assert!(
+            !target.join("lwjgl.dll").exists(),
+            "no vanilla LWJGL 2 dll may sit in the natives directory root"
+        );
+        assert_eq!(
+            std::fs::read(target.join("windows/x64/org/lwjgl/lwjgl.dll"))
+                .unwrap(),
+            b"LWJGL3"
+        );
+    }
+
+    fn write_native_jar(path: &std::path::Path, entry: &str, content: &[u8]) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let file = std::fs::File::create(path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default();
+        zip.start_file(entry, options).unwrap();
+        zip.write_all(content).unwrap();
+        zip.finish().unwrap();
     }
 }

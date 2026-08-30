@@ -155,6 +155,15 @@ pub fn uses_unobfuscated_minecraft(game_version: &str) -> bool {
 }
 
 /// Removes loader libraries that are incompatible with the selected game version.
+///
+/// For Cleanroom the legacy Mojang runtime conflicts are dropped: the
+/// `org.lwjgl.lwjgl:lwjgl` binding (shares the `org.lwjgl` package with the
+/// Cleanroom LWJGL 3 line), its natives-only carrier
+/// `org.lwjgl.lwjgl:lwjgl-platform` (whose extracted `lwjgl.dll` /
+/// `liblwjgl.so` / `liblwjgl.dylib` would shadow the same-named Cleanroom
+/// LWJGL 3 natives in the natives directory), the vanilla JNA platform, and
+/// the Mojang ICU bundle. The Cleanroom LWJGL 3 line, `lwjglxx`,
+/// `lwjgl_util`, and the vanilla JNA core are untouched.
 pub fn normalize_loader_libraries(
     loader: &str,
     game_version: &str,
@@ -182,6 +191,7 @@ pub fn normalize_loader_libraries(
             && matches!(
                 (group, artifact),
                 (Some("org.lwjgl.lwjgl"), Some("lwjgl"))
+                    | (Some("org.lwjgl.lwjgl"), Some("lwjgl-platform"))
                     | (Some("net.java.dev.jna"), Some("platform"))
                     | (Some("com.ibm.icu"), Some("icu4j-core-mojang"))
             );
@@ -766,6 +776,7 @@ mod tests {
         ];
         let removed = [
             "org.lwjgl.lwjgl:lwjgl:2.9.4-nightly-20150209",
+            "org.lwjgl.lwjgl:lwjgl-platform:2.9.4-nightly-20150209",
             "net.java.dev.jna:platform:3.4.0",
             "com.ibm.icu:icu4j-core-mojang:51.2",
         ];
@@ -789,10 +800,46 @@ mod tests {
     }
 
     #[test]
+    fn cleanroom_normalization_matches_lwjgl2_native_carrier_by_artifact() {
+        // The `org.lwjgl.lwjgl:lwjgl-platform` group:artifact is removed at
+        // any version (1.12.2 ships 2.9.4-nightly; older documents carry
+        // 2.9.2-nightly), while the LWJGL 3 line and lwjglxx never match.
+        let mut libraries = vec![
+            library("org.lwjgl.lwjgl:lwjgl-platform:2.9.4-nightly-20150209"),
+            library("org.lwjgl.lwjgl:lwjgl-platform:2.9.2-nightly-20140822"),
+            library("org.lwjgl:lwjgl-platform:9.9.9"),
+            library("org.lwjgl:lwjgl:3.4.1-unsafe"),
+            library("com.cleanroommc:lwjglxx:1.1.22"),
+        ];
+
+        assert_eq!(
+            normalize_loader_libraries("cleanroom", "1.12.2", &mut libraries),
+            [
+                "org.lwjgl.lwjgl:lwjgl-platform:2.9.4-nightly-20150209",
+                "org.lwjgl.lwjgl:lwjgl-platform:2.9.2-nightly-20140822",
+            ]
+        );
+        assert_eq!(
+            libraries
+                .iter()
+                .map(|library| library.name.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "org.lwjgl:lwjgl-platform:9.9.9",
+                "org.lwjgl:lwjgl:3.4.1-unsafe",
+                "com.cleanroommc:lwjglxx:1.1.22",
+            ]
+        );
+    }
+
+    #[test]
     fn cleanroom_runtime_conflicts_remain_for_other_loaders() {
         for loader in ["vanilla", "forge", "fabric", "quilt", "neo"] {
             let mut libraries = vec![
                 library("org.lwjgl.lwjgl:lwjgl:2.9.4-nightly-20150209"),
+                library(
+                    "org.lwjgl.lwjgl:lwjgl-platform:2.9.4-nightly-20150209",
+                ),
                 library("net.java.dev.jna:platform:3.4.0"),
                 library("com.ibm.icu:icu4j-core-mojang:51.2"),
             ];
@@ -801,7 +848,7 @@ mod tests {
                 normalize_loader_libraries(loader, "1.12.2", &mut libraries)
                     .is_empty()
             );
-            assert_eq!(libraries.len(), 3);
+            assert_eq!(libraries.len(), 4);
         }
     }
 

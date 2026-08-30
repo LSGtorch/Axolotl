@@ -1500,9 +1500,14 @@ pub async fn launch_minecraft(
         // Same loader normalization the managed install path applies. The
         // merged list drives the ensure pass, native extraction, the launch
         // classpath, and the VersionInfo projection below, so dropping the
-        // Cleanroom conflicts (vanilla LWJGL 2 binding, JNA platform, Mojang
-        // ICU) here covers direct ensure, classpath, and launch at once; the
-        // Cleanroom LWJGL 3 line and lwjglxx are never affected.
+        // Cleanroom conflicts here — the vanilla LWJGL 2 binding
+        // `org.lwjgl.lwjgl:lwjgl`, its natives-only carrier
+        // `org.lwjgl.lwjgl:lwjgl-platform` (whose extracted `lwjgl.dll` /
+        // `liblwjgl.so` / `liblwjgl.dylib` would shadow the same-named
+        // Cleanroom LWJGL 3 natives in the natives directory), JNA platform,
+        // and Mojang ICU — covers direct ensure, classpath, and launch at
+        // once; the Cleanroom LWJGL 3 line, lwjglxx, `lwjgl_util`, and the
+        // vanilla JNA core are never affected.
         for removed_library in
             normalize_merged_loader_libraries(content_set.loader, &mut merged)
         {
