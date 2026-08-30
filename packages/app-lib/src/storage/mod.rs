@@ -764,33 +764,33 @@ pub async fn scan_meta_category() -> crate::Result<Option<StorageNode>> {
 pub async fn scan_database_category() -> crate::Result<Option<StorageNode>> {
     let directories = dirs()?;
     let settings_dir = directories.settings_dir.clone();
-
-    let app_db = settings_dir.join("app.db");
-    let app_db_size = fs::metadata(&app_db).await.map(|m| m.len()).unwrap_or(0);
-
-    let mut total = StorageSize {
-        actual: app_db_size,
-        symlink: 0,
-    };
     let mut children = Vec::new();
 
-    if app_db_size > 0 {
-        children.push(StorageNode {
-            id: "database-app-db".to_string(),
-            node_type: StorageNodeType::DbFile,
-            name: None,
-            instance_id: None,
-            size: StorageSize {
-                actual: app_db_size,
-                symlink: 0,
-            },
-            count: None,
-            paths: vec![StoragePath {
-                path: node_path(&app_db),
-                kind: StoragePathKind::File,
-            }],
-            children: None,
-        });
+    let mut total = StorageSize::default();
+    for channel in ["release", "beta"] {
+        let app_db = settings_dir.join(channel).join("app.db");
+        let app_db_size =
+            fs::metadata(&app_db).await.map(|m| m.len()).unwrap_or(0);
+        total.actual = total.actual.saturating_add(app_db_size);
+
+        if app_db_size > 0 {
+            children.push(StorageNode {
+                id: format!("database-app-db-{channel}"),
+                node_type: StorageNodeType::DbFile,
+                name: Some(channel.to_string()),
+                instance_id: None,
+                size: StorageSize {
+                    actual: app_db_size,
+                    symlink: 0,
+                },
+                count: None,
+                paths: vec![StoragePath {
+                    path: node_path(&app_db),
+                    kind: StoragePathKind::File,
+                }],
+                children: None,
+            });
+        }
     }
 
     let backups_dir = settings_dir.join("Backups").join("app-db");
@@ -815,12 +815,15 @@ pub async fn scan_database_category() -> crate::Result<Option<StorageNode>> {
         });
     }
 
-    let mut sidecar_total = 0u64;
-    for suffix in ["-wal", "-shm"] {
-        let path = settings_dir.join(format!("app.db{suffix}"));
-        sidecar_total += fs::metadata(path).await.map(|m| m.len()).unwrap_or(0);
+    for channel in ["release", "beta"] {
+        for suffix in ["-wal", "-shm"] {
+            let path =
+                settings_dir.join(channel).join(format!("app.db{suffix}"));
+            total.actual = total.actual.saturating_add(
+                fs::metadata(path).await.map(|m| m.len()).unwrap_or(0),
+            );
+        }
     }
-    total.actual = total.actual.saturating_add(sidecar_total);
 
     let covered = children
         .iter()

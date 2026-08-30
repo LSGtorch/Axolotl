@@ -15,8 +15,8 @@ export async function areUpdatesEnabled() {
 	return await invoke('are_updates_enabled')
 }
 
-export async function checkAppUpdate(source = 'cnb') {
-	return await invoke('check_app_update', { source })
+export async function checkAppUpdate(channel = 'release') {
+	return await invoke('check_app_update', { channel })
 }
 
 export async function getUpdateSize(updateRid) {
@@ -25,6 +25,10 @@ export async function getUpdateSize(updateRid) {
 
 export async function enqueueUpdateForInstallation(updateRid) {
 	return await invoke('enqueue_update_for_installation', { rid: updateRid })
+}
+
+export async function backupAppDbForUpdate(version) {
+	return await invoke('backup_app_db_for_update', { version })
 }
 
 export async function removeEnqueuedUpdate() {

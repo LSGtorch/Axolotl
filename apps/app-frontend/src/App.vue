@@ -120,7 +120,8 @@ import {
 	get as getSettings,
 	getLastBrowseContentProjectType,
 	getPrivacySettings,
-	getUpdateSource,
+	getUpdateChannel,
+	getUpdatePreferences,
 	isBrowseContentProjectType,
 	type PrivacySettings,
 	savePrivacySettings,
@@ -130,16 +131,17 @@ import { getSidebarExpanded, setSidebarExpanded } from '@/helpers/sidebar-state.
 import { get_opening_command, initialize_state, set_discord_activity } from '@/helpers/state'
 import {
 	areUpdatesEnabled,
+	backupAppDbForUpdate,
 	checkAppUpdate,
 	enqueueUpdateForInstallation,
 	exportErrorLogs,
 	getOS,
 	getUpdateSize,
+	installAptUpdate,
 	isAptLinux,
 	isDev,
 	isElevated,
 	isNetworkMetered,
-	installAptUpdate,
 	restartApp,
 	setRestartAfterPendingUpdate,
 } from '@/helpers/utils.js'
@@ -416,6 +418,7 @@ const {
 	availableUpdate,
 	updateSize,
 	updatesEnabled,
+	updatesPaused,
 } = appUpdateState
 let delayedUpdatePopupTimeout = null
 
@@ -428,6 +431,11 @@ async function checkUpdates() {
 	}
 
 	updatesEnabled.value = true
+	updatesPaused.value = (await getUpdatePreferences()).updatesPaused
+	if (updatesPaused.value) {
+		setTimeout(checkUpdates, 5 * 60 * 1000)
+		return
+	}
 	if (!offline.value) {
 		await performUpdateCheck().catch((error) => {
 			console.warn('Failed to check for launcher updates', error)
@@ -1805,22 +1813,40 @@ function showDelayedUpdatePopup() {
 	markAppUpdatePopupShown(update.version, stage)
 }
 
-let lastUpdateSource = 'cnb'
+let lastUpdateChannel = 'release'
 
 async function performUpdateCheck() {
-	const source = getUpdateSource()
-	if (source !== lastUpdateSource) {
+	const channel = await getUpdateChannel()
+	const preferences = await getUpdatePreferences()
+	updatesPaused.value = preferences.updatesPaused
+	if (updatesPaused.value) return 'paused'
+	if (channel !== lastUpdateChannel) {
 		availableUpdate.value = null
 		updateSize.value = null
 		appUpdateDownload.progress.value = 0
 		finishedDownloading.value = false
 		downloading.value = false
-		lastUpdateSource = source
+		lastUpdateChannel = channel
 	}
 
-	const update = await checkAppUpdate(source)
+	const update = await checkAppUpdate(channel)
 	if (!update) {
 		console.log('No update available')
+		return 'up-to-date'
+	}
+
+	const publishedAt = Date.parse(update.publishedAt ?? '')
+	if (
+		channel === 'release' &&
+		!preferences.immediateUpdateFetch &&
+		!update.forceUpdate &&
+		(!Number.isFinite(publishedAt) || Date.now() < publishedAt + 24 * 60 * 60 * 1000)
+	) {
+		console.warn(
+			Number.isFinite(publishedAt)
+				? `Update ${update.version} is waiting for the release delay.`
+				: `Update ${update.version} has no valid published_at timestamp.`,
+		)
 		return 'up-to-date'
 	}
 
@@ -1878,6 +1904,8 @@ async function manualUpdateCheck() {
 	}
 
 	updatesEnabled.value = true
+	updatesPaused.value = (await getUpdatePreferences()).updatesPaused
+	if (updatesPaused.value) return 'paused'
 	if (offline.value) {
 		return 'offline'
 	}
@@ -1889,9 +1917,7 @@ async function downloadAvailableUpdate() {
 	return downloadUpdate(availableUpdate.value)
 }
 
-const UPDATE_SOURCE_ORDER = ['miawa', 'cnb', 'github']
-
-async function downloadUpdate(versionToDownload, source = getUpdateSource()) {
+async function downloadUpdate(versionToDownload) {
 	if (!versionToDownload) {
 		handleError(`Failed to download update: no version available`)
 		return
@@ -1900,13 +1926,12 @@ async function downloadUpdate(versionToDownload, source = getUpdateSource()) {
 	if (aptLinux.value) {
 		return installAptUpdateForVersion(versionToDownload)
 	}
-
 	if (downloading.value || appUpdateDownload.progress.value !== 0) {
 		console.error(`Update ${versionToDownload.version} already downloading`)
 		return
 	}
 
-	console.log(`Downloading update ${versionToDownload.version} from ${source}`)
+	console.log(`Downloading update ${versionToDownload.version} from Update Server`)
 	downloading.value = true
 
 	try {
@@ -1927,7 +1952,7 @@ async function downloadUpdate(versionToDownload, source = getUpdateSource()) {
 				unlistenUpdateDownload?.().then(() => {
 					unlistenUpdateDownload = null
 				})
-				retryUpdateFromNextSource(source, error)
+				handleError(error)
 			})
 		unlistenUpdateDownload = await subscribeToDownloadProgress(
 			appUpdateDownload,
@@ -1936,7 +1961,7 @@ async function downloadUpdate(versionToDownload, source = getUpdateSource()) {
 	} catch (error) {
 		downloading.value = false
 		appUpdateDownload.progress.value = 0
-		retryUpdateFromNextSource(source, error)
+		handleError(error)
 	}
 }
 
@@ -1951,6 +1976,7 @@ async function installAptUpdateForVersion(versionToDownload) {
 	console.log(`Installing update ${versionToDownload.version} via apt`)
 	downloading.value = true
 	try {
+		await backupAppDbForUpdate(versionToDownload.version)
 		await installAptUpdate(versionToDownload.version)
 		downloading.value = false
 		finishedDownloading.value = true
@@ -1961,36 +1987,6 @@ async function installAptUpdateForVersion(versionToDownload) {
 		downloading.value = false
 		handleError(error)
 	}
-}
-
-// Any download failure falls back to the next update source in line
-// (miawa → cnb → github): re-check there and download its installer, so a
-// broken mirror never strands users on an outdated build.
-async function retryUpdateFromNextSource(failedSource, originalError) {
-	const startIndex = UPDATE_SOURCE_ORDER.indexOf(failedSource)
-	const remaining = startIndex >= 0 ? UPDATE_SOURCE_ORDER.slice(startIndex + 1) : []
-
-	for (const next of remaining) {
-		console.warn(`Update download failed via ${failedSource}; retrying via ${next}`, originalError)
-		try {
-			const fallbackUpdate = await checkAppUpdate(next)
-			if (!fallbackUpdate) {
-				console.warn(`No update available via ${next}`)
-				continue
-			}
-			availableUpdate.value = fallbackUpdate
-			updateSize.value = null
-			getUpdateSize(fallbackUpdate.rid)
-				.then((size) => (updateSize.value = size))
-				.catch((error) => console.warn('Failed to fetch update size', error))
-			await downloadUpdate(fallbackUpdate, next)
-			return
-		} catch (error) {
-			console.warn(`Update check via ${next} failed`, error)
-		}
-	}
-
-	handleError(originalError)
 }
 
 async function installUpdate() {
@@ -2009,6 +2005,7 @@ async function installUpdate() {
 	}
 
 	try {
+		await backupAppDbForUpdate(availableUpdate.value?.version)
 		await setRestartAfterPendingUpdate(true)
 	} catch (e) {
 		restarting.value = false

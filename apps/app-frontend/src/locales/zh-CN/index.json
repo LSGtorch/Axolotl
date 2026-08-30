@@ -7295,6 +7295,45 @@
   "app.settings.updates.available": {
     "message": "发现可用更新。"
   },
+  "app.settings.updates.channel.beta": {
+    "message": "Beta"
+  },
+  "app.settings.updates.channel.copy-database": {
+    "message": "复制数据库"
+  },
+  "app.settings.updates.channel.copy-database-description": {
+    "message": "是否将 Release 数据库复制到 Beta 通道？此操作无法自动撤销。"
+  },
+  "app.settings.updates.channel.copy-database-title": {
+    "message": "将 Release 数据复制到 Beta？"
+  },
+  "app.settings.updates.channel.description": {
+    "message": "选择 Axolotl 接收的启动器版本。"
+  },
+  "app.settings.updates.channel.release": {
+    "message": "Release"
+  },
+  "app.settings.updates.channel.restart-description": {
+    "message": "立即重启 Axolotl 以开始使用新的更新通道，或稍后手动重启。"
+  },
+  "app.settings.updates.channel.restart-development-description": {
+    "message": "手动重启开发会话后，新的更新通道才会生效。"
+  },
+  "app.settings.updates.channel.restart-later": {
+    "message": "稍后手动重启"
+  },
+  "app.settings.updates.channel.restart-now": {
+    "message": "立即重启"
+  },
+  "app.settings.updates.channel.restart-title": {
+    "message": "需要重启"
+  },
+  "app.settings.updates.channel.start-empty": {
+    "message": "从空白数据库开始"
+  },
+  "app.settings.updates.channel.title": {
+    "message": "更新通道"
+  },
   "app.settings.updates.check": {
     "message": "检查更新"
   },
@@ -7313,6 +7352,12 @@
   "app.settings.updates.failed": {
     "message": "无法检查更新。"
   },
+  "app.settings.updates.immediate-fetch": {
+    "message": "最新更新可用后立即获取"
+  },
+  "app.settings.updates.immediate-fetch-description": {
+    "message": "Release 更新默认等待 24 小时。Beta 更新始终立即可用。"
+  },
   "app.settings.updates.github": {
     "message": "GitHub 渠道"
   },
@@ -7322,8 +7367,17 @@
   "app.settings.updates.offline": {
     "message": "请连接到互联网后检查更新。"
   },
+  "app.settings.updates.pause": {
+    "message": "暂停更新"
+  },
+  "app.settings.updates.pause-description": {
+    "message": "暂停自动检查、下载和更新通知，直到恢复更新。"
+  },
+  "app.settings.updates.paused": {
+    "message": "更新已暂停。"
+  },
   "app.settings.updates.portable": {
-    "message": "便携模式暂时无法更新，请去GitHub手动更新。"
+    "message": "便携模式无法自动更新，请手动下载最新版本。"
   },
   "app.settings.updates.preview-announcement": {
     "message": "预览更新公告弹窗"

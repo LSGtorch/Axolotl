@@ -410,6 +410,66 @@ pub(crate) async fn maybe_backup_existing_app_db(
     Ok(())
 }
 
+pub(crate) async fn backup_app_db_for_update(
+    db_path: &Path,
+    target_version: &str,
+) -> crate::Result<PathBuf> {
+    if !db_path.try_exists()? {
+        return Err(crate::ErrorKind::FSError(format!(
+            "Cannot back up missing app database {}",
+            db_path.display()
+        ))
+        .into());
+    }
+
+    let channel = db_path
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+        .unwrap_or("release");
+    let settings_dir =
+        db_path.parent().and_then(Path::parent).ok_or_else(|| {
+            crate::ErrorKind::FSError(format!(
+                "App database path {} has no settings directory",
+                db_path.display()
+            ))
+        })?;
+    let backup_dir = settings_dir.join("Backups").join("app-db").join(channel);
+    crate::util::io::create_dir_all(&backup_dir).await?;
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let backup_path = backup_dir.join(format!(
+        "app-db-before-update-{}-{}-{timestamp}.db",
+        sanitize_version_for_filename(channel),
+        sanitize_version_for_filename(target_version),
+    ));
+
+    let mut conn = open_read_only_db(db_path).await?;
+    create_sqlite_snapshot(&mut conn, &backup_path).await?;
+    conn.close().await?;
+    if !matches!(
+        check_database_integrity(&backup_path).await?,
+        IntegrityStatus::Healthy
+    ) {
+        let _ = tokio::fs::remove_file(&backup_path).await;
+        return Err(crate::ErrorKind::FSError(format!(
+            "Update database backup {} failed its integrity check",
+            backup_path.display()
+        ))
+        .into());
+    }
+
+    tracing::info!(
+        database = %db_path.display(),
+        backup = %backup_path.display(),
+        target_version,
+        "Created app database backup before update"
+    );
+    Ok(backup_path)
+}
+
 async fn open_read_only_db(db_path: &Path) -> crate::Result<SqliteConnection> {
     let conn_options = SqliteConnectOptions::new()
         .filename(db_path)
@@ -455,7 +515,20 @@ fn app_db_backup_dir_for(db_path: &Path) -> crate::Result<PathBuf> {
         ))
     })?;
 
-    Ok(base.join("Backups").join("app-db"))
+    let backup_dir = base.join("Backups").join("app-db");
+    match db_path
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+    {
+        Some("beta") | Some("release") => Ok(backup_dir.join(
+            db_path
+                .parent()
+                .and_then(Path::file_name)
+                .expect("database channel directory has a name"),
+        )),
+        _ => Ok(backup_dir),
+    }
 }
 
 async fn has_user_tables(conn: &mut SqliteConnection) -> crate::Result<bool> {
@@ -677,5 +750,25 @@ mod tests {
 
         assert!(error.to_string().contains("no healthy backup"));
         assert_eq!(tokio::fs::read(&db_path).await.unwrap(), corrupt_bytes);
+    }
+
+    #[tokio::test]
+    async fn update_backup_creates_a_healthy_channel_snapshot() {
+        let temp = tempfile::tempdir().unwrap();
+        let db_path = temp.path().join("release").join("app.db");
+        tokio::fs::create_dir_all(db_path.parent().unwrap())
+            .await
+            .unwrap();
+        create_test_app_db(&db_path, "release").await;
+
+        let backup_path =
+            backup_app_db_for_update(&db_path, "1.10.0").await.unwrap();
+
+        assert!(backup_path.exists());
+        assert_eq!(read_marker(&backup_path).await, "release");
+        assert!(matches!(
+            check_database_integrity(&backup_path).await.unwrap(),
+            IntegrityStatus::Healthy
+        ));
     }
 }

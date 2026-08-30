@@ -1,19 +1,30 @@
 <script setup lang="ts">
-import { EyeIcon, RefreshCwIcon } from '@modrinth/assets'
+import { EyeIcon, RefreshCwIcon, XIcon } from '@modrinth/assets'
 import {
+	ButtonStyled,
 	Combobox,
 	defineMessages,
 	injectNotificationManager,
 	NewButton as Button,
+	NewModal,
+	Toggle,
 	useVIntl,
 } from '@modrinth/ui'
 import { getVersion } from '@tauri-apps/api/app'
 import { invoke } from '@tauri-apps/api/core'
-import { inject, ref, watch } from 'vue'
+import { inject, nextTick, ref, watch } from 'vue'
 
 import UpdateAnnouncementHistory from '@/components/ui/announcement/UpdateAnnouncementHistory.vue'
-import { getUpdateSource, setUpdateSource, type UpdateSource } from '@/helpers/settings.ts'
-import { isDev } from '@/helpers/utils.js'
+import {
+	betaDatabaseExists,
+	copyReleaseDatabaseToBeta,
+	getUpdateChannel,
+	getUpdatePreferences,
+	setUpdatePreferences,
+	setUpdateChannel,
+	type UpdateChannel,
+} from '@/helpers/settings.ts'
+import { isDev, restartApp } from '@/helpers/utils.js'
 import { type AppUpdateCheckResult, checkForAppUpdate } from '@/providers/app-update.ts'
 
 import SettingsRow from './SettingsRow.vue'
@@ -21,13 +32,18 @@ import SettingsSection from './SettingsSection.vue'
 
 const { formatMessage } = useVIntl()
 const { handleError } = injectNotificationManager()
-const selectedSource = ref<UpdateSource>(getUpdateSource())
+const selectedChannel = ref<UpdateChannel>(await getUpdateChannel())
+const updatePreferences = ref(await getUpdatePreferences())
 const checking = ref(false)
 const checkResult = ref<AppUpdateCheckResult | 'failed' | 'portable' | null>(null)
 const currentVersion = await getVersion()
 const isDevEnvironment = await isDev()
 const previewUpdateAnnouncement = inject<(version: string) => void>('previewUpdateAnnouncement')
 const isPortable = ref(false)
+const restartModal = ref<InstanceType<typeof NewModal>>()
+const copyDatabaseModal = ref<InstanceType<typeof NewModal>>()
+const pendingChannel = ref<UpdateChannel | null>(null)
+let restoringChannelSelection = false
 
 try {
 	isPortable.value = await invoke('is_portable_mode')
@@ -37,24 +53,20 @@ try {
 
 const messages = defineMessages({
 	title: {
-		id: 'app.settings.updates.title',
-		defaultMessage: 'Update source',
+		id: 'app.settings.updates.channel.title',
+		defaultMessage: 'Update channel',
 	},
 	description: {
-		id: 'app.settings.updates.description',
-		defaultMessage: 'Choose where Axolotl checks for launcher updates.',
+		id: 'app.settings.updates.channel.description',
+		defaultMessage: 'Choose which launcher versions Axolotl receives.',
 	},
-	miawa: {
-		id: 'app.settings.updates.miawa',
-		defaultMessage: 'LemwoodMirror',
+	release: {
+		id: 'app.settings.updates.channel.release',
+		defaultMessage: 'Release',
 	},
-	cnb: {
-		id: 'app.settings.updates.cnb',
-		defaultMessage: 'CNB',
-	},
-	github: {
-		id: 'app.settings.updates.github',
-		defaultMessage: 'GitHub',
+	beta: {
+		id: 'app.settings.updates.channel.beta',
+		defaultMessage: 'Beta',
 	},
 	check: {
 		id: 'app.settings.updates.check',
@@ -87,7 +99,7 @@ const messages = defineMessages({
 	portable: {
 		id: 'app.settings.updates.portable',
 		defaultMessage:
-			'Portable mode cannot update automatically. Please update manually from GitHub.',
+			'Portable mode cannot update automatically. Please download the latest version manually.',
 	},
 	security: {
 		id: 'app.settings.updates.security',
@@ -97,12 +109,72 @@ const messages = defineMessages({
 		id: 'app.settings.updates.preview-announcement',
 		defaultMessage: 'Preview update announcement',
 	},
+	restartTitle: {
+		id: 'app.settings.updates.channel.restart-title',
+		defaultMessage: 'Restart required',
+	},
+	restartDescription: {
+		id: 'app.settings.updates.channel.restart-description',
+		defaultMessage:
+			'Restart Axolotl now to start using the new update channel, or restart manually later.',
+	},
+	restartDevelopmentDescription: {
+		id: 'app.settings.updates.channel.restart-development-description',
+		defaultMessage:
+			'The new update channel will be used after you manually restart the development session.',
+	},
+	restartNow: {
+		id: 'app.settings.updates.channel.restart-now',
+		defaultMessage: 'Restart now',
+	},
+	restartLater: {
+		id: 'app.settings.updates.channel.restart-later',
+		defaultMessage: 'Restart manually later',
+	},
+	immediateFetch: {
+		id: 'app.settings.updates.immediate-fetch',
+		defaultMessage: 'Get updates as soon as they are available',
+	},
+	immediateFetchDescription: {
+		id: 'app.settings.updates.immediate-fetch-description',
+		defaultMessage:
+			'Release updates wait 24 hours by default. Beta updates are always available immediately.',
+	},
+	pause: {
+		id: 'app.settings.updates.pause',
+		defaultMessage: 'Pause updates',
+	},
+	pauseDescription: {
+		id: 'app.settings.updates.pause-description',
+		defaultMessage:
+			'Stop automatic update checks, downloads, and update notifications until you resume updates.',
+	},
+	paused: {
+		id: 'app.settings.updates.paused',
+		defaultMessage: 'Updates are paused.',
+	},
+	copyDatabaseTitle: {
+		id: 'app.settings.updates.channel.copy-database-title',
+		defaultMessage: 'Copy Release data to Beta?',
+	},
+	copyDatabaseDescription: {
+		id: 'app.settings.updates.channel.copy-database-description',
+		defaultMessage:
+			'Would you like to copy your Release database into the Beta channel? This cannot be undone automatically.',
+	},
+	copyDatabase: {
+		id: 'app.settings.updates.channel.copy-database',
+		defaultMessage: 'Copy database',
+	},
+	startEmpty: {
+		id: 'app.settings.updates.channel.start-empty',
+		defaultMessage: 'Start with empty database',
+	},
 })
 
-const options: Array<{ value: UpdateSource; label: string }> = [
-	{ value: 'miawa', label: formatMessage(messages.miawa) },
-	{ value: 'cnb', label: formatMessage(messages.cnb) },
-	{ value: 'github', label: formatMessage(messages.github) },
+const options: Array<{ value: UpdateChannel; label: string }> = [
+	{ value: 'release', label: formatMessage(messages.release) },
+	{ value: 'beta', label: formatMessage(messages.beta) },
 ]
 
 const resultMessages: Record<AppUpdateCheckResult | 'failed' | 'portable', keyof typeof messages> =
@@ -113,12 +185,78 @@ const resultMessages: Record<AppUpdateCheckResult | 'failed' | 'portable', keyof
 		offline: 'offline',
 		failed: 'failed',
 		portable: 'portable',
+		paused: 'paused',
 	}
 
-watch(selectedSource, (source) => {
-	setUpdateSource(source)
+watch(selectedChannel, async (channel, previousChannel) => {
+	if (restoringChannelSelection) return
+
+	if (channel === 'beta') updatePreferences.value.immediateUpdateFetch = true
+	if (channel === 'beta' && previousChannel === 'release') {
+		try {
+			if (!(await betaDatabaseExists())) {
+				pendingChannel.value = channel
+				restoringChannelSelection = true
+				selectedChannel.value = previousChannel
+				await nextTick()
+				restoringChannelSelection = false
+				copyDatabaseModal.value?.show()
+				return
+			}
+		} catch (error) {
+			restoringChannelSelection = true
+			selectedChannel.value = previousChannel
+			await nextTick()
+			restoringChannelSelection = false
+			handleError(error)
+			return
+		}
+	}
+
+	await applyChannel(channel)
 	checkResult.value = null
 })
+
+async function applyChannel(channel: UpdateChannel, copyDatabase = false) {
+	try {
+		if (copyDatabase) await copyReleaseDatabaseToBeta()
+		await setUpdateChannel(channel)
+		restartModal.value?.show()
+		return true
+	} catch (error) {
+		handleError(error)
+		return false
+	}
+}
+
+async function chooseBetaDatabase(copyDatabase: boolean) {
+	copyDatabaseModal.value?.hide()
+	const channel = pendingChannel.value
+	pendingChannel.value = null
+	if (channel && (await applyChannel(channel, copyDatabase))) {
+		restoringChannelSelection = true
+		selectedChannel.value = channel
+		await nextTick()
+		restoringChannelSelection = false
+	}
+}
+
+async function restartForChannelChange() {
+	restartModal.value?.hide()
+	try {
+		await restartApp()
+	} catch (error) {
+		handleError(error)
+	}
+}
+
+async function saveUpdatePreferences() {
+	try {
+		await setUpdatePreferences(updatePreferences.value)
+	} catch (error) {
+		handleError(error)
+	}
+}
 
 async function checkForUpdates() {
 	checking.value = true
@@ -146,17 +284,43 @@ async function checkForUpdates() {
 		<SettingsSection>
 			<SettingsRow>
 				<template #label>
-					<span id="settings-target-updates-source" tabindex="-1">
+					<span id="settings-target-updates-channel" tabindex="-1">
 						{{ formatMessage(messages.title) }}
 					</span>
 				</template>
 				<template #description>{{ formatMessage(messages.description) }}</template>
 				<template #control>
 					<Combobox
-						id="update-source"
-						v-model="selectedSource"
+						id="update-channel"
+						v-model="selectedChannel"
 						:name="formatMessage(messages.title)"
 						:options="options"
+					/>
+				</template>
+			</SettingsRow>
+		</SettingsSection>
+
+		<SettingsSection>
+			<SettingsRow>
+				<template #label>{{ formatMessage(messages.immediateFetch) }}</template>
+				<template #description>{{ formatMessage(messages.immediateFetchDescription) }}</template>
+				<template #control>
+					<Toggle
+						id="immediate-update-fetch"
+						v-model="updatePreferences.immediateUpdateFetch"
+						:disabled="selectedChannel === 'beta'"
+						@update:model-value="saveUpdatePreferences"
+					/>
+				</template>
+			</SettingsRow>
+			<SettingsRow>
+				<template #label>{{ formatMessage(messages.pause) }}</template>
+				<template #description>{{ formatMessage(messages.pauseDescription) }}</template>
+				<template #control>
+					<Toggle
+						id="pause-updates"
+						v-model="updatePreferences.updatesPaused"
+						@update:model-value="saveUpdatePreferences"
 					/>
 				</template>
 			</SettingsRow>
@@ -189,6 +353,56 @@ async function checkForUpdates() {
 
 		<UpdateAnnouncementHistory :current-version="currentVersion" />
 	</div>
+
+	<NewModal ref="restartModal" :header="formatMessage(messages.restartTitle)" :closable="false">
+		<p class="m-0">
+			{{
+				formatMessage(
+					isDevEnvironment ? messages.restartDevelopmentDescription : messages.restartDescription,
+				)
+			}}
+		</p>
+		<template #actions>
+			<div class="flex justify-end gap-2">
+				<ButtonStyled type="outlined">
+					<button type="button" @click="restartModal?.hide()">
+						<XIcon />
+						{{ formatMessage(messages.restartLater) }}
+					</button>
+				</ButtonStyled>
+				<ButtonStyled v-if="!isDevEnvironment" color="brand">
+					<button type="button" @click="restartForChannelChange">
+						<RefreshCwIcon />
+						{{ formatMessage(messages.restartNow) }}
+					</button>
+				</ButtonStyled>
+			</div>
+		</template>
+	</NewModal>
+
+	<NewModal
+		ref="copyDatabaseModal"
+		:header="formatMessage(messages.copyDatabaseTitle)"
+		:closable="false"
+	>
+		<p class="m-0">{{ formatMessage(messages.copyDatabaseDescription) }}</p>
+		<template #actions>
+			<div class="flex justify-end gap-2">
+				<ButtonStyled type="outlined">
+					<button type="button" @click="chooseBetaDatabase(false)">
+						<XIcon />
+						{{ formatMessage(messages.startEmpty) }}
+					</button>
+				</ButtonStyled>
+				<ButtonStyled color="brand">
+					<button type="button" @click="chooseBetaDatabase(true)">
+						<RefreshCwIcon />
+						{{ formatMessage(messages.copyDatabase) }}
+					</button>
+				</ButtonStyled>
+			</div>
+		</template>
+	</NewModal>
 </template>
 
 <style scoped>

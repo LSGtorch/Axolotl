@@ -33,6 +33,23 @@ export const ANNOUNCEMENT_CHANGE_TYPES: readonly AnnouncementChangeType[] = [
 
 export const launcherAnnouncements: readonly LauncherAnnouncement[] = [
 	{
+		id: 'launcher-1.9.5-beta.1',
+		version: '1.9.5-beta.1',
+		publishedAt: '2026-08-30',
+		title: {
+			'en-US': 'Axolotl Launcher 1.9.5-beta.1',
+			'zh-CN': 'Axolotl Launcher 1.9.5-beta.1',
+		},
+		changes: {
+			added: [
+				{
+					'en-US': 'Added multi-update channel option.',
+					'zh-CN': '添加多更新渠道选项。',
+				},
+			],
+		},
+	},
+	{
 		id: 'launcher-1.9.4',
 		version: '1.9.4',
 		publishedAt: '2026-08-29',

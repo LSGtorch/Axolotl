@@ -42,7 +42,11 @@ Memorysettings {
 
 */
 
-export type UpdateSource = 'miawa' | 'cnb' | 'github'
+export type UpdateChannel = 'release' | 'beta'
+export type UpdatePreferences = {
+	immediateUpdateFetch: boolean
+	updatesPaused: boolean
+}
 export type DownloadSourceMode =
 	| 'auto'
 	| 'official_only'
@@ -63,17 +67,29 @@ export type ProxyTestResult = {
 	message: string
 }
 
-const UPDATE_SOURCE_STORAGE_KEY = 'axolotl-update-source-v2'
-
-export function getUpdateSource(): UpdateSource {
-	const value = localStorage.getItem(UPDATE_SOURCE_STORAGE_KEY)
-	if (value === 'cnb') return 'cnb'
-	if (value === 'github' || value === 'official') return 'github'
-	return 'miawa'
+export async function getUpdateChannel(): Promise<UpdateChannel> {
+	const channel = await invoke<string>('get_update_channel')
+	return channel === 'beta' ? 'beta' : 'release'
 }
 
-export function setUpdateSource(source: UpdateSource) {
-	localStorage.setItem(UPDATE_SOURCE_STORAGE_KEY, source)
+export async function setUpdateChannel(channel: UpdateChannel): Promise<void> {
+	await invoke('set_update_channel', { channel })
+}
+
+export async function copyReleaseDatabaseToBeta(): Promise<void> {
+	await invoke('copy_release_database_to_beta')
+}
+
+export async function betaDatabaseExists(): Promise<boolean> {
+	return await invoke('beta_database_exists')
+}
+
+export async function getUpdatePreferences(): Promise<UpdatePreferences> {
+	return await invoke('get_update_preferences')
+}
+
+export async function setUpdatePreferences(preferences: UpdatePreferences): Promise<void> {
+	await invoke('set_update_preferences', preferences)
 }
 
 export type BrowseContentSource =

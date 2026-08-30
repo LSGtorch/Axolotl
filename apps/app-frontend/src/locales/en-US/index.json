@@ -7286,17 +7286,50 @@
   "app.settings.updates.available": {
     "message": "An update is available."
   },
+  "app.settings.updates.channel.beta": {
+    "message": "Beta"
+  },
+  "app.settings.updates.channel.copy-database": {
+    "message": "Copy database"
+  },
+  "app.settings.updates.channel.copy-database-description": {
+    "message": "Would you like to copy your Release database into the Beta channel? This cannot be undone automatically."
+  },
+  "app.settings.updates.channel.copy-database-title": {
+    "message": "Copy Release data to Beta?"
+  },
+  "app.settings.updates.channel.description": {
+    "message": "Choose which launcher versions Axolotl receives."
+  },
+  "app.settings.updates.channel.release": {
+    "message": "Release"
+  },
+  "app.settings.updates.channel.restart-description": {
+    "message": "Restart Axolotl now to start using the new update channel, or restart manually later."
+  },
+  "app.settings.updates.channel.restart-development-description": {
+    "message": "The new update channel will be used after you manually restart the development session."
+  },
+  "app.settings.updates.channel.restart-later": {
+    "message": "Restart manually later"
+  },
+  "app.settings.updates.channel.restart-now": {
+    "message": "Restart now"
+  },
+  "app.settings.updates.channel.restart-title": {
+    "message": "Restart required"
+  },
+  "app.settings.updates.channel.start-empty": {
+    "message": "Start with empty database"
+  },
+  "app.settings.updates.channel.title": {
+    "message": "Update channel"
+  },
   "app.settings.updates.check": {
     "message": "Check for updates"
   },
   "app.settings.updates.checking": {
     "message": "Checking for updates…"
-  },
-  "app.settings.updates.cnb": {
-    "message": "CNB"
-  },
-  "app.settings.updates.description": {
-    "message": "Choose where Axolotl checks for launcher updates."
   },
   "app.settings.updates.disabled": {
     "message": "Updates are disabled in this build."
@@ -7304,26 +7337,32 @@
   "app.settings.updates.failed": {
     "message": "Could not check for updates."
   },
-  "app.settings.updates.github": {
-    "message": "GitHub"
+  "app.settings.updates.immediate-fetch": {
+    "message": "Get updates as soon as they are available"
   },
-  "app.settings.updates.miawa": {
-    "message": "LemwoodMirror"
+  "app.settings.updates.immediate-fetch-description": {
+    "message": "Release updates wait 24 hours by default. Beta updates are always available immediately."
   },
   "app.settings.updates.offline": {
     "message": "Connect to the internet to check for updates."
   },
+  "app.settings.updates.pause": {
+    "message": "Pause updates"
+  },
+  "app.settings.updates.pause-description": {
+    "message": "Stop automatic update checks, downloads, and update notifications until you resume updates."
+  },
+  "app.settings.updates.paused": {
+    "message": "Updates are paused."
+  },
   "app.settings.updates.portable": {
-    "message": "Portable mode cannot update automatically. Please update manually from GitHub."
+    "message": "Portable mode cannot update automatically. Please download the latest version manually."
   },
   "app.settings.updates.preview-announcement": {
     "message": "Preview update announcement"
   },
   "app.settings.updates.security": {
     "message": "Updates are installed only when their cryptographic signature is valid."
-  },
-  "app.settings.updates.title": {
-    "message": "Update source"
   },
   "app.settings.updates.up-to-date": {
     "message": "Axolotl is up to date."

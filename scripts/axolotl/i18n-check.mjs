@@ -60,6 +60,8 @@ const allowedUntranslatedMessages = new Set([
 	'{type} · {version}',
 	'{value} MB',
 	'> {command}',
+	'Beta',
+	'Release',
 ])
 
 function messageText(value) {

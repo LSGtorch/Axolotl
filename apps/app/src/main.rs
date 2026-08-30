@@ -5,6 +5,7 @@
 #![recursion_limit = "256"]
 
 use native_dialog::{DialogBuilder, MessageLevel};
+use serde::{Deserialize, Serialize};
 use std::sync::atomic::Ordering;
 use std::{
     env, fs,
@@ -24,6 +25,20 @@ mod lightweight_mode;
 mod mod_translation;
 mod portable;
 mod seed_map;
+
+#[derive(Default, Deserialize, Serialize)]
+struct UpdateChannelState {
+    active_channel: Option<String>,
+    immediate_update_fetch: Option<bool>,
+    updates_paused: Option<bool>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdatePreferences {
+    immediate_update_fetch: bool,
+    updates_paused: bool,
+}
 
 #[cfg(target_os = "macos")]
 mod macos;
@@ -214,6 +229,138 @@ async fn initialize_state(app: tauri::AppHandle) -> api::Result<()> {
     app.fs_scope()
         .allow_directory(state.directories.servers_dir(), true)?;
 
+    Ok(())
+}
+
+#[tauri::command]
+fn get_update_channel(app: tauri::AppHandle) -> api::Result<String> {
+    let channel = read_update_channel_state(&app)?
+        .active_channel
+        .unwrap_or_else(|| "release".to_string());
+
+    match channel.as_str() {
+        "release" | "beta" => Ok(channel),
+        _ => Err(theseus::Error::from(theseus::ErrorKind::FSError(
+            "Update channel settings are invalid".to_string(),
+        ))
+        .into()),
+    }
+}
+
+#[tauri::command]
+fn set_update_channel(
+    app: tauri::AppHandle,
+    channel: String,
+) -> api::Result<()> {
+    if !matches!(channel.as_str(), "release" | "beta") {
+        return Err(theseus::Error::from(theseus::ErrorKind::FSError(
+            "Invalid update channel".to_string(),
+        ))
+        .into());
+    }
+
+    let mut state = read_update_channel_state(&app)?;
+    state.active_channel = Some(channel);
+    write_update_channel_state(&app, &state)?;
+    Ok(())
+}
+
+#[tauri::command]
+fn get_update_preferences(
+    app: tauri::AppHandle,
+) -> api::Result<UpdatePreferences> {
+    let state = read_update_channel_state(&app)?;
+    let is_beta = state.active_channel.as_deref() == Some("beta");
+    Ok(UpdatePreferences {
+        immediate_update_fetch: is_beta
+            || state.immediate_update_fetch.unwrap_or(false),
+        updates_paused: state.updates_paused.unwrap_or(false),
+    })
+}
+
+#[tauri::command]
+fn set_update_preferences(
+    app: tauri::AppHandle,
+    immediate_update_fetch: bool,
+    updates_paused: bool,
+) -> api::Result<()> {
+    let mut state = read_update_channel_state(&app)?;
+    state.immediate_update_fetch = Some(immediate_update_fetch);
+    state.updates_paused = Some(updates_paused);
+    write_update_channel_state(&app, &state)
+}
+
+fn update_channel_state_path(app: &tauri::AppHandle) -> api::Result<PathBuf> {
+    let settings_dir = theseus::DirectoryInfo::initial_settings_dir_path(
+        &app.config().identifier,
+    )
+    .ok_or_else(|| {
+        theseus::Error::from(theseus::ErrorKind::FSError(
+            "Could not find update channel settings directory".to_string(),
+        ))
+    })?;
+    Ok(settings_dir.join("update-channel.json"))
+}
+
+fn read_update_channel_state(
+    app: &tauri::AppHandle,
+) -> api::Result<UpdateChannelState> {
+    let path = update_channel_state_path(app)?;
+    match std::fs::read_to_string(path) {
+        Ok(contents) => serde_json::from_str(&contents).map_err(|error| {
+            theseus::Error::from(theseus::ErrorKind::OtherError(
+                error.to_string(),
+            ))
+            .into()
+        }),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(UpdateChannelState::default())
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn write_update_channel_state(
+    app: &tauri::AppHandle,
+    state: &UpdateChannelState,
+) -> api::Result<()> {
+    let path = update_channel_state_path(app)?;
+    let settings_dir = path
+        .parent()
+        .expect("Update channel state path has a parent directory");
+    std::fs::create_dir_all(settings_dir)?;
+    let temporary_path = settings_dir.join("update-channel.json.tmp");
+    let contents = serde_json::to_vec(state).map_err(|error| {
+        theseus::Error::from(theseus::ErrorKind::OtherError(error.to_string()))
+    })?;
+    std::fs::write(&temporary_path, contents)?;
+    std::fs::rename(temporary_path, path)?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn copy_release_database_to_beta(
+    app: tauri::AppHandle,
+) -> api::Result<()> {
+    theseus::copy_release_database_to_beta(&app.config().identifier).await?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn beta_database_exists(app: tauri::AppHandle) -> api::Result<bool> {
+    Ok(theseus::beta_database_exists(&app.config().identifier).await?)
+}
+
+#[tauri::command]
+async fn backup_app_db_for_update(
+    app: tauri::AppHandle,
+    version: String,
+) -> api::Result<()> {
+    theseus::backup_current_app_db_for_update(
+        &app.config().identifier,
+        &version,
+    )
+    .await?;
     Ok(())
 }
 
@@ -673,6 +820,13 @@ fn main() {
         .manage(PendingUpdateData::default())
         .invoke_handler(tauri::generate_handler![
             initialize_state,
+            get_update_channel,
+            set_update_channel,
+            get_update_preferences,
+            set_update_preferences,
+            copy_release_database_to_beta,
+            beta_database_exists,
+            backup_app_db_for_update,
             set_discord_activity,
             is_dev,
             portable::is_portable_mode,
