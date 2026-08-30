@@ -33,6 +33,31 @@ export const ANNOUNCEMENT_CHANGE_TYPES: readonly AnnouncementChangeType[] = [
 
 export const launcherAnnouncements: readonly LauncherAnnouncement[] = [
 	{
+		id: 'launcher-99.99.7',
+		version: '99.99.7',
+		publishedAt: '2026-08-30',
+		title: {
+			'en-US': 'Axolotl Launcher 99.99.7 (test)',
+			'zh-CN': 'Axolotl Launcher 99.99.7（测试版）',
+		},
+		changes: {
+			fixed: [
+				{
+					'en-US':
+						'Directly associated Cleanroom 0.6.11-alpha clients (Minecraft 1.12.2) no longer crash with NoSuchMethodError: getPointer: the whole vanilla LWJGL 2 family is excluded from the launch, matching HMCL behavior.',
+					'zh-CN':
+						'修复直接关联的 Cleanroom 客户端（1.12.2）启动时 NoSuchMethodError: getPointer 崩溃：启动时排除整个旧版 LWJGL2 家族，与 HMCL 行为一致。',
+				},
+				{
+					'en-US':
+						'Directly associated instances created before Cleanroom loader detection are now normalized correctly at launch.',
+					'zh-CN':
+						'修复在 Cleanroom 检测完善前创建的直接关联实例，启动时现在会正确归一化。',
+				},
+			],
+		},
+	},
+	{
 		id: 'launcher-1.9.4',
 		version: '1.9.4',
 		publishedAt: '2026-08-29',
