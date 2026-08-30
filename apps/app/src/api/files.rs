@@ -69,6 +69,7 @@ pub fn init<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
             file_save_as,
             file_read_dragged_file,
             screenshot_thumbnail,
+            instance_icon_thumbnail,
             studio_read_text,
             studio_read_binary,
             studio_write_binary,
@@ -374,6 +375,106 @@ pub async fn screenshot_thumbnail(
     })??;
 
     Ok(tauri::ipc::Response::new(thumbnail))
+}
+
+pub(crate) async fn local_instance_icon_path(
+    instance_id: &str,
+    max_dimension: u32,
+) -> Result<Option<String>> {
+    const LOCAL_ICON_NAMES: [&str; 4] =
+        ["icon.png", "icon.jpg", "icon.jpeg", "icon.webp"];
+    const MAX_LOCAL_ICON_BYTES: usize = 2 * 1024 * 1024;
+    let base = get_full_path(instance_id).await?;
+    let max_dimension = max_dimension.max(1);
+
+    for file_name in LOCAL_ICON_NAMES {
+        let source = base.join(file_name);
+        if !source.is_file() {
+            continue;
+        }
+
+        let candidate: Result<Option<String>> = async {
+            let bytes = tokio::fs::read(&source).await?;
+            let (processed, cache_name) = tokio::task::spawn_blocking(
+                move || -> Result<(Vec<u8>, &'static str)> {
+                    let (width, height) =
+                        image::ImageReader::new(Cursor::new(bytes.as_slice()))
+                            .with_guessed_format()
+                            .map_err(|error| thumbnail_error(error.into()))?
+                            .into_dimensions()
+                            .map_err(|error| thumbnail_error(error.into()))?;
+
+                    if width <= max_dimension
+                        && height <= max_dimension
+                        && bytes.len() <= MAX_LOCAL_ICON_BYTES
+                    {
+                        return Ok((bytes, file_name));
+                    }
+
+                    let decoded =
+                        image::ImageReader::new(Cursor::new(bytes.as_slice()))
+                            .with_guessed_format()
+                            .map_err(|error| thumbnail_error(error.into()))?
+                            .decode()
+                            .map_err(|error| thumbnail_error(error.into()))?;
+                    let thumbnail =
+                        decoded.thumbnail(max_dimension, max_dimension);
+                    let mut output = Vec::new();
+                    if thumbnail.color().has_alpha() {
+                        let rgba = thumbnail.to_rgba8();
+                        image::codecs::png::PngEncoder::new(&mut output)
+                            .write_image(
+                                rgba.as_raw(),
+                                rgba.width(),
+                                rgba.height(),
+                                image::ExtendedColorType::Rgba8,
+                            )
+                            .map_err(|error| thumbnail_error(error.into()))?;
+                        Ok((output, "icon.png"))
+                    } else {
+                        let rgb = thumbnail.to_rgb8();
+                        image::codecs::jpeg::JpegEncoder::new_with_quality(
+                            &mut output,
+                            85,
+                        )
+                        .write_image(
+                            rgb.as_raw(),
+                            rgb.width(),
+                            rgb.height(),
+                            image::ExtendedColorType::Rgb8,
+                        )
+                        .map_err(|error| thumbnail_error(error.into()))?;
+                        Ok((output, "icon.jpg"))
+                    }
+                },
+            )
+            .await
+            .map_err(|error| {
+                theseus::Error::from(theseus::ErrorKind::OtherError(format!(
+                    "Instance icon thumbnail task failed: {error}"
+                )))
+            })??;
+
+            let cached_path =
+                theseus::instance::cache_icon(cache_name, processed).await?;
+            Ok(Some(cached_path))
+        }
+        .await;
+
+        if let Ok(Some(path)) = candidate {
+            return Ok(Some(path));
+        }
+    }
+
+    Ok(None)
+}
+
+#[tauri::command]
+pub async fn instance_icon_thumbnail(
+    instance_id: &str,
+    max_dimension: u32,
+) -> Result<Option<String>> {
+    local_instance_icon_path(instance_id, max_dimension).await
 }
 
 fn thumbnail_error(error: image::ImageError) -> theseus::Error {

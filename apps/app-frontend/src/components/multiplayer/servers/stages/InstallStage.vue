@@ -21,6 +21,10 @@ const messages = defineMessages({
 	done: { id: 'app.servers.wizard.done', defaultMessage: 'Server ready' },
 	failed: { id: 'app.servers.wizard.failed', defaultMessage: 'Setup failed' },
 	installLog: { id: 'app.servers.wizard.log', defaultMessage: 'Output' },
+	backgroundHint: {
+		id: 'app.servers.wizard.background-hint',
+		defaultMessage: 'You can close this window — the download continues in the background.',
+	},
 })
 
 onMounted(() => {
@@ -79,6 +83,13 @@ const isBusy = computed(
 			show-progress
 		/>
 
+		<p
+			v-if="ctx.installPhase.value === 'downloading'"
+			class="m-0 text-xs font-medium text-secondary"
+		>
+			{{ formatMessage(messages.backgroundHint) }}
+		</p>
+
 		<Admonition
 			v-if="ctx.installPhase.value === 'error'"
 			type="critical"
@@ -87,14 +98,7 @@ const isBusy = computed(
 			{{ ctx.installError.value }}
 		</Admonition>
 
-		<div
-			v-if="
-				ctx.installPhase.value !== 'idle' &&
-				ctx.installPhase.value !== 'preparing' &&
-				ctx.installPhase.value !== 'downloading'
-			"
-			class="flex flex-col gap-2"
-		>
+		<div v-if="ctx.installPhase.value === 'error'" class="flex flex-col gap-2">
 			<span class="text-sm font-semibold text-secondary">
 				{{ formatMessage(messages.installLog) }}
 			</span>

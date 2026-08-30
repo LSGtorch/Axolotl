@@ -38,8 +38,8 @@ function handleTabClick(index: number) {
 			isStudioMode
 				? 'flex h-full min-h-0 w-full flex-col'
 				: isFixedRender
-				? 'box-border flex h-full min-h-0 w-full flex-col gap-3 p-6'
-				: 'box-border flex min-h-full w-full flex-col gap-3 p-6'
+					? 'box-border flex h-full min-h-0 w-full flex-col gap-3 p-6'
+					: 'box-border flex min-h-full w-full flex-col gap-3 p-6'
 		"
 	>
 		<template v-if="!isStudioMode">

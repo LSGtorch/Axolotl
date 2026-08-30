@@ -4,16 +4,8 @@ import TranslationSettings from './TranslationSettings.vue'
 </script>
 
 <template>
-	<div class="settings-composite-page">
+	<div class="flex flex-col gap-6">
 		<LanguageSettings />
 		<TranslationSettings />
 	</div>
 </template>
-
-<style scoped>
-.settings-composite-page {
-	display: flex;
-	flex-direction: column;
-	gap: var(--gap-xl);
-}
-</style>

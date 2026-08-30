@@ -19,6 +19,7 @@ const WRITE_DELAY: Duration = Duration::from_secs(5);
 #[serde(rename_all = "snake_case")]
 pub(crate) enum NativeTransport {
     H2Single,
+    H2MultiRange,
     Http1MultiRange,
 }
 
@@ -223,6 +224,32 @@ pub(crate) fn record_success(
     schedule_write();
 }
 
+pub(crate) fn record_transfer_success(
+    family: &str,
+    authority: &str,
+    proxy: ProxyPolicy,
+    throughput_bps: f64,
+) {
+    if !throughput_bps.is_finite() || throughput_bps <= 0.0 {
+        return;
+    }
+    let mut reputation = REPUTATION.lock();
+    let entry = reputation
+        .entry(ReputationKey {
+            family: family.to_string(),
+            authority: authority.to_string(),
+            proxy,
+        })
+        .or_default();
+    entry.success_samples = entry.success_samples.saturating_add(1);
+    entry.consecutive_failures = 0;
+    entry.throughput_bps =
+        Some(update_ewma(entry.throughput_bps, throughput_bps));
+    entry.updated_at = now_secs();
+    drop(reputation);
+    schedule_write();
+}
+
 pub(crate) fn record_failure(
     family: &str,
     authority: &str,
@@ -373,6 +400,30 @@ mod tests {
                 NativeTransport::Http1MultiRange,
             )
             .is_none()
+        );
+        assert!(
+            get_transport(
+                "transport-reputation.example:443",
+                ProxyPolicy::Direct,
+                NativeTransport::H2MultiRange,
+            )
+            .is_none()
+        );
+        record_transport_success(
+            "transport-reputation.example:443",
+            ProxyPolicy::Direct,
+            NativeTransport::H2MultiRange,
+            4096.0,
+        );
+        assert_eq!(
+            get_transport(
+                "transport-reputation.example:443",
+                ProxyPolicy::Direct,
+                NativeTransport::H2Single,
+            )
+            .unwrap()
+            .throughput_bps,
+            Some(1024.0),
         );
     }
 }

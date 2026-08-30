@@ -29,7 +29,7 @@ function onToggle(event: Event) {
 
 <template>
 	<!-- 有子节点时使用原生 <details>/<summary> 管理展开收起 -->
-	<details v-if="hasChildren" class="tree-node" @toggle="onToggle">
+	<details v-if="hasChildren" class="flex flex-col" @toggle="onToggle">
 		<summary class="tree-row-reveal">
 			<StorageTreeRow
 				:node="node"
@@ -51,7 +51,7 @@ function onToggle(event: Event) {
 			/>
 		</div>
 	</details>
-	<div v-else class="tree-node">
+	<div v-else class="flex flex-col">
 		<!-- 叶子节点不需要展开，直接渲染行 -->
 		<StorageTreeRow
 			:node="node"
@@ -64,11 +64,6 @@ function onToggle(event: Event) {
 </template>
 
 <style scoped>
-.tree-node {
-	display: flex;
-	flex-direction: column;
-}
-
 /* 原生的 <summary> 需要去掉默认的展开三角形与缩进 */
 .tree-row-reveal {
 	display: block;

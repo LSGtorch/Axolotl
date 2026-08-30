@@ -4,6 +4,7 @@ import { ref, watch } from 'vue'
 
 import { get, set } from '@/helpers/settings.ts'
 
+import CrashAnalysisAISettings from './CrashAnalysisAISettings.vue'
 import SettingsRow from './SettingsRow.vue'
 import SettingsSection from './SettingsSection.vue'
 
@@ -128,7 +129,7 @@ watch(
 </script>
 
 <template>
-	<div class="settings-page">
+	<div class="flex flex-col gap-6">
 		<SettingsSection>
 			<SettingsRow>
 				<template #label>
@@ -276,13 +277,7 @@ watch(
 				</template>
 			</SettingsRow>
 		</SettingsSection>
+
+		<CrashAnalysisAISettings />
 	</div>
 </template>
-
-<style scoped>
-.settings-page {
-	display: flex;
-	flex-direction: column;
-	gap: var(--gap-xl);
-}
-</style>

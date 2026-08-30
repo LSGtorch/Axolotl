@@ -14,6 +14,8 @@ pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
             servers_read_file,
             servers_write_file,
             servers_download_file,
+            servers_install_forge,
+            servers_install_modpack,
             servers_start,
             servers_send_command,
             servers_stop,
@@ -105,6 +107,45 @@ pub async fn servers_download_file(
     expected_sha1: Option<String>,
 ) -> Result<()> {
     Ok(servers::download_file(server_id, url, filename, expected_sha1).await?)
+}
+
+#[tauri::command]
+pub async fn servers_install_forge(
+    server_id: &str,
+    mc_version: &str,
+    build: &str,
+    java_path: Option<String>,
+) -> Result<()> {
+    Ok(servers::install_forge(server_id, mc_version, build, java_path).await?)
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn servers_install_modpack(
+    server_id: &str,
+    mrpack_url: &str,
+    mrpack_sha1: Option<String>,
+    jar_url: &str,
+    jar_filename: &str,
+    jar_sha1: Option<String>,
+    modpack_project_id: Option<String>,
+    modpack_version_id: Option<String>,
+    modpack_title: Option<String>,
+    modpack_icon_url: Option<String>,
+) -> Result<()> {
+    Ok(servers::install_modpack(
+        server_id,
+        mrpack_url,
+        mrpack_sha1,
+        jar_url,
+        jar_filename,
+        jar_sha1,
+        modpack_project_id,
+        modpack_version_id,
+        modpack_title,
+        modpack_icon_url,
+    )
+    .await?)
 }
 
 #[tauri::command]

@@ -10,11 +10,19 @@ pub(crate) struct ResolvedDirectLink {
     pub launcher: ImportLauncherType,
     pub launcher_root: PathBuf,
     pub dot_minecraft: PathBuf,
+    /// Resolved `versions/<id>` directory of the linked installation; carried
+    /// as part of the resolution contract even though current consumers
+    /// derive their paths from `dot_minecraft`/`version_json` directly.
+    #[allow(dead_code)]
     pub version_dir: PathBuf,
     pub version_json: PathBuf,
     pub version_id: String,
     pub game_version: String,
     pub loader: ModLoader,
+    /// Detected loader version of the linked document. Directly associated
+    /// instances display no loader version (the loader is managed by the
+    /// external launcher), so this is not persisted anywhere yet.
+    #[allow(dead_code)]
     pub loader_version: Option<String>,
 }
 
@@ -173,7 +181,7 @@ fn pcl_dialect_from_sources(
     pcl_sources: &[(String, String)],
     pcl_ce_sources: &[(String, String)],
 ) -> ImportLauncherType {
-    let config_name = super::split_config_name(instance_folder).0;
+    let config_name = split_config_name(instance_folder).0;
     let source_matches = |sources: &[(String, String)]| {
         sources.iter().any(|(name, path)| {
             if let Some(selected) = instance_path {
@@ -264,7 +272,7 @@ fn resolve_source_path(
     base_path: &Path,
     instance_folder: &str,
 ) -> crate::Result<PathBuf> {
-    let (config_name, rest) = super::split_config_name(instance_folder);
+    let (config_name, rest) = split_config_name(instance_folder);
     let target = if rest.is_empty() { config_name } else { rest };
 
     let game_dir = match launcher_type {
@@ -281,8 +289,10 @@ fn resolve_source_path(
                 .unwrap_or_else(|| base_path.to_path_buf())
         }
         ImportLauncherType::PCL2 | ImportLauncherType::PCL2CE => {
-            pcl::get_pcl_instance_path(config_name)
-                .or_else(|| pcl::get_pclce_instance_path(config_name))
+            find_pcl_source(config_name, &pcl::get_pcl_instances())
+                .or_else(|| {
+                    find_pcl_source(config_name, &pcl::get_pclce_instances())
+                })
                 .map(PathBuf::from)
                 .or_else(|| {
                     (config_name == ".minecraft")
@@ -295,7 +305,7 @@ fn resolve_source_path(
         _ => return Err(unsupported_launcher(launcher_type)),
     };
 
-    Ok(super::resolve_instance_path(&game_dir, target))
+    Ok(resolve_instance_path(&game_dir, target))
 }
 
 fn resolve_repository_paths(
@@ -317,7 +327,7 @@ fn resolve_repository_paths(
 
     let (_, dot_minecraft) = generic::resolve_dotminecraft(&source);
     let dot_minecraft = canonicalize_checked(&dot_minecraft)?;
-    let target = super::split_config_name(instance_folder).1;
+    let target = split_config_name(instance_folder).1;
     let target = if target.is_empty() {
         instance_folder
             .strip_prefix("versions/")
@@ -462,6 +472,43 @@ fn invalid_version_directory(path: &Path) -> crate::Error {
         path.display()
     ))
     .into()
+}
+
+/// Splits an instance folder identity like `name` or `Version:1.12.2` into
+/// (config name, version part); PCL and HMCL instance identities use this
+/// shape.
+fn split_config_name(name: &str) -> (&str, &str) {
+    name.split_once(':').unwrap_or((name, ""))
+}
+
+/// Resolves the folder of an instance from a base path and its scan identity.
+fn resolve_instance_path(base_path: &Path, instance_folder: &str) -> PathBuf {
+    if let Some(rest) = instance_folder.strip_prefix("versions/") {
+        return base_path.join("versions").join(rest);
+    }
+    if base_path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .as_deref()
+        == Some(instance_folder)
+    {
+        base_path.to_path_buf()
+    } else {
+        base_path.join(instance_folder)
+    }
+}
+
+/// Finds the game directory of a PCL/PCL-CE instance from its scan sources
+/// (registry entries or CE config).
+fn find_pcl_source(
+    instance_name: &str,
+    sources: &[(String, String)],
+) -> Option<PathBuf> {
+    sources
+        .iter()
+        .find(|(name, _)| name == instance_name)
+        .map(|(_, path)| PathBuf::from(path))
+        .filter(|path| path.is_dir())
 }
 
 #[cfg(test)]

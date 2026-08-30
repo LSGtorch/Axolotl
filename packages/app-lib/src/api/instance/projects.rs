@@ -537,6 +537,11 @@ pub async fn update_content_entry(
             emit_content_changed(instance_id).await?;
             Ok(updated_path)
         }
+        Some(ContentProvider::McArchive) => Err(crate::ErrorKind::InputError(
+            "MCArchive content updates require selecting a file manually"
+                .to_string(),
+        )
+        .into()),
         _ => update_project(instance_id, &path, None).await,
     }
 }
@@ -574,6 +579,11 @@ pub async fn switch_content_entry_version(
             emit_content_changed(instance_id).await?;
             Ok(updated_path)
         }
+		Some(ContentProvider::McArchive) => Err(crate::ErrorKind::InputError(
+			"MCArchive content version changes require selecting a file manually"
+				.to_string(),
+		)
+		.into()),
         _ => {
             switch_project_version_with_dependencies(
                 instance_id,
@@ -733,6 +743,13 @@ pub async fn restore_pack_member_default(
         Some(ContentProvider::Local) => {
             return Err(crate::ErrorKind::InputError(
                 "This pack member has no managed provider".to_string(),
+            )
+            .into());
+        }
+        Some(ContentProvider::McArchive) => {
+            return Err(crate::ErrorKind::InputError(
+                "MCArchive pack members must be restored from an imported file"
+                    .to_string(),
             )
             .into());
         }

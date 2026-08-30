@@ -16,3 +16,13 @@ status = 200
 from = "/api/releases/catalog"
 to = "/.netlify/functions/releases-catalog"
 status = 200
+
+[[redirects]]
+from = "/api/releases/miawa"
+to = "/.netlify/functions/releases-miawa"
+status = 200
+
+[[redirects]]
+from = "/api/downloads/prepare"
+to = "/.netlify/functions/downloads-prepare"
+status = 200

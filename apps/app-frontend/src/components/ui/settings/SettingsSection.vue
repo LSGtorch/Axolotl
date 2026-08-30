@@ -14,8 +14,11 @@ withDefaults(
 </script>
 
 <template>
-	<section class="settings-section">
-		<header v-if="title || description || $slots.header" class="settings-section-header">
+	<section class="flex min-w-0 flex-col gap-3">
+		<header
+			v-if="title || description || $slots.header"
+			class="settings-section-header flex items-start justify-between gap-4"
+		>
 			<div class="min-w-0">
 				<h2 v-if="title" class="m-0 text-base font-semibold text-contrast">{{ title }}</h2>
 				<p v-if="description" class="m-0 mt-1 text-sm leading-relaxed text-secondary">
@@ -33,20 +36,6 @@ withDefaults(
 </template>
 
 <style scoped>
-.settings-section {
-	display: flex;
-	min-width: 0;
-	flex-direction: column;
-	gap: var(--gap-md);
-}
-
-.settings-section-header {
-	display: flex;
-	align-items: flex-start;
-	justify-content: space-between;
-	gap: var(--gap-lg);
-}
-
 .settings-section-card {
 	margin: 0;
 	padding: 0;

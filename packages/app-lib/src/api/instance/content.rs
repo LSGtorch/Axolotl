@@ -290,6 +290,13 @@ pub async fn apply_content_update_plan(
                     )
                     .await?;
                 }
+                ContentProvider::McArchive => {
+                    return Err(crate::ErrorKind::InputError(
+                        "MCArchive does not support automatic pack updates"
+                            .to_string(),
+                    )
+                    .into());
+                }
                 ContentProvider::Local => {}
             }
         }

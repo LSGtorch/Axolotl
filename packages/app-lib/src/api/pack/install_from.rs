@@ -429,6 +429,7 @@ pub(crate) async fn generate_pack_from_version_id_with_reporter(
                 content: ContentValidation::Jar,
                 ..Integrity::default()
             })
+            .with_h2_range_concurrency(16)
             .with_download_meta(download_meta)
             .with_install_tracking(
                 reporter.clone(),

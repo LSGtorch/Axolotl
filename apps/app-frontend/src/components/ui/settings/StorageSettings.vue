@@ -149,9 +149,10 @@ function findInstanceParent(target: StorageNode): StorageNode | null {
 	const roots: StorageNode[] = [...(tree.value?.categories ?? [])]
 	if (tree.value?.rootOther) roots.push(tree.value.rootOther)
 
-	const stack: { node: StorageNode; parentInstance: StorageNode | null }[] = roots.map(
-		(node) => ({ node, parentInstance: null }),
-	)
+	const stack: { node: StorageNode; parentInstance: StorageNode | null }[] = roots.map((node) => ({
+		node,
+		parentInstance: null,
+	}))
 
 	while (stack.length > 0) {
 		const { node, parentInstance } = stack.pop()!
@@ -373,9 +374,11 @@ function formatDateTime(date: Date) {
 					</h2>
 
 					<div class="storage-total-value">
-						<span class="total-actual">{{ formatBytes(tree.total.actual) }}</span>
+						<span class="text-3xl font-bold leading-[1.1] text-contrast">{{ formatBytes(tree.total.actual) }}</span>
 						<span v-if="tree.total.symlink > 0" class="total-symlink">
-							+ {{ formatBytes(tree.total.symlink) }} ({{ formatMessage(storageMessages.symlinkLabel) }})
+							+ {{ formatBytes(tree.total.symlink) }} ({{
+								formatMessage(storageMessages.symlinkLabel)
+							}})
 						</span>
 					</div>
 
@@ -387,7 +390,7 @@ function formatDateTime(date: Date) {
 						</button>
 						<span v-if="lastUpdated" class="storage-last-updated">
 							<span>{{ formatMessage(storageMessages.lastUpdatedLabel) }}</span>
-							<span class="storage-last-updated-time">{{ formatDateTime(lastUpdated) }}</span>
+							<span class="tabular-nums">{{ formatDateTime(lastUpdated) }}</span>
 						</span>
 					</div>
 				</div>
@@ -427,13 +430,13 @@ function formatDateTime(date: Date) {
 							@click="handleAction(slice.category)"
 						>
 							<span
-								class="legend-dot"
+								class="legend-dot mt-1 h-2.5 w-2.5 shrink-0 rounded-full"
 								:class="{ 'is-symlink-dot': slice.isSymlink }"
 								:style="{ backgroundColor: slice.color }"
 							/>
 
 							<div class="legend-info">
-								<span class="legend-name">{{ slice.label }}</span>
+								<span class="whitespace-nowrap text-[0.8125rem] font-semibold text-contrast">{{ slice.label }}</span>
 								<span class="legend-size">{{ slice.formattedSize }}</span>
 								<span class="legend-percent">{{ slice.percentText }}</span>
 							</div>
@@ -443,7 +446,7 @@ function formatDateTime(date: Date) {
 			</section>
 
 			<!-- 实例树节点列表 -->
-			<section v-if="instancesCategory" class="storage-instance-section">
+			<section v-if="instancesCategory" class="mt-7">
 				<div v-tooltip="symlinkHelpTooltipOptions" class="instance-help">
 					<HelpCircleIcon class="instance-help-icon" aria-hidden="true" />
 					<span>{{ formatMessage(storageMessages.symlinkHelp) }}</span>
@@ -526,13 +529,6 @@ function formatDateTime(date: Date) {
 	font-variant-numeric: tabular-nums;
 }
 
-.total-actual {
-	font-size: 1.875rem;
-	font-weight: 700;
-	line-height: 1.1;
-	color: var(--color-contrast);
-}
-
 .total-symlink {
 	font-size: 0.8125rem;
 	font-weight: 500;
@@ -552,10 +548,6 @@ function formatDateTime(date: Date) {
 	flex-direction: column;
 	font-size: 0.75rem;
 	color: var(--color-secondary);
-}
-
-.storage-last-updated-time {
-	font-variant-numeric: tabular-nums;
 }
 
 /* 右侧核心区域：强制向右对齐 */
@@ -635,14 +627,6 @@ function formatDateTime(date: Date) {
 	outline-offset: -1px;
 }
 
-.legend-dot {
-	width: 0.625rem;
-	height: 0.625rem;
-	margin-top: 0.25rem;
-	border-radius: 50%;
-	flex-shrink: 0;
-}
-
 .legend-dot.is-symlink-dot {
 	border-radius: 2px;
 }
@@ -651,13 +635,6 @@ function formatDateTime(date: Date) {
 	display: flex;
 	flex-direction: column;
 	line-height: 1.25;
-}
-
-.legend-name {
-	font-size: 0.8125rem;
-	font-weight: 600;
-	color: var(--color-contrast);
-	white-space: nowrap;
 }
 
 .legend-size {
@@ -678,10 +655,6 @@ function formatDateTime(date: Date) {
 }
 
 /* 实例树样式 */
-.storage-instance-section {
-	margin-top: 1.75rem;
-}
-
 .instance-heading {
 	display: flex;
 	align-items: baseline;

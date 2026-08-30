@@ -44,6 +44,7 @@ impl InstallJobRecord {
         InstallJobSnapshot {
             job_id: self.id,
             instance_id: self.instance_id.clone().or(recorded_instance_id),
+            source_instance_id: self.state.source_instance_id(),
             instance_deleted,
             kind: self.kind,
             status: self.status,
@@ -58,6 +59,7 @@ impl InstallJobRecord {
             error: self.state.error.clone(),
             rollback_error: self.state.rollback_error.clone(),
             pause_reason: self.state.pause_reason.clone(),
+            upgrade_result: self.state.upgrade_result.clone(),
             created: self.created,
             modified: self.modified,
             finished: self.finished,
@@ -507,6 +509,38 @@ pub async fn complete_running_job(
         transaction.rollback().await?;
         return Ok(None);
     }
+    if let super::model::InstallRequest::UpgradeUnmanagedInstance {
+        execution,
+        ..
+    } = &state.request
+        && let Some(upgrade_result) = state.upgrade_result.as_ref()
+        && let Some(target_environment) =
+            upgrade_result.target_environment.as_ref()
+    {
+        let notice = crate::state::InstancePostUpgradeNotice {
+            instance_id: upgrade_result.target_instance_id.clone(),
+            upgrade_job_id: id_value.clone(),
+            target_game_version: target_environment.game_version.clone(),
+            consecutive_clean_launches: 0,
+            warnings: crate::state::instances::commands::post_upgrade_warnings_from_result(
+                upgrade_result,
+                execution,
+            ),
+        };
+        tracing::debug!(
+            target_instance_id = %notice.instance_id,
+            upgrade_job_id = %notice.upgrade_job_id,
+            target_game_version = %notice.target_game_version,
+            structured_compatibility_warning_count = upgrade_result.compatibility_warning_details.len(),
+            post_upgrade_warning_count = notice.warnings.len(),
+            "Persisting completed unmanaged upgrade notice"
+        );
+        crate::state::instances::commands::replace_instance_post_upgrade_notice_on_connection(
+            &notice,
+            &mut transaction,
+        )
+        .await?;
+    }
     transaction.commit().await?;
 
     if let Err(error) = sync_download_details(id, state, app_state).await {
@@ -569,6 +603,7 @@ mod tests {
             None,
             crate::state::InstanceLink::Unmanaged,
             None,
+            None,
         )
         .await
         .unwrap();
@@ -628,6 +663,101 @@ mod tests {
         insert(Uuid::new_v4(), state, InstallJobStatus::Running, app_state)
             .await
             .unwrap()
+    }
+
+    #[cfg(not(feature = "tauri"))]
+    fn upgrade_completion_state(
+        source_instance_id: &str,
+        target_instance_id: &str,
+        mode: super::super::model::SharedUpgradeMode,
+    ) -> InstallJobState {
+        use super::super::model::{
+            InstallRequest, InstanceUpgradeCompatibilityWarning,
+            InstanceUpgradeDisplayNames, InstanceUpgradeExecution,
+            InstanceUpgradeResult,
+        };
+        use crate::state::{
+            ContentProvider, InstanceUpgradeEnvironment,
+            InstanceUpgradeIssueCode, InstanceUpgradeSolution,
+            InstanceUpgradeSolutionKind, ModLoader, ShaderRuntime,
+        };
+
+        let source_environment = InstanceUpgradeEnvironment {
+            game_version: "1.21.8".to_string(),
+            mod_loader: ModLoader::Fabric,
+            mod_loader_version: Some("0.18.4".to_string()),
+            shader_runtime: ShaderRuntime::Iris,
+        };
+        let target_environment = InstanceUpgradeEnvironment {
+            game_version: "1.21.9".to_string(),
+            mod_loader: ModLoader::Fabric,
+            mod_loader_version: Some("0.18.5".to_string()),
+            shader_runtime: ShaderRuntime::Iris,
+        };
+        let solution = InstanceUpgradeSolution {
+            kind: InstanceUpgradeSolutionKind::Custom,
+            selections: Vec::new(),
+            dependency_changes: Vec::new(),
+            warnings: Vec::new(),
+        };
+        let execution = InstanceUpgradeExecution {
+            source_revision: 1,
+            source_files: Vec::new(),
+            source_environment: source_environment.clone(),
+            target_environment: target_environment.clone(),
+            items: Vec::new(),
+            solution: solution.clone(),
+            warnings: Vec::new(),
+            source_watch: None,
+        };
+        let mut state =
+            InstallJobState::new(InstallRequest::UpgradeUnmanagedInstance {
+                instance_id: source_instance_id.to_string(),
+                plan_id: "plan".to_string(),
+                execution,
+                create_full_backup: false,
+                shared_upgrade_mode: mode,
+                display_names: InstanceUpgradeDisplayNames::default(),
+            });
+        state.target = match mode {
+            super::super::model::SharedUpgradeMode::Direct => {
+                super::super::model::InstallTarget::ExistingInstance {
+                    instance_id: target_instance_id.to_string(),
+                }
+            }
+            super::super::model::SharedUpgradeMode::CopyAndUpgrade => {
+                super::super::model::InstallTarget::NewInstance {
+                    instance_id: Some(target_instance_id.to_string()),
+                }
+            }
+        };
+        state.upgrade_result = Some(InstanceUpgradeResult {
+            plan_id: "plan".to_string(),
+            source_instance_id: source_instance_id.to_string(),
+            target_instance_id: target_instance_id.to_string(),
+            backup_instance_id: None,
+            source_environment: Some(source_environment),
+            target_environment: Some(target_environment),
+            solution,
+            compatibility_warnings: Vec::new(),
+            compatibility_warning_details: (0..30)
+                .map(|index| InstanceUpgradeCompatibilityWarning {
+                    code: InstanceUpgradeIssueCode::KeepIncompatible,
+                    relative_path: Some(if index == 0 {
+                        "resourcepacks/foo.zip".to_string()
+                    } else {
+                        format!("mods/preserved-{index}.jar")
+                    }),
+                    content_id: Some(format!("content-{index}")),
+                    provider: Some(ContentProvider::Modrinth),
+                    project_id: Some(format!("project-{index}")),
+                    conflicting_project_id: None,
+                })
+                .collect(),
+            external_changes: Vec::new(),
+            skipped_due_to_external_conflict: Vec::new(),
+        });
+        state
     }
 
     #[cfg(not(feature = "tauri"))]
@@ -706,6 +836,93 @@ mod tests {
             instance_install_stage(&instance_id, &state).await,
             InstanceInstallStage::Installed
         );
+    }
+
+    #[cfg(not(feature = "tauri"))]
+    #[tokio::test]
+    async fn direct_upgrade_completion_atomically_persists_target_notice() {
+        let (state, instance_id) =
+            create_completion_test_instance("direct upgrade notice").await;
+        let job_state = upgrade_completion_state(
+            &instance_id,
+            &instance_id,
+            super::super::model::SharedUpgradeMode::Direct,
+        );
+        let job = insert_running_job(&job_state, &state).await;
+
+        complete_running_job(job.id, &job_state, &state)
+            .await
+            .unwrap()
+            .unwrap();
+
+        let notice = crate::state::instances::commands::get_instance_post_upgrade_notice(
+            &instance_id,
+            &state.pool,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(notice.instance_id, instance_id);
+        assert_eq!(notice.upgrade_job_id, job.id.to_string());
+        assert_eq!(notice.target_game_version, "1.21.9");
+        assert_eq!(notice.consecutive_clean_launches, 0);
+        assert_eq!(notice.warnings.len(), 30);
+        assert_eq!(
+            notice.warnings[0].relative_path.as_deref(),
+            Some("resourcepacks/foo.zip")
+        );
+    }
+
+    #[cfg(not(feature = "tauri"))]
+    #[tokio::test]
+    async fn copy_upgrade_completion_persists_notice_only_for_target() {
+        let (state, source_id) =
+            create_completion_test_instance("copy upgrade source").await;
+        let target = crate::api::instance::create(
+            format!("Copy upgrade target {}", Uuid::new_v4()),
+            "1.21.8".to_string(),
+            crate::state::ModLoader::Fabric,
+            Some("0.18.4".to_string()),
+            None,
+            crate::state::InstanceLink::Unmanaged,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let job_state = upgrade_completion_state(
+            &source_id,
+            &target.instance.id,
+            super::super::model::SharedUpgradeMode::CopyAndUpgrade,
+        );
+        let job = insert_running_job(&job_state, &state).await;
+
+        complete_running_job(job.id, &job_state, &state)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert!(
+            crate::state::instances::commands::get_instance_post_upgrade_notice(
+                &source_id,
+                &state.pool,
+            )
+            .await
+            .unwrap()
+            .is_none()
+        );
+        let target_notice =
+            crate::state::instances::commands::get_instance_post_upgrade_notice(
+                &target.instance.id,
+                &state.pool,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(target_notice.instance_id, target.instance.id);
+        assert_eq!(target_notice.upgrade_job_id, job.id.to_string());
+        assert_eq!(target_notice.target_game_version, "1.21.9");
+        assert_eq!(target_notice.warnings.len(), 30);
     }
 
     #[cfg(not(feature = "tauri"))]

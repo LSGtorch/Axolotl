@@ -587,7 +587,7 @@ function resetMissingContentImportDirectory() {
 </script>
 
 <template>
-	<div class="settings-page">
+	<div class="flex flex-col gap-6">
 		<ConfirmModalWrapper
 			ref="purgeCacheConfirmModal"
 			:title="formatMessage(messages.purgeConfirmTitle)"
@@ -939,11 +939,3 @@ function resetMissingContentImportDirectory() {
 		</SettingsSection>
 	</div>
 </template>
-
-<style scoped>
-.settings-page {
-	display: flex;
-	flex-direction: column;
-	gap: var(--gap-xl);
-}
-</style>

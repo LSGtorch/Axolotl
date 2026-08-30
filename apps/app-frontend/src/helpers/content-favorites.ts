@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 
-export type FavoriteProvider = 'modrinth' | 'curseforge'
+export type FavoriteProvider = 'modrinth' | 'curseforge' | 'mcarchive'
 export type FavoriteContentType = 'mod' | 'resourcepack' | 'datapack' | 'shader'
 
 export interface ContentFavorite {
@@ -35,9 +35,7 @@ export async function listContentFavorites(): Promise<ContentFavorite[]> {
 	return await invoke('plugin:content-favorites|content_favorites_list')
 }
 
-export async function addContentFavorite(
-	favorite: ContentFavoriteInput,
-): Promise<ContentFavorite> {
+export async function addContentFavorite(favorite: ContentFavoriteInput): Promise<ContentFavorite> {
 	return await invoke('plugin:content-favorites|content_favorites_add', { favorite })
 }
 

@@ -4,18 +4,79 @@ use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, LazyLock};
 
-#[derive(Clone, Default)]
+const DEFAULT_HOST_OVERRIDES: [(&str, &str); 2] = [
+    ("mod.tianpao.top", "www.shopify.com"),
+    ("cdn.modrinth.com", "www.shopify.com"),
+];
+
+#[derive(Clone)]
 pub struct DownloadDnsResolver {
     reliability: Arc<Mutex<HashMap<IpAddr, f64>>>,
     last_resolved: Arc<Mutex<HashMap<String, Vec<IpAddr>>>>,
+    host_overrides: Arc<Mutex<HashMap<String, String>>>,
     #[cfg(test)]
     test_addresses: Arc<Mutex<HashMap<String, Vec<SocketAddr>>>>,
+}
+
+impl Default for DownloadDnsResolver {
+    fn default() -> Self {
+        let host_overrides = DEFAULT_HOST_OVERRIDES
+            .into_iter()
+            .map(|(host, resolver_host)| {
+                (host.to_string(), resolver_host.to_string())
+            })
+            .collect();
+        Self {
+            reliability: Arc::default(),
+            last_resolved: Arc::default(),
+            host_overrides: Arc::new(Mutex::new(host_overrides)),
+            #[cfg(test)]
+            test_addresses: Arc::default(),
+        }
+    }
 }
 
 static PRE_RESOLVE_LOCK: LazyLock<tokio::sync::Mutex<()>> =
     LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 impl DownloadDnsResolver {
+    /// Resolves `host` through `resolver_host` while preserving the original
+    /// URL host for HTTP Host headers and TLS SNI.
+    #[allow(dead_code)]
+    pub fn set_host_override(
+        &self,
+        host: &str,
+        resolver_host: &str,
+    ) -> Result<(), &'static str> {
+        let host = normalize_host(host)?;
+        let resolver_host = normalize_host(resolver_host)?;
+        let mut overrides = self.host_overrides.lock();
+        if host == resolver_host {
+            overrides.remove(&host);
+        } else {
+            overrides.insert(host.clone(), resolver_host);
+        }
+        drop(overrides);
+        self.last_resolved.lock().remove(&host);
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub fn clear_host_override(&self, host: &str) -> Result<(), &'static str> {
+        let host = normalize_host(host)?;
+        self.host_overrides.lock().remove(&host);
+        self.last_resolved.lock().remove(&host);
+        Ok(())
+    }
+
+    pub fn host_override(&self, host: &str) -> Option<String> {
+        let host = normalize_host(host).ok()?;
+        self.host_overrides.lock().get(&host).cloned()
+    }
+
+    fn resolution_host(&self, host: &str) -> String {
+        self.host_override(host).unwrap_or_else(|| host.to_string())
+    }
     pub fn record_result(&self, address: IpAddr, result: f64) {
         let mut reliability = self.reliability.lock();
         reliability
@@ -55,7 +116,10 @@ impl DownloadDnsResolver {
         if !self.resolved_addresses(host).is_empty() {
             return;
         }
-        let Ok(addresses) = tokio::net::lookup_host((host, 0)).await else {
+        let resolution_host = self.resolution_host(host);
+        let Ok(addresses) =
+            tokio::net::lookup_host((resolution_host.as_str(), 0)).await
+        else {
             return;
         };
         let mut addresses = addresses.collect::<Vec<_>>();
@@ -120,6 +184,17 @@ impl DownloadDnsResolver {
     }
 }
 
+fn normalize_host(host: &str) -> Result<String, &'static str> {
+    let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    if host.is_empty()
+        || host.contains(['/', ':', '@', '[', ']'])
+        || host.split('.').any(str::is_empty)
+    {
+        return Err("DNS host override must be a hostname without a port");
+    }
+    Ok(host)
+}
+
 impl Resolve for DownloadDnsResolver {
     fn resolve(&self, name: Name) -> Resolving {
         let host = name.as_str().to_string();
@@ -131,15 +206,19 @@ impl Resolve for DownloadDnsResolver {
                 .map(|address| SocketAddr::new(address, 0))
                 .collect::<Vec<_>>();
             #[cfg(test)]
-            let test_addresses =
-                resolver.test_addresses.lock().get(&host).cloned();
+            let test_addresses = resolver
+                .test_addresses
+                .lock()
+                .get(&resolver.resolution_host(&host))
+                .cloned();
             #[cfg(test)]
             let addresses = if let Some(addresses) = test_addresses {
                 addresses
             } else if !cached_addresses.is_empty() {
                 cached_addresses
             } else {
-                tokio::net::lookup_host((host.as_str(), 0))
+                let resolution_host = resolver.resolution_host(&host);
+                tokio::net::lookup_host((resolution_host.as_str(), 0))
                     .await?
                     .collect::<Vec<_>>()
             };
@@ -147,7 +226,8 @@ impl Resolve for DownloadDnsResolver {
             let addresses = if !cached_addresses.is_empty() {
                 cached_addresses
             } else {
-                tokio::net::lookup_host((host.as_str(), 0))
+                let resolution_host = resolver.resolution_host(&host);
+                tokio::net::lookup_host((resolution_host.as_str(), 0))
                     .await?
                     .collect::<Vec<_>>()
             };
@@ -280,5 +360,69 @@ mod tests {
 
         assert_eq!(body, "ok");
         server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn host_override_uses_the_target_hosts_addresses() {
+        let resolver = DownloadDnsResolver::default();
+        let (port, server) = spawn_ipv4_server().await;
+        resolver.set_test_addresses(
+            "resolver-target.test",
+            vec![SocketAddr::from((Ipv4Addr::LOCALHOST, 0))],
+        );
+        resolver
+            .set_host_override("REQUEST-HOST.TEST.", "resolver-target.test")
+            .unwrap();
+
+        let body =
+            request_with_resolver(resolver.clone(), "request-host.test", port)
+                .await;
+
+        assert_eq!(body, "ok");
+        assert_eq!(
+            resolver.host_override("request-host.test").as_deref(),
+            Some("resolver-target.test"),
+        );
+        assert!(!resolver.resolved_addresses("request-host.test").is_empty());
+        server.await.unwrap();
+    }
+
+    #[test]
+    fn clearing_override_removes_the_cached_request_host_addresses() {
+        let resolver = DownloadDnsResolver::default();
+        resolver
+            .set_host_override("request-host.test", "resolver-target.test")
+            .unwrap();
+        resolver.last_resolved.lock().insert(
+            "request-host.test".to_string(),
+            vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
+        );
+
+        resolver.clear_host_override("request-host.test").unwrap();
+
+        assert!(resolver.host_override("request-host.test").is_none());
+        assert!(resolver.resolved_addresses("request-host.test").is_empty());
+        assert!(normalize_host("https://resolver-target.test").is_err());
+        assert!(normalize_host("resolver-target.test:443").is_err());
+    }
+
+    #[test]
+    fn tianpao_default_uses_the_shopify_resolver_host() {
+        assert_eq!(
+            DownloadDnsResolver::default()
+                .host_override("mod.tianpao.top")
+                .as_deref(),
+            Some("www.shopify.com"),
+        );
+    }
+
+    #[test]
+    fn legacy_modrinth_cdn_uses_the_shopify_resolver_host() {
+        assert_eq!(
+            DownloadDnsResolver::default()
+                .host_override("cdn.modrinth.com")
+                .as_deref(),
+            Some("www.shopify.com"),
+        );
     }
 }

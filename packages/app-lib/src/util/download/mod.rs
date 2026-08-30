@@ -10,13 +10,18 @@ use std::sync::atomic::{AtomicU8, Ordering};
 
 pub mod h2_download;
 pub mod h2_pool;
+pub(crate) mod h2_range;
+pub(crate) mod h2_receive;
+pub(crate) mod h2_stream_budget;
 pub mod legacy;
 pub mod log;
+pub(crate) mod modrinth_redirect;
 pub(crate) mod native;
 pub(crate) mod native_breaker;
 pub(crate) mod native_budget;
 pub(crate) mod native_reputation;
 pub(crate) mod native_slow;
+pub(crate) mod range_output;
 pub mod shared;
 pub mod slow;
 pub mod xmcl;

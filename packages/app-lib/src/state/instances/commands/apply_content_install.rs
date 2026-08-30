@@ -813,6 +813,47 @@ pub(crate) async fn download_project_version_with_progress(
     progress: Option<ResolvedContentDownloadProgress>,
     state: &State,
 ) -> crate::Result<DownloadedProjectVersion> {
+    download_project_version_with_reporting(
+        instance_id,
+        version_id,
+        reason,
+        dependent_on_version_id,
+        progress,
+        None,
+        state,
+    )
+    .await
+}
+
+pub(crate) async fn download_project_version_with_reporter(
+    instance_id: &str,
+    version_id: &str,
+    reason: DownloadReason,
+    dependent_on_version_id: Option<String>,
+    reporter: crate::install::InstallProgressReporter,
+    state: &State,
+) -> crate::Result<DownloadedProjectVersion> {
+    download_project_version_with_reporting(
+        instance_id,
+        version_id,
+        reason,
+        dependent_on_version_id,
+        None,
+        Some(reporter),
+        state,
+    )
+    .await
+}
+
+async fn download_project_version_with_reporting(
+    instance_id: &str,
+    version_id: &str,
+    reason: DownloadReason,
+    dependent_on_version_id: Option<String>,
+    progress: Option<ResolvedContentDownloadProgress>,
+    reporter: Option<crate::install::InstallProgressReporter>,
+    state: &State,
+) -> crate::Result<DownloadedProjectVersion> {
     let prepared = prepare_version_download(
         instance_id,
         version_id,
@@ -825,9 +866,13 @@ pub(crate) async fn download_project_version_with_progress(
         DownloadRequest::new(&prepared.url, ResourceClass::Modrinth)
             .with_integrity(prepared.integrity)
             .with_download_meta(prepared.download_meta);
-    if let Some(progress) = &progress {
+    let tracking_reporter = progress
+        .as_ref()
+        .map(|progress| progress.reporter.clone())
+        .or(reporter);
+    if let Some(reporter) = tracking_reporter {
         request = request.with_install_tracking(
-            progress.reporter.clone(),
+            reporter,
             &prepared.path.display().to_string(),
             &prepared.file_name,
         );
@@ -1152,6 +1197,65 @@ pub(crate) async fn add_downloaded_project_version(
         }
     }
     Ok(relative_path)
+}
+
+pub(crate) async fn apply_downloaded_project_version_at_path(
+    instance_id: &str,
+    relative_path: &str,
+    downloaded: DownloadedProjectVersion,
+    source_kind: ContentSourceKind,
+    ownership_kind: ContentOwnershipKind,
+    state: &State,
+) -> crate::Result<String> {
+    let _instance_lock = state.lock_instance_content(instance_id).await;
+    let DownloadedProjectVersion {
+        path,
+        sha1,
+        size,
+        project_type,
+        project_id,
+        version_id,
+        ..
+    } = downloaded;
+    let scope = resolve_content_scope(instance_id, None, state).await?;
+    let full_path =
+        instance_full_path(state, &scope.instance).join(relative_path);
+    let previous_path = materialize_project_download(&path, &full_path).await?;
+    let provider_ref = ContentProviderRef::Modrinth {
+        project_id: ModrinthProjectId::new(project_id.clone())?,
+        version_id: Some(ModrinthVersionId::new(version_id.clone())?),
+    };
+    let record_result = record_project_file_atomic(
+        instance_id,
+        relative_path,
+        &sha1,
+        size,
+        project_type,
+        source_kind,
+        ownership_kind,
+        Some(&provider_ref),
+        true,
+        Some(KnownModrinthFile {
+            project_id: &project_id,
+            version_id: &version_id,
+        }),
+        state,
+    )
+    .await;
+    match record_result {
+        Ok(()) => {
+            finalize_project_materialization(previous_path.as_deref()).await?
+        }
+        Err(error) => {
+            restore_project_materialization(
+                &full_path,
+                previous_path.as_deref(),
+            )
+            .await?;
+            return Err(error);
+        }
+    }
+    Ok(relative_path.to_string())
 }
 
 pub(crate) async fn content_ownership_for_path(
@@ -1640,9 +1744,57 @@ pub(crate) async fn add_project_bytes(
     source_kind: ContentSourceKind,
     state: &State,
 ) -> crate::Result<String> {
+    add_project_bytes_with_provider(
+        instance_id,
+        file_name,
+        bytes,
+        hash,
+        project_type,
+        source_kind,
+        None,
+        state,
+    )
+    .await
+}
+
+pub(crate) async fn add_project_bytes_from_provider(
+    instance_id: &str,
+    file_name: &str,
+    bytes: Bytes,
+    hash: Option<&str>,
+    project_type: ProjectType,
+    source_kind: ContentSourceKind,
+    provider_ref: &ContentProviderRef,
+    state: &State,
+) -> crate::Result<String> {
+    add_project_bytes_with_provider(
+        instance_id,
+        file_name,
+        bytes,
+        hash,
+        Some(project_type),
+        source_kind,
+        Some(provider_ref),
+        state,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn add_project_bytes_with_provider(
+    instance_id: &str,
+    file_name: &str,
+    bytes: Bytes,
+    hash: Option<&str>,
+    project_type: Option<ProjectType>,
+    source_kind: ContentSourceKind,
+    provider_ref: Option<&ContentProviderRef>,
+    state: &State,
+) -> crate::Result<String> {
     let _instance_lock = state.lock_instance_content(instance_id).await;
 
     let scope = resolve_content_scope(instance_id, None, state).await?;
+    let file_name = sanitize_file_name(file_name);
     let project_type = match project_type {
         Some(project_type) => project_type,
         None => infer_project_type(&bytes)?,
@@ -1652,6 +1804,13 @@ pub(crate) async fn add_project_bytes(
     // in one folder; extract the pack folder(s) directly so the result is
     // usable as-is — no re-packing, no recompression.
     if let Some(plan) = wrapped_pack_plan(&bytes, project_type) {
+        if provider_ref.is_some() {
+            return Err(crate::ErrorKind::InputError(
+                "Provider-managed wrapped archives are not supported"
+                    .to_string(),
+            )
+            .into());
+        }
         let install_path = install_wrapped_pack(
             &bytes,
             &plan,
@@ -1699,7 +1858,7 @@ pub(crate) async fn add_project_bytes(
         content_rows::UpsertInstanceFile {
             instance_id: &scope.instance.id,
             relative_path: &relative_path,
-            file_name,
+            file_name: &file_name,
             enabled: !relative_path.ends_with(".disabled"),
             sha1: &sha1,
             size: bytes.len() as u64,
@@ -1716,8 +1875,8 @@ pub(crate) async fn add_project_bytes(
         project_type,
         source_kind,
         ContentOwnershipKind::UserAdded,
-        None,
-        false,
+        provider_ref,
+        provider_ref.is_some(),
         state,
     )
     .await?;
@@ -2934,7 +3093,7 @@ pub(crate) fn instance_full_path(
     state: &State,
     instance: &Instance,
 ) -> PathBuf {
-    state.directories.instances_dir().join(&instance.path)
+    state.directories.instance_game_dir(instance)
 }
 
 async fn index_existing_file(

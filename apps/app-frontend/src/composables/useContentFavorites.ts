@@ -79,7 +79,12 @@ export function createContentFavoritesStore(api: ContentFavoritesApi) {
 	}
 
 	const favoriteKeys = computed(
-		() => new Set(favorites.value.map((favorite) => contentFavoriteKey(favorite.provider, favorite.project_id))),
+		() =>
+			new Set(
+				favorites.value.map((favorite) =>
+					contentFavoriteKey(favorite.provider, favorite.project_id),
+				),
+			),
 	)
 
 	function isFavorite(provider: FavoriteProvider, projectId: string) {

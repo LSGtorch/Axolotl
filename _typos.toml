@@ -33,3 +33,5 @@ schem = "schem"
 FO = "FO"
 # short for "Forge" loader monogram
 Fo = "Fo"
+# Short variable name used by the bundled easter egg game.
+nd = "nd"

@@ -1,11 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import {
-	buildGcCandidateChain,
-	detectGcStrategy,
-	GC_STRATEGY_DEFINITIONS,
-} from './strategies.ts'
+import { buildGcCandidateChain, detectGcStrategy, GC_STRATEGY_DEFINITIONS } from './strategies.ts'
 
 function createContext(overrides: Partial<Parameters<typeof buildGcCandidateChain>[0]> = {}) {
 	return {

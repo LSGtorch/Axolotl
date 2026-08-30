@@ -14,7 +14,7 @@ export interface BrowseSearchResponse {
 	projectHits: (Labrinth.Search.v2.ResultSearchProject & {
 		installed?: boolean
 		installing?: boolean
-		provider: 'modrinth' | 'curseforge'
+		provider: 'modrinth' | 'curseforge' | 'mcarchive' | 'planet_minecraft'
 		provider_project_id?: string
 		author_url?: string
 	})[]

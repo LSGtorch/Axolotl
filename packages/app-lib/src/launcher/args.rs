@@ -21,7 +21,10 @@ use dunce::canonicalize;
 use itertools::Itertools;
 use std::io::{BufRead, BufReader, ErrorKind};
 use std::net::SocketAddr;
-use std::{collections::HashMap, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+};
 use uuid::Uuid;
 
 // Replaces the space separator with a newline character, as to not split the arguments
@@ -34,6 +37,42 @@ pub fn get_class_paths(
     java_arch: &str,
     minecraft_updated: bool,
 ) -> crate::Result<String> {
+    // A version manifest can contain platform-specific revisions of the same
+    // Maven module (for example LWJGL 3.2.1 for macOS and 3.2.2 elsewhere).
+    // Rules normally leave only one revision enabled. Keep the last enabled
+    // revision as a safety net for stale or partially merged metadata; putting
+    // both JARs on the classpath lets the older one shadow the native ABI.
+    let mut seen_artifacts = HashSet::new();
+    let libraries = libraries
+        .iter()
+        .rev()
+        .filter(|library| {
+            if let Some(rules) = &library.rules
+                && !parse_rules(
+                    rules,
+                    java_arch,
+                    &QuickPlayType::None,
+                    minecraft_updated,
+                )
+            {
+                return false;
+            }
+            if !library.include_in_classpath {
+                return false;
+            }
+            // Modern Mojang manifests express native archives as separate
+            // classifier coordinates. A classifier must not displace the
+            // unclassified JAR that contains the Java classes.
+            let mut coordinates = library.name.split(':');
+            let group = coordinates.next().unwrap_or_default();
+            let artifact = coordinates.next().unwrap_or_default();
+            let _version = coordinates.next();
+            let classifier = coordinates.next().unwrap_or_default();
+            let key = format!("{group}:{artifact}:{classifier}");
+            seen_artifacts.insert(key)
+        })
+        .collect::<Vec<_>>();
+
     launcher_class_path
         .iter()
         .map(|path| {
@@ -48,8 +87,41 @@ pub fn get_class_paths(
                 .to_string_lossy()
                 .to_string())
         })
+        .chain(libraries.into_iter().rev().map(|library| {
+            get_lib_path(
+                libraries_path,
+                &library.name,
+                library.natives.is_some(),
+            )
+        }))
+        .process_results(|iter| {
+            iter.unique().join(classpath_separator(java_arch))
+        })
+}
+
+pub fn get_linked_class_paths(
+    direct: &DirectLinkedLaunch,
+    libraries: &[LinkedLibrary],
+    launcher_class_path: &[&Path],
+    java_arch: &str,
+    minecraft_updated: bool,
+) -> crate::Result<String> {
+    launcher_class_path
+        .iter()
+        .map(|path| {
+            Ok(canonicalize(path)
+                .map_err(|error| {
+                    crate::ErrorKind::LauncherError(format!(
+                        "Specified class path {} does not exist: {error}",
+                        path.display()
+                    ))
+                    .as_error()
+                })?
+                .to_string_lossy()
+                .to_string())
+        })
         .chain(libraries.iter().filter_map(|library| {
-            if let Some(rules) = &library.rules
+            if let Some(rules) = library.library.rules.as_deref()
                 && !parse_rules(
                     rules,
                     java_arch,
@@ -59,19 +131,34 @@ pub fn get_class_paths(
             {
                 return None;
             }
-
-            if !library.include_in_classpath {
+            if !library.library.include_in_classpath {
+                return None;
+            }
+            // A natives-only declaration (e.g. the 1.12.2
+            // `net.java.jinput:jinput-platform:2.0.5`) publishes no plain jar
+            // anywhere, so it must never become a classpath entry. This
+            // mirrors HMCL's `DefaultLauncher.getClasspath`, which contributes
+            // natives libraries only through native extraction; the same
+            // predicate keeps the ensure stage from planning the plain jar.
+            if is_native_only_library(&library.library) {
                 return None;
             }
 
-            Some(get_lib_path(
-                libraries_path,
-                &library.name,
-                library.natives_os_key_and_classifiers(java_arch).is_some(),
-            ))
+            Some(direct.library_path(library).and_then(|path| {
+                canonicalize(&path)
+                    .map(|path| path.to_string_lossy().to_string())
+                    .map_err(|error| {
+                        crate::ErrorKind::LauncherError(format!(
+                            "Could not resolve linked library {} at {}: {error}",
+                            library.library.name,
+                            path.display()
+                        ))
+                        .as_error()
+                    })
+            }))
         }))
-        .process_results(|iter| {
-            iter.unique().join(classpath_separator(java_arch))
+        .process_results(|paths| {
+            paths.unique().join(classpath_separator(java_arch))
         })
 }
 
@@ -343,8 +430,36 @@ pub async fn get_minecraft_arguments(
     let profile = credentials.maybe_online_profile().await;
     let mut parsed_arguments = Vec::new();
 
+    // Legacy-format loader profiles (Forge 1.6.x era and friends) repeat
+    // their `minecraftArguments` verbatim inside `arguments.game`. Emitting
+    // both duplicates every option, which older launch wrappers reject
+    // (joptsimple throws on repeated options like `--gameDir`), so options
+    // already provided by the modern argument list are dropped from the
+    // legacy emission together with their inline values.
+    let modern_options: HashSet<&str> = arguments
+        .into_iter()
+        .flatten()
+        .filter_map(|argument| match argument {
+            Argument::Normal(argument) => Some(argument.as_str()),
+            Argument::Ruled { value, .. } => match value {
+                ArgumentValue::Single(argument) => Some(argument.as_str()),
+                ArgumentValue::Many(_) => None,
+            },
+        })
+        .filter(|argument| argument.starts_with('-'))
+        .collect();
+
     if let Some(legacy_arguments) = legacy_arguments {
-        for x in legacy_arguments.split(' ') {
+        let mut legacy = legacy_arguments.split(' ').peekable();
+        while let Some(x) = legacy.next() {
+            if modern_options.contains(x) {
+                if let Some(next) = legacy.peek()
+                    && !next.starts_with('-')
+                {
+                    legacy.next();
+                }
+                continue;
+            }
             parsed_arguments.push(parse_minecraft_argument(
                 &x.replace(' ', TEMPORARY_REPLACE_CHAR),
                 &access_token,
@@ -744,5 +859,217 @@ mod tests {
             &canonicalize(local).unwrap().to_string_lossy().as_ref()
         ));
         assert_eq!(paths.len(), 4);
+    }
+
+    #[tokio::test]
+    async fn legacy_options_duplicated_by_modern_arguments_are_dropped() {
+        let directory = tempfile::tempdir().unwrap();
+        let game_directory = directory.path().join("instance");
+        let assets_directory = directory.path().join("assets");
+        std::fs::create_dir_all(&game_directory).unwrap();
+        std::fs::create_dir_all(&assets_directory).unwrap();
+        let credentials = Credentials::offline("Player").unwrap();
+
+        // 1.6.4-era Forge profiles repeat `minecraftArguments` verbatim inside
+        // `arguments.game`; emitting both made launchwrapper reject the
+        // duplicate options.
+        let modern = vec![
+            Argument::Normal("--username".to_string()),
+            Argument::Normal("${auth_player_name}".to_string()),
+            Argument::Normal("--version".to_string()),
+            Argument::Normal("${version_name}".to_string()),
+            Argument::Normal("--gameDir".to_string()),
+            Argument::Normal("${game_directory}".to_string()),
+            Argument::Normal("--assetsDir".to_string()),
+            Argument::Normal("${game_assets}".to_string()),
+            Argument::Normal("--tweakClass".to_string()),
+            Argument::Normal(
+                "cpw.mods.fml.common.launcher.FMLTweaker".to_string(),
+            ),
+        ];
+        let legacy = "--username ${auth_player_name} --version ${version_name} --gameDir ${game_directory} --assetsDir ${game_assets} --tweakClass cpw.mods.fml.common.launcher.FMLTweaker";
+
+        let parsed = get_minecraft_arguments(
+            Some(&modern),
+            Some(legacy),
+            &credentials,
+            "1.6.4",
+            "legacy",
+            &game_directory,
+            &assets_directory,
+            &VersionType::Release,
+            WindowSize(854, 480),
+            "x86_64",
+            &QuickPlayType::None,
+            QuickPlayVersion {
+                server: QuickPlayServerVersion::Unsupported,
+                singleplayer: QuickPlaySingleplayerVersion::Unsupported,
+            },
+        )
+        .await
+        .unwrap();
+
+        for option in [
+            "--username",
+            "--version",
+            "--gameDir",
+            "--assetsDir",
+            "--tweakClass",
+        ] {
+            assert_eq!(
+                parsed.iter().filter(|arg| *arg == option).count(),
+                1,
+                "option {option} must appear exactly once, got: {parsed:?}"
+            );
+        }
+        assert!(
+            parsed.contains(
+                &"cpw.mods.fml.common.launcher.FMLTweaker".to_string()
+            )
+        );
+
+        // Legacy-only options still pass through unchanged.
+        let parsed = get_minecraft_arguments(
+            Some(&modern),
+            Some("--demo --gameDir ${game_directory}"),
+            &credentials,
+            "1.6.4",
+            "legacy",
+            &game_directory,
+            &assets_directory,
+            &VersionType::Release,
+            WindowSize(854, 480),
+            "x86_64",
+            &QuickPlayType::None,
+            QuickPlayVersion {
+                server: QuickPlayServerVersion::Unsupported,
+                singleplayer: QuickPlaySingleplayerVersion::Unsupported,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            parsed.iter().filter(|arg| *arg == "--demo").count(),
+            1,
+            "legacy-only option must be preserved, got: {parsed:?}"
+        );
+        assert_eq!(
+            parsed.iter().filter(|arg| *arg == "--gameDir").count(),
+            1,
+            "option already provided by modern arguments must not duplicate, got: {parsed:?}"
+        );
+    }
+
+    #[test]
+    fn native_libraries_missing_main_artifacts_are_tolerated_on_classpath() {
+        let directory = tempfile::tempdir().unwrap();
+        let libraries: Vec<Library> = vec![
+            // Legacy (2013-era loader profile) shape: natives without a
+            // downloads block, exactly like Forge 1.6.4's lwjgl-platform.
+            serde_json::from_value(serde_json::json!({
+                "name": "org.lwjgl.lwjgl:lwjgl-platform:2.9.0",
+                "natives": {
+                    "linux": "natives-linux",
+                    "osx": "natives-osx",
+                    "windows": "natives-windows"
+                }
+            }))
+            .unwrap(),
+            // Modern shape: natives together with a downloads.classifiers
+            // block. Its main artifact is also legitimately absent on disk.
+            serde_json::from_value(serde_json::json!({
+                "name": "org.lwjgl:lwjgl-platform:3.2.1",
+                "natives": { "windows": "natives-windows" },
+                "downloads": {
+                    "classifiers": {
+                        "natives-windows": {
+                            "sha1": "abc",
+                            "size": 64,
+                            "url": "https://example.com/natives.jar"
+                        }
+                    }
+                }
+            }))
+            .unwrap(),
+        ];
+
+        // Neither main artifact exists on disk; both must be tolerated.
+        let class_paths =
+            get_class_paths(directory.path(), &libraries, &[], "x86_64", true)
+                .unwrap();
+        assert!(class_paths.contains("lwjgl-platform-2.9.0.jar"));
+        assert!(class_paths.contains("lwjgl-platform-3.2.1.jar"));
+
+        // Non-native libraries keep their strict existence requirement.
+        let missing: Library = serde_json::from_value(serde_json::json!({
+            "name": "net.sf.jopt-simple:jopt-simple:4.5"
+        }))
+        .unwrap();
+        assert!(
+            get_class_paths(directory.path(), &[missing], &[], "x86_64", true)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn classpath_prefers_the_last_revision_of_a_duplicate_artifact() {
+        let directory = tempfile::tempdir().unwrap();
+        let old = directory
+            .path()
+            .join("org/lwjgl/lwjgl/3.2.1/lwjgl-3.2.1.jar");
+        let current = directory
+            .path()
+            .join("org/lwjgl/lwjgl/3.2.2/lwjgl-3.2.2.jar");
+        std::fs::create_dir_all(old.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(current.parent().unwrap()).unwrap();
+        std::fs::write(&old, b"old").unwrap();
+        std::fs::write(&current, b"current").unwrap();
+
+        let libraries: Vec<Library> =
+            ["org.lwjgl:lwjgl:3.2.1", "org.lwjgl:lwjgl:3.2.2"]
+                .into_iter()
+                .map(|name| {
+                    serde_json::from_value(serde_json::json!({
+                        "name": name,
+                    }))
+                    .unwrap()
+                })
+                .collect();
+        let class_paths =
+            get_class_paths(directory.path(), &libraries, &[], "x86_64", true)
+                .unwrap();
+
+        assert!(class_paths.contains("lwjgl-3.2.2.jar"));
+        assert!(!class_paths.contains("lwjgl-3.2.1.jar"));
+    }
+
+    #[test]
+    fn classpath_keeps_main_artifact_with_native_classifier() {
+        let directory = tempfile::tempdir().unwrap();
+        let main = directory
+            .path()
+            .join("org/lwjgl/lwjgl-glfw/3.3.3/lwjgl-glfw-3.3.3.jar");
+        let native = directory.path().join(
+            "org/lwjgl/lwjgl-glfw/3.3.3/lwjgl-glfw-3.3.3-natives-windows.jar",
+        );
+        std::fs::create_dir_all(main.parent().unwrap()).unwrap();
+        std::fs::write(&main, b"main").unwrap();
+        std::fs::write(&native, b"native").unwrap();
+
+        let libraries: Vec<Library> = [
+            "org.lwjgl:lwjgl-glfw:3.3.3",
+            "org.lwjgl:lwjgl-glfw:3.3.3:natives-windows",
+        ]
+        .into_iter()
+        .map(|name| {
+            serde_json::from_value(serde_json::json!({ "name": name })).unwrap()
+        })
+        .collect();
+        let class_paths =
+            get_class_paths(directory.path(), &libraries, &[], "x86_64", true)
+                .unwrap();
+
+        assert!(class_paths.contains("lwjgl-glfw-3.3.3.jar"));
+        assert!(class_paths.contains("lwjgl-glfw-3.3.3-natives-windows.jar"));
     }
 }

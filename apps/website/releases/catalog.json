@@ -1,103 +1,259 @@
 {
-  "updated_at": "2026-08-27T15:57:37.609Z",
+  "updated_at": "2026-08-29T15:18:58.627Z",
   "announcements": [
     {
-      "id": "launcher-99.99.3",
-      "version": "99.99.3",
-      "publishedAt": "2026-08-28",
+      "id": "launcher-1.9.4",
+      "version": "1.9.4",
+      "publishedAt": "2026-08-29",
       "title": {
-        "en-US": "Axolotl Launcher 99.99.3 (test)",
-        "zh-CN": "Axolotl Launcher 99.99.3（测试版）"
+        "en-US": "Axolotl Launcher 1.9.4",
+        "zh-CN": "Axolotl Launcher 1.9.4"
       },
       "changes": {
         "fixed": [
           {
-            "en-US": "Natives-only libraries such as jinput-platform 2.0.5 no longer abort the launch: their plain jar is not required anywhere and only the platform classifier jar is downloaded and extracted.",
-            "zh-CN": "修复 jinput-platform 2.0.5 等 natives-only 库导致的启动阻断：不再要求不存在的普通 jar，只下载并解压对应平台的分类 jar。"
+            "en-US": "Fix the issue introduced in 1.9.2 where instances fail to start.",
+            "zh-CN": "修复从 1.9.2 引入的实例无法启动的问题。"
           }
         ]
       }
     },
     {
-      "id": "launcher-99.99.2",
-      "version": "99.99.2",
+      "id": "launcher-1.9.2",
+      "version": "1.9.2",
+      "publishedAt": "2026-08-29",
+      "title": {
+        "en-US": "Axolotl Launcher 1.9.2",
+        "zh-CN": "Axolotl Launcher 1.9.2"
+      },
+      "changes": {
+        "fixed": [
+          {
+            "en-US": "Fixed the Skin editor failing to open in macOS builds when its embedded editor resources were rejected with a 403 error.",
+            "zh-CN": "修复 macOS 构建中皮肤编辑器的嵌入资源被 403 拒绝，导致无法打开的问题。"
+          },
+          {
+            "en-US": "Fixed the path concatenation error when importing instances; the path is no longer constructed from the instance name.",
+            "zh-CN": "修复导入实例拼接路径错误，现在不再从实例名拼接路径。"
+          },
+          {
+            "en-US": "Fix the cmd window appearing after launch.",
+            "zh-CN": "修复启动后显示cmd窗口。"
+          },
+          {
+            "en-US": "Disable global text selection; keep only specific text selectable.",
+            "zh-CN": "全局文字禁止选择，仅保留部分文字可被选中。"
+          },
+          {
+            "en-US": "Unify scrollbar position.",
+            "zh-CN": "统一滚动条位置"
+          }
+        ],
+        "added": [
+          {
+            "en-US": "Added an Easter egg to the About page! It might be hard to find~",
+            "zh-CN": "关于页面新增彩蛋！可能较难发现哦~"
+          }
+        ]
+      }
+    },
+    {
+      "id": "launcher-1.9.1",
+      "version": "1.9.1",
       "publishedAt": "2026-08-27",
       "title": {
-        "en-US": "Axolotl Launcher 99.99.2 (test)",
-        "zh-CN": "Axolotl Launcher 99.99.2（测试版）"
+        "en-US": "Axolotl Launcher 1.9.1",
+        "zh-CN": "Axolotl Launcher 1.9.1"
       },
       "changes": {
+        "added": [
+          {
+            "en-US": "Added a modpack installation confirmation dialog for Modrinth and CurseForge, with version selection and a custom instance name.",
+            "zh-CN": "Modrinth 与 CurseForge 整合包安装新增确认弹窗，可选择版本并自定义实例名称。"
+          }
+        ],
+        "changed": [
+          {
+            "en-US": "Modpack installation now shows existing installs and the collision-safe instance folder name before creating a separate instance.",
+            "zh-CN": "安装整合包前现在会显示已有安装状态及避免重名冲突后的实例文件夹名称，并可创建独立实例。"
+          }
+        ],
         "fixed": [
           {
-            "en-US": "Logs and crash reports of directly associated instances now resolve from the linked .minecraft, and the log viewer works for both normal and PCL-isolated instances.",
-            "zh-CN": "直接关联实例的日志与崩溃报告现在从关联的原目录读取，日志查看功能恢复正常（含 PCL 隔离实例）。"
+            "en-US": "Fixed the Discover page source selection changing to CurseForge after browsing maps.",
+            "zh-CN": "修复浏览地图后“发现内容”页的来源选择被切换为 CurseForge 的问题。"
           },
           {
-            "en-US": "Library completion adds a Maven Central fallback for old artifacts missing from both Mojang and BMCLAPI.",
-            "zh-CN": "补全库新增 Maven Central 兜底源，解决 Mojang 与 BMCLAPI 都没有的老构件。"
+            "en-US": "Fixed the right sidebar remaining collapsed after leaving the Settings page.",
+            "zh-CN": "修复从设置页面返回其他页面后右侧边栏仍保持收起的问题。"
+          },
+          {
+            "en-US": "Fixed CurseForge showing no content under Discover when no search query is entered — browsing CurseForge now loads content again.",
+            "zh-CN": "修复发现内容页不输入搜索词时 CurseForge 空白无内容的问题，现在打开 CurseForge 来源即可正常浏览内容。"
+          },
+          {
+            "en-US": "Fixed legacy Forge instances (such as Minecraft 1.6.4) failing to launch with a missing-library-path error, because the main artifacts of their native libraries are not published.",
+            "zh-CN": "修复旧版 Forge 实例（如 Minecraft 1.6.4）因原生库主构件不存在而报“库文件缺失”无法启动的问题。"
+          },
+          {
+            "en-US": "Fixed legacy Forge instances failing to launch because game arguments were passed twice (for example --gameDir), which legacy launch wrappers reject.",
+            "zh-CN": "修复旧版 Forge 实例因启动参数重复传递（如 --gameDir 出现两次）而被旧版启动器拒绝启动的问题。"
+          },
+          {
+            "en-US": "Native libraries are now verified and automatically restored before launch, fixing instances that failed to start with \"lwjgl.dll not found\" after their native libraries were missing or corrupted.",
+            "zh-CN": "启动前现在会自动校验并恢复原生库，修复原生库缺失或损坏时实例报“找不到 lwjgl.dll”无法启动的问题。"
           }
         ]
       }
     },
     {
-      "id": "launcher-99.99.1",
-      "version": "99.99.1",
+      "id": "launcher-1.9.0",
+      "version": "1.9.0",
       "publishedAt": "2026-08-26",
       "title": {
-        "en-US": "Axolotl Launcher 99.99.1 (test)",
-        "zh-CN": "Axolotl Launcher 99.99.1（测试版）"
+        "en-US": "Axolotl Launcher 1.9.0",
+        "zh-CN": "Axolotl Launcher 1.9.0"
       },
       "changes": {
+        "added": [
+          {
+            "en-US": "Dependencies in the install confirmation dialog can now be expanded inline to view their description and open the project page.",
+            "zh-CN": "确认安装弹窗中的依赖项支持展开查看简介，并可打开项目页面。"
+          },
+          {
+            "en-US": "Added a dependency relationship graph to the Content tab for exploring installed content and its dependencies.",
+            "zh-CN": "内容页新增依赖关系图，可查看已安装内容及其依赖关系。"
+          },
+          {
+            "en-US": "Added support for custom instance icons — when an icon file (icon.png/jpg/jpeg/webp) exists in the instance folder, it is now applied as the instance icon.",
+            "zh-CN": "当实例文件夹下有icon.png/jpg/jpeg/webp时 优先应用此图标。"
+          },
+          {
+            "en-US": "When a search finds matches by automatically correcting the query, a hint now appears above the results — click the suggested search term to search with it directly.",
+            "zh-CN": "当搜索未命中时，启动器会自动改写查询词重新搜索，并在结果上方显示提示；点击提示中的建议词可直接用它重新搜索。"
+          },
+          {
+            "en-US": "Added a Skin editor tool to the Lab for creating and editing Minecraft player skins locally.",
+            "zh-CN": "Lab 新增皮肤编辑工具，可本地创建和编辑 Minecraft 皮肤。"
+          },
+          {
+            "en-US": "Lab tools can now be favorited: starred tools stay marked and are listed first, with new Favorited / Not favorited filters; favorites and the category filter are remembered between restarts.",
+            "zh-CN": "Lab 工具页新增收藏功能：可收藏常用工具并置顶展示，支持按已收藏/未收藏筛选，收藏状态和分类筛选在重启后会保留。"
+          },
+          {
+            "en-US": "Added a \"Create skin\" button to the top right of the Skin selector page that opens the Lab Skin editor tool.",
+            "zh-CN": "皮肤选择器页面右上角新增「创建皮肤」按钮，点击可打开 Lab 的皮肤编辑器。"
+          }
+        ],
+        "changed": [
+          {
+            "en-US": "Opening the Settings page now automatically collapses the sidebar to give the settings panel more room.",
+            "zh-CN": "打开设置页面时自动收起侧边栏，为设置面板留出更多空间。"
+          },
+          {
+            "zh-CN": "自定义背景下实例内容页面悬停折叠项的ui透明度现在被调高。",
+            "en-US": "Custom background now has higher opacity for hoverable folded items on instance content page."
+          },
+          {
+            "en-US": "Improved fuzzy search matching for mods and other content: queries typed without spaces or with hyphens (e.g. sodiumextra, example-mod) now find the right results on both Modrinth and CurseForge.",
+            "zh-CN": "改进内容发现页的模糊搜索：无空格或带连字符的搜索词（如 sodiumextra、example-mod）现在能在 Modrinth 和 CurseForge 上找到正确结果。"
+          },
+          {
+            "en-US": "Favorited content now shows a solid bookmark icon, making already-saved mods and other resources instantly recognizable next to hollow, not-yet-favorited items.",
+            "zh-CN": "已收藏的资源现在显示实心书签图标，一眼即可看出已收藏，不再与空心图标的未收藏资源混淆。"
+          },
+          {
+            "en-US": "Redesigned the Lab tools list: each tool is now shown as a card with its cover image, category tag, and an explicit Enter button.",
+            "zh-CN": "Lab 工具列表改用卡片式布局，展示工具封面、分类标签和「进入」按钮。"
+          }
+        ],
         "fixed": [
           {
-            "en-US": "Directly associated instances now scan content and browse files from the linked .minecraft instead of a missing profile directory.",
-            "zh-CN": "直接关联实例的内容扫描与文件浏览现在指向关联的原目录，不再显示为空。"
+            "en-US": "Fixed an issue where instances with version isolation disabled could not be imported correctly.",
+            "zh-CN": "修复未开启版本隔离的实例无法正常导入的问题。"
           },
           {
-            "en-US": "Library completion falls back to the BMCLAPI mirror when Mojang returns 404 for old artifacts.",
-            "zh-CN": "补全库时若 Mojang 官方源 404，自动回退 BMCLAPI 镜像。"
+            "en-US": "Fixed an issue where modpack unlinking was not complete.",
+            "zh-CN": "修复了整合包解除关联不彻底的问题。"
+          },
+          {
+            "en-US": "Fixed the instance upgrade page continuously showing Fabric versions as loading when Minecraft and Fabric were already up to date. (issue #415)",
+            "zh-CN": "修复 Minecraft 和 Fabric 均已是最新版时，实例升级页面仍持续显示正在加载 Fabric 版本的问题。(issue #415)"
+          },
+          {
+            "en-US": "Fixed the fullscreen toggle in the Schematic Workshop (button and F11) not taking effect — entering fullscreen now expands the 3D view to fill the screen, hides the surrounding interface, and leaves the exit-fullscreen button in place.",
+            "zh-CN": "修复投影工坊全屏不生效的问题（按钮和 F11 均无效）：进入全屏后 3D 视图铺满屏幕并隐藏周边界面，原位置保留退出全屏按钮。"
+          },
+          {
+            "en-US": "Fixed the post-update announcement not showing on Windows after the launcher updates — it now appears after the updated launcher relaunches.",
+            "zh-CN": "修复 Windows 端更新启动器后不弹出更新公告的问题，更新并重启后现在会正常显示更新公告。"
+          },
+          {
+            "en-US": "Fixed the issue of when clicking curseforge modpack title to enter modpack information page, the launcher will show Error loading project. (issue #405)",
+            "zh-CN": "修复了点击 CurseForge 整合包标题进入整合包信息页时，启动器会显示Error loading project的问题。(issue #405)"
+          },
+          {
+            "zh-CN": "实例名含非 ASCII 字符（™）导致启动崩溃InvalidPathException(issue #397)",
+            "en-US": "Fixed the issue of instance name containing non-ASCII characters (™) causing the launcher to crash with InvalidPathException(issue #397)"
+          },
+          {
+            "en-US": "Fixed the Downloads page layout when there are no tasks: the empty-state card now fills the available space instead of splitting the page between themed and transparent areas. (issue #239)",
+            "zh-CN": "修复下载页无任务时的排版问题：空状态卡片现在会占满剩余空间，不再出现主题色与透明区域各半的割裂布局。(issue #239)"
           }
         ]
       }
     },
     {
-      "id": "launcher-99.99.0",
-      "version": "99.99.0",
+      "id": "launcher-1.8.14",
+      "version": "1.8.14",
       "publishedAt": "2026-08-25",
       "title": {
-        "en-US": "Axolotl Launcher 99.99.0 (test)",
-        "zh-CN": "Axolotl Launcher 99.99.0（测试版）"
+        "en-US": "Axolotl Launcher 1.8.14",
+        "zh-CN": "Axolotl Launcher 1.8.14"
       },
       "changes": {
         "added": [
           {
-            "en-US": "Direct association now completes missing libraries, assets, and log configs into the linked .minecraft before launch (sha1 verified), matching HMCL/PCL behavior.",
-            "zh-CN": "直接关联启动前会自动补全缺失的库、资源与日志配置到原目录（带 sha1 校验），与 HMCL/PCL 行为一致。"
+            "en-US": "Added an instance core editor for managing loader components and custom core JAR files.",
+            "zh-CN": "新增实例核心编辑功能，可管理加载器组件和自定义核心 JAR 文件。"
           },
           {
-            "en-US": "Fixed instance interactions (open folder etc.) for directly associated instances; export/duplicate are rejected with a clear message.",
-            "zh-CN": "修复直接关联实例的交互（打开文件夹等）；导出/复制会给出明确提示。"
+            "en-US": "Added MCArchive as a content source for browsing and importing archived Minecraft releases.",
+            "zh-CN": "新增 MCArchive 内容源，支持浏览和导入 Minecraft 历史版本资源。"
+          },
+          {
+            "zh-CN": "添加实例一键升级功能",
+            "en-US": "Added instance upgrade feature"
+          },
+          {
+            "en-US": "Added CodeFlow as a sponsored AI provider in AI settings, including its official logo, a link to its website, and five built-in GPT-5.4 series models.",
+            "zh-CN": "AI 设置中新增赞助商 CodeFlow，附带官方标识、官网入口及 5 个内置 GPT 系列模型。"
+          },
+          {
+            "en-US": "Added a dedicated \"Sponsored providers\" section to the AI provider list, shown between the enabled and disabled providers.",
+            "zh-CN": "AI 提供商列表新增「赞助的供应商」专区，位于已启用与未启用供应商之间。"
           }
-        ]
-      }
-    },
-    {
-      "id": "launcher-1.8.13",
-      "version": "1.8.13",
-      "publishedAt": "2026-08-24",
-      "title": {
-        "en-US": "Axolotl Launcher 1.8.13",
-        "zh-CN": "Axolotl Launcher 1.8.13"
-      },
-      "changes": {
-        "added": [
+        ],
+        "changed": [
           {
-            "en-US": "Added direct association import for HMCL/PCL traditional instances: launch externally managed .minecraft folders in place without copying or converting, so Axolotl can share the same client with HMCL/PCL.",
-            "zh-CN": "新增 HMCL/PCL 传统实例的直接关联导入：不复制、不转换原有文件结构，直接使用原目录启动，可与 HMCL/PCL 混用同一客户端。"
+            "en-US": "Reworked the accent color picker layout: the color options always stay in a single row and adapt to the settings panel width, hiding their labels only when the row is too narrow to fit them.",
+            "zh-CN": "优化强调色选择器布局：颜色选项始终单行排列并随面板宽度自适应，仅在空间放不下文字时才隐藏颜色名称。"
+          }
+        ],
+        "removed": [
+          {
+            "en-US": "Removed the preset palette from the custom accent color panel, keeping the hue slider, hex input, and light/dark theme previews.",
+            "zh-CN": "移除了自定义强调色面板中的预设色板，仅保留色相滑块、十六进制输入和深浅主题预览。"
+          }
+        ],
+        "fixed": [
+          {
+            "en-US": "Fixed the AI provider settings layout so the model selector and the save/test provider buttons are no longer crowded together.",
+            "zh-CN": "修复 AI 供应商设置页布局，模型选择器与「保存供应商」「测试供应商」按钮不再挤在一起。"
           },
           {
-            "en-US": "Direct association honors external launcher settings at launch, including PCL version isolation, Java selection and memory modes, plus HMCL per-version JVM arguments.",
-            "zh-CN": "直接关联启动时会读取外部启动器的实例设置，包括 PCL 版本隔离、Java 选择与内存模式，以及 HMCL 的版本级 JVM 参数。"
+            "en-US": "Fixed the settings sidebar showing English text in some languages when its translations were pruned by the i18n cleanup.",
+            "zh-CN": "修复设置左侧侧边栏在部分语言下误显示英文的问题，并防止翻译清理再次误删设置项翻译。"
           }
         ]
       }

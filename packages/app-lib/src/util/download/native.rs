@@ -8,6 +8,9 @@ const LARGE_FILE_LIMIT: u64 = 64 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct NativeH2Policy {
+    /// Whether this selection may establish the authority's first H2
+    /// connection instead of requiring an already-warm multiplexed session.
+    pub(crate) allow_cold_connection: bool,
     pub(crate) abort_if_slow: bool,
     pub(crate) expected_speed: Option<u64>,
 }
@@ -40,6 +43,18 @@ pub(crate) fn h2_ineligible_reason(
     None
 }
 
+pub(crate) fn explicit_h2_policy(
+    route: &DownloadRoute,
+) -> Option<NativeH2Policy> {
+    h2_ineligible_reason(route)
+        .is_none()
+        .then_some(NativeH2Policy {
+            allow_cold_connection: true,
+            abort_if_slow: true,
+            expected_speed: None,
+        })
+}
+
 pub(crate) async fn h2_policy(
     route: &DownloadRoute,
     size: Option<u64>,
@@ -49,6 +64,7 @@ pub(crate) async fn h2_policy(
     }
     let Some(size) = size else {
         return Some(NativeH2Policy {
+            allow_cold_connection: true,
             abort_if_slow: false,
             expected_speed: None,
         });
@@ -69,17 +85,20 @@ pub(crate) async fn h2_policy(
         .map(|speed| speed.min(u64::MAX as f64) as u64);
     if size < SMALL_FILE_LIMIT {
         return Some(NativeH2Policy {
+            allow_cold_connection: true,
             abort_if_slow: false,
             expected_speed,
         });
     }
     if size < MEDIUM_FILE_LIMIT {
-        return super::h2_pool::has_live_connection(&authority)
-            .await
-            .then_some(NativeH2Policy {
-                abort_if_slow: true,
-                expected_speed,
-            });
+        // The connection slot serializes the first handshake, so a batch of
+        // medium files shares one cold-start attempt instead of stampeding the
+        // CDN with independent TCP/TLS connections.
+        return Some(NativeH2Policy {
+            allow_cold_connection: true,
+            abort_if_slow: true,
+            expected_speed,
+        });
     }
     if !super::h2_pool::has_live_connection(&authority).await {
         return None;
@@ -92,6 +111,7 @@ pub(crate) async fn h2_policy(
             .map(|range_speed| h2_speed >= range_speed * 1.1)
             .unwrap_or(true);
         return h2_preferred.then_some(NativeH2Policy {
+            allow_cold_connection: false,
             abort_if_slow: true,
             expected_speed: Some(h2_speed.min(u64::MAX as f64) as u64),
         });
@@ -100,6 +120,7 @@ pub(crate) async fn h2_policy(
     let range_speed = range.throughput_bps?;
     (h2.success_samples >= 3 && h2_speed >= range_speed * 1.25).then_some(
         NativeH2Policy {
+            allow_cold_connection: false,
             abort_if_slow: true,
             expected_speed: Some(h2_speed.min(u64::MAX as f64) as u64),
         },
@@ -169,11 +190,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn medium_file_requires_a_live_h2_connection() {
-        assert!(
+    async fn medium_file_can_establish_a_cold_h2_connection() {
+        assert_eq!(
             h2_policy(&route(ProxyPolicy::Direct), Some(8 * 1024 * 1024),)
-                .await
-                .is_none()
+                .await,
+            Some(NativeH2Policy {
+                allow_cold_connection: true,
+                abort_if_slow: true,
+                expected_speed: None,
+            })
         );
     }
 
@@ -182,9 +207,19 @@ mod tests {
         assert_eq!(
             h2_policy(&route(ProxyPolicy::Direct), Some(1024 * 1024),).await,
             Some(NativeH2Policy {
+                allow_cold_connection: true,
                 abort_if_slow: false,
                 expected_speed: None,
             })
+        );
+    }
+
+    #[tokio::test]
+    async fn large_file_still_requires_a_warm_h2_connection_and_history() {
+        assert!(
+            h2_policy(&route(ProxyPolicy::Direct), Some(32 * 1024 * 1024),)
+                .await
+                .is_none()
         );
     }
 }

@@ -34,10 +34,7 @@ test('deduplicates a shared dependency and merges its owners', () => {
 
 	assert.equal(result.dependencies.length, 1)
 	assert.deepEqual(result.dependencies[0].requiredBy, ['First', 'Second'])
-	assert.deepEqual(result.dependencies[0].requiredByKeys, [
-		'modrinth:first',
-		'curseforge:second',
-	])
+	assert.deepEqual(result.dependencies[0].requiredByKeys, ['modrinth:first', 'curseforge:second'])
 	assert.equal(result.conflicts.size, 0)
 })
 
@@ -106,7 +103,12 @@ test('removing one conflicting owner clears the active conflict', () => {
 	]
 
 	assert.deepEqual(
-		[...getActiveDependencyConflictIdentities(dependencies, new Set(['modrinth:first', 'modrinth:second']))],
+		[
+			...getActiveDependencyConflictIdentities(
+				dependencies,
+				new Set(['modrinth:first', 'modrinth:second']),
+			),
+		],
 		['modrinth:shared'],
 	)
 	assert.equal(

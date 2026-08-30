@@ -73,9 +73,7 @@ function detectG1gcMojang(args: string): boolean {
 
 // PCL Shenandoah: complete adaptive set, and no large pages.
 function detectPclShenandoah(args: string): boolean {
-	return (
-		hasFullArgSet(args, buildPclShenandoahArgs()) && !args.includes('-XX:+UseLargePages')
-	)
+	return hasFullArgSet(args, buildPclShenandoahArgs()) && !args.includes('-XX:+UseLargePages')
 }
 
 // Shenandoah with large pages (its full set already requires `-XX:+UseLargePages`).
@@ -139,12 +137,7 @@ export function getStrategyBaseArgs(strategyId: GcStrategyId): string {
  * heuristic deliberately avoided ZGC (insufficient resources), we must not
  * silently jump back up to it when Shenandoah is unavailable.
  */
-const SAFE_TO_DEMANDING: ResolvedGcStrategyId[] = [
-	'g1gc-mojang',
-	'pcl',
-	'shenandoah',
-	'zgc',
-]
+const SAFE_TO_DEMANDING: ResolvedGcStrategyId[] = ['g1gc-mojang', 'pcl', 'shenandoah', 'zgc']
 
 export function buildGcCandidateChain(
 	context: GcContext,

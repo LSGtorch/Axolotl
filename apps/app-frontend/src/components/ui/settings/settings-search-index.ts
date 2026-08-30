@@ -201,6 +201,13 @@ export const settingsSearchEntries: SettingsSearchEntry[] = [
 		keywords: [message('app.settings.tabs.ai', 'AI')],
 	},
 	{
+		id: 'crash-analysis-ai',
+		categoryId: 'launch-defaults',
+		targetId: 'settings-target-crash-analysis-ai',
+		label: message('app.crash-analysis.ai.settings.title', 'Crash AI explanation'),
+		keywords: [message('app.settings.tabs.launch-defaults', 'Launch & instance defaults')],
+	},
+	{
 		id: 'privacy-telemetry',
 		categoryId: 'privacy-data',
 		targetId: 'settings-target-privacy-telemetry',
@@ -211,12 +218,6 @@ export const settingsSearchEntries: SettingsSearchEntry[] = [
 		categoryId: 'privacy-data',
 		targetId: 'settings-target-privacy-discord-rpc',
 		label: message('app.settings.privacy.discord-rpc', 'Discord rich presence'),
-	},
-	{
-		id: 'privacy-log-analysis',
-		categoryId: 'privacy-data',
-		targetId: 'settings-target-privacy-log-analysis',
-		label: message('app.settings.logs.title', 'Log analysis service'),
 	},
 	{
 		id: 'java-installations',

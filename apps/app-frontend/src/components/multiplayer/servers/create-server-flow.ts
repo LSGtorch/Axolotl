@@ -1,14 +1,8 @@
 import { RefreshCwIcon } from '@modrinth/assets'
 import {
-	type FabricInstallerVersionsResponse,
-	fabricInstallerVersionsUrl,
 	isServerTypeSupported,
-	latestStablePaperBuild,
-	type PaperBuildsResponse,
-	paperBuildsUrl,
-	pickFabricInstallerVersion,
 	requiredJavaMajorVersion,
-	resolveServerJar,
+	SERVER_TYPES,
 	type ServerTypeId,
 	setEulaAccepted,
 } from '@modrinth/server'
@@ -19,23 +13,20 @@ import {
 	type StageConfigInput,
 	useVIntl,
 } from '@modrinth/ui'
-import { getVersion } from '@tauri-apps/api/app'
-import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
-import { type as osType } from '@tauri-apps/plugin-os'
 import { computed, markRaw, type Ref, ref } from 'vue'
 import type { ComponentExposed } from 'vue-component-type-helpers'
 
+import {
+	javaMajorFromVersion,
+	toErrorMessage,
+} from '@/components/multiplayer/servers/server-flow-utils'
+import { getServerInstallStrategy, runServerInstall } from '@/composables/server-install'
 import { refresh as refreshServerList } from '@/composables/useServers'
 import { find_filtered_jres, get_java_default_versions, get_max_memory } from '@/helpers/jre'
 import { get_game_versions, get_loader_versions } from '@/helpers/metadata'
-import {
-	serverEventListener,
-	type ServerEventPayload,
-	type ServerManifestData,
-	servers,
-} from '@/helpers/servers'
+import { type ServerManifestData, servers } from '@/helpers/servers'
+import { injectDownloadManager } from '@/providers/download-manager'
 
-import ConfigureStage from './stages/ConfigureStage.vue'
 import InstallStage from './stages/InstallStage.vue'
 import SetupStage from './stages/SetupStage.vue'
 import TypeStage from './stages/TypeStage.vue'
@@ -59,9 +50,9 @@ export interface LoaderVersionOption {
 	stable: boolean
 }
 
-export interface CreateServerFlowContext {
+export interface CreateServerFlowContext<TCtx extends CreateServerFlowContext<TCtx>> {
 	modal: Ref<ComponentExposed<typeof MultiStageModal> | null>
-	stageConfigs: StageConfigInput<CreateServerFlowContext>[]
+	stageConfigs: StageConfigInput<TCtx>[]
 	formatMessage: ReturnType<typeof useVIntl>['formatMessage']
 
 	serverType: Ref<ServerTypeId>
@@ -103,91 +94,28 @@ export interface CreateServerFlowContext {
 	reset: () => void
 }
 
+/** Concrete context used by the vanilla (non-modpack) server creation flow. */
+export type CreateServerFlowContextValue = CreateServerFlowContext<CreateServerFlowContextValue>
+
 export const [injectCreateServerFlow, provideCreateServerFlow] =
-	createContext<CreateServerFlowContext>('CreateServerFlow')
-
-interface VanillaVersionEntry {
-	id: string
-	type: string
-	url: string
-}
-
-interface VanillaVersionInfoJson {
-	downloads: { server?: { sha1: string; size: number; url: string } }
-}
-
-async function fetchJson<T>(url: string): Promise<T> {
-	const response = await tauriFetch(url, {
-		headers: { 'User-Agent': await launcherUserAgent() },
-	})
-	if (!response.ok) throw new Error('GET ' + url + ' failed: ' + response.status)
-	return (await response.json()) as T
-}
-
-let userAgentPromise: Promise<string> | null = null
-
-/**
- * Identifying User-Agent, required by services like the PaperMC downloads API.
- * Mirrors the format used by the Rust backend.
- */
-function launcherUserAgent(): Promise<string> {
-	userAgentPromise ??= Promise.all([getVersion(), osType()]).then(
-		([version, platform]) =>
-			`garbage-human-studio/axolotl/${version} (${platform}; +https://www.ghs.red)`,
-	)
-	userAgentPromise = userAgentPromise.catch(
-		() => 'garbage-human-studio/axolotl (+https://www.ghs.red)',
-	)
-	return userAgentPromise
-}
-
-function toErrorMessage(error: unknown): string {
-	if (error instanceof Error) return error.message
-	if (typeof error === 'string') return error
-	if (error && typeof error === 'object') {
-		const record = error as Record<string, unknown>
-		for (const key of ['message', 'error', 'description'] as const) {
-			if (typeof record[key] === 'string') return record[key]
-		}
-	}
-	try {
-		return JSON.stringify(error)
-	} catch {
-		return String(error)
-	}
-}
-
-async function waitForServerStop(serverId: string): Promise<ServerEventPayload | null> {
-	return new Promise((resolve) => {
-		void serverEventListener((eventServerId, payload) => {
-			if (eventServerId !== serverId || payload.event !== 'stopped') return
-			resolve(payload)
-		}).then((unlisten) => {
-			setTimeout(
-				() => {
-					unlisten()
-					resolve(null)
-				},
-				10 * 60 * 1000,
-			)
-		})
-	})
-}
-
-function javaMajorFromVersion(version: string): number | null {
-	const parts = version
-		.split(/[._]/)
-		.map(Number)
-		.filter((value) => Number.isInteger(value) && value >= 0)
-	if (parts.length === 0) return null
-	if (parts[0] === 1 && parts.length > 1) return parts[1]
-	return parts[0]
-}
+	createContext<CreateServerFlowContextValue>('CreateServerFlow')
 
 export function createCreateServerFlowContext(
 	modal: Ref<ComponentExposed<typeof MultiStageModal> | null>,
-): CreateServerFlowContext {
+): CreateServerFlowContextValue {
 	const { formatMessage } = useVIntl()
+
+	// [SERVER-DOWNLOAD-BRIDGE] Capture the download manager once during Vue
+	// setup context.  Vue's inject() only works in the synchronous setup
+	// scope — after any `await` the injection context is lost.  We store the
+	// reference here and pass it explicitly to the shared download bridge so
+	// the vanilla server download appears in the sidebar like the modpack flow.
+	let downloadManager: ReturnType<typeof injectDownloadManager> | null = null
+	try {
+		downloadManager = injectDownloadManager()
+	} catch {
+		// Not inside a provider tree — server downloads will not appear in sidebar.
+	}
 
 	const wizardMessages = defineMessages({
 		typeStageTitle: { id: 'app.servers.wizard.type-title', defaultMessage: 'Server type' },
@@ -227,7 +155,9 @@ export function createCreateServerFlowContext(
 	const showEulaModal = ref(false)
 	const saveServerProperties = ref<(() => Promise<boolean>) | null>(null)
 
-	const needsLoaderVersion = computed(() => serverType.value === 'fabric')
+	const needsLoaderVersion = computed(
+		() => SERVER_TYPES[serverType.value]?.needsLoaderVersion ?? false,
+	)
 	const typeSupported = computed(() => isServerTypeSupported(serverType.value))
 
 	async function loadVersions() {
@@ -236,7 +166,7 @@ export function createCreateServerFlowContext(
 		try {
 			const manifest = (await get_game_versions()) as {
 				latest: { release: string }
-				versions: VanillaVersionEntry[]
+				versions: { id: string; type: string; url: string }[]
 			}
 			const all = manifest.versions
 			availableGameVersions.value = all
@@ -340,83 +270,39 @@ export function createCreateServerFlowContext(
 			})
 			createdServer.value = manifest
 
-			let url = ''
-			let filename = ''
-			let sha1: string | undefined
-			if (serverType.value === 'vanilla') {
-				const versionManifest = (await get_game_versions()) as {
-					versions: VanillaVersionEntry[]
-				}
-				const entry = versionManifest.versions.find((v) => v.id === selectedGameVersion.value)
-				if (!entry) throw new Error('Game version not found in the Mojang manifest')
-				const versionInfo = await fetchJson<VanillaVersionInfoJson>(entry.url)
-				const jar = resolveServerJar('vanilla', {
+			// [SERVER-INSTALL] The shared orchestrator owns the sidebar download
+			// job, progress/log event forwarding, and cancellation. Each server
+			// type supplies a `ServerInstallStrategy` that knows how to obtain its
+			// launcher files; vanilla/Fabric/Paper download a jar, Forge runs its
+			// installer. This is the single reuse point for every server type.
+			const strategy = getServerInstallStrategy(serverType.value)
+			await runServerInstall({
+				serverId: manifest.id,
+				name: name.value,
+				inputs: {
 					gameVersion: selectedGameVersion.value,
-					vanillaVersionInfo: versionInfo,
-				})
-				if (!jar) throw new Error('This game version has no server download')
-				url = jar.url
-				filename = jar.filename
-				sha1 = jar.sha1
-			} else if (serverType.value === 'fabric') {
-				const installers = await fetchJson<FabricInstallerVersionsResponse[]>(
-					fabricInstallerVersionsUrl(),
-				)
-				const jar = resolveServerJar('fabric', {
-					gameVersion: selectedGameVersion.value,
-					loaderVersion: selectedLoaderVersion.value,
-					installerVersion: pickFabricInstallerVersion(installers) ?? undefined,
-				})
-				if (!jar) throw new Error('Fabric server launcher is unavailable for this version')
-				url = jar.url
-				filename = jar.filename
-			} else if (serverType.value === 'paper') {
-				const builds = await fetchJson<PaperBuildsResponse>(
-					paperBuildsUrl(selectedGameVersion.value),
-				)
-				const jar = resolveServerJar('paper', {
-					gameVersion: selectedGameVersion.value,
-					paperBuild: latestStablePaperBuild(builds) ?? undefined,
-				})
-				if (!jar) throw new Error('Paper has no stable build for this game version')
-				url = jar.url
-				filename = jar.filename
-			}
-
-			installPhase.value = 'downloading'
-			const unlistenProgress = await serverEventListener((serverId, payload) => {
-				if (serverId !== manifest.id || payload.event !== 'download_progress') return
-				downloadProgress.value = {
-					downloaded: payload.downloaded,
-					total: payload.total ?? null,
-				}
+					loaderVersion: selectedLoaderVersion.value || undefined,
+					javaPath: selectedJava.value.path || undefined,
+					memoryMb: memoryMb.value,
+				},
+				strategy,
+				downloadManager,
+				onProgress: (progress) => {
+					downloadProgress.value = progress
+				},
+				onLog: (line) => {
+					installLog.value.push(line)
+					if (installLog.value.length > 500) {
+						installLog.value.splice(0, installLog.value.length - 500)
+					}
+				},
 			})
-			try {
-				await servers.downloadFile(manifest.id, url, filename, sha1)
-			} finally {
-				unlistenProgress()
-			}
 
-			installPhase.value = 'first-run'
-			const unlistenLogs = await serverEventListener((serverId, payload) => {
-				if (serverId !== manifest.id || payload.event !== 'log') return
-				installLog.value.push(payload.line)
-				if (installLog.value.length > 500) installLog.value.splice(0, installLog.value.length - 500)
-			})
-			try {
-				await servers.start(manifest.id)
-				await waitForServerStop(manifest.id)
-			} finally {
-				unlistenLogs()
-			}
-
-			const eula = await servers.readFile(manifest.id, 'eula.txt').catch(() => null)
-			if (eula !== null && !eula.includes('eula=true')) {
-				eulaText.value = eula
-				showEulaModal.value = true
-				installPhase.value = 'eula'
-				return
-			}
+			// [SERVER-EULA] Like the modpack flow, the server is not auto-started.
+			// A code-created `eula.txt` (eula=false) is written so the manual start
+			// gate (useServerLifecycle) can offer the EULA without booting the jar.
+			const eula = setEulaAccepted('', false)
+			await servers.writeFile(manifest.id, 'eula.txt', eula).catch(() => {})
 			installPhase.value = 'done'
 		} catch (error) {
 			installPhase.value = 'error'
@@ -482,7 +368,7 @@ export function createCreateServerFlowContext(
 			(!needsLoaderVersion.value || selectedLoaderVersion.value !== ''),
 	)
 
-	const stageConfigs: StageConfigInput<CreateServerFlowContext>[] = [
+	const stageConfigs: StageConfigInput<CreateServerFlowContextValue>[] = [
 		{
 			id: 'type',
 			stageContent: markRaw(TypeStage),
@@ -517,12 +403,13 @@ export function createCreateServerFlowContext(
 			stageContent: markRaw(InstallStage),
 			title: (ctx) => ctx.formatMessage(wizardMessages.installStageTitle),
 			cannotNavigateForward: (ctx) => ctx.installPhase.value !== 'done',
-			disableClose: (ctx) =>
-				ctx.installPhase.value === 'downloading' || ctx.installPhase.value === 'first-run',
+			// Downloads continue in the background once the wizard closes; only
+			// the first-run boot locks closing until the server reaches its EULA gate.
+			disableClose: (ctx) => ctx.installPhase.value === 'first-run',
 			leftButtonConfig: () => null,
 			rightButtonConfig: (ctx) => ({
 				label: ctx.formatMessage(
-					ctx.installPhase.value === 'error' ? wizardMessages.retry : wizardMessages.next,
+					ctx.installPhase.value === 'error' ? wizardMessages.retry : wizardMessages.finish,
 				),
 				color: 'brand',
 				icon: ctx.installPhase.value === 'error' ? RefreshCwIcon : null,
@@ -533,22 +420,8 @@ export function createCreateServerFlowContext(
 						ctx.retryInstall()
 						return
 					}
-					ctx.modal.value?.nextStage()
-				},
-			}),
-		},
-		{
-			id: 'configure',
-			stageContent: markRaw(ConfigureStage),
-			title: (ctx) => ctx.formatMessage(wizardMessages.configureStageTitle),
-			maxWidth: 'min(60rem, calc(95vw - 10rem))',
-			leftButtonConfig: () => null,
-			rightButtonConfig: (ctx) => ({
-				label: ctx.formatMessage(wizardMessages.finish),
-				color: 'brand',
-				onClick: async () => {
-					const save = ctx.saveServerProperties.value
-					if (save === null || (await save())) ctx.modal.value?.hide()
+					// Server is ready — close the wizard so the host can navigate to it.
+					ctx.modal.value?.hide()
 				},
 			}),
 		},

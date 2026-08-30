@@ -25,7 +25,7 @@
   </p>
 </div>
 
-<details>
+<details open>
 <summary><strong>赞助与合作</strong></summary>
 
 感谢以下赞助商与合作伙伴对 Axolotl Launcher 的支持。

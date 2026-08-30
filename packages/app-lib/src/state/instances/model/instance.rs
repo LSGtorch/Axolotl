@@ -32,6 +32,11 @@ pub struct Instance {
     /// Canonical path of the actual local version JSON selected at creation.
     #[serde(default)]
     pub linked_version_json_path: Option<String>,
+    /// Optional absolute game-directory override for ordinary instances;
+    /// directly associated instances resolve their game dir from the link
+    /// metadata instead.
+    #[serde(default)]
+    pub game_dir_override: Option<String>,
     pub created: DateTime<Utc>,
     pub modified: DateTime<Utc>,
     pub last_played: Option<DateTime<Utc>>,

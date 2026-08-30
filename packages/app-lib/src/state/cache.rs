@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::env;
 use std::fmt::Display;
 use std::hash::Hash;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 // 1 day
 const DEFAULT_ID: &str = "0";
@@ -2684,18 +2684,83 @@ impl CachedEntry {
                 )
             }
             CacheValueType::FileHash => {
-                // TODO: Replace state call here
                 let state = crate::State::get().await?;
-                let instances_dir = state.directories.instances_dir();
+
+                // The cache key is `{size}-{instance.path}/{relative}`. Resolve
+                // each instance's game working directory (which honours a
+                // per-instance `game_dir_override`) ONCE per distinct instance
+                // path, instead of once per file, so override-instance content
+                // is hashed from the correct root without issuing N identical
+                // DB lookups per content scan.
+                let keys: Vec<String> =
+                    keys.into_iter().map(|k| k.to_string()).collect();
+
+                let mut base_dirs: HashMap<String, PathBuf> = HashMap::new();
+                for key in &keys {
+                    let path =
+                        key.split_once('-').map(|x| x.1).unwrap_or_default();
+                    // Directly associated instances embed an absolute linked
+                    // root in the key; it needs no base resolution.
+                    if std::path::Path::new(path).is_absolute() {
+                        continue;
+                    }
+                    if let Some((instance_path, _)) =
+                        path.split_once('/').or_else(|| path.split_once('\\'))
+                    {
+                        if !base_dirs.contains_key(instance_path) {
+                            let override_dir = crate::state::instances::adapters::sqlite::instance_rows::get_game_dir_override_by_path(
+                                    instance_path,
+                                    &state.pool,
+                                )
+                                .await?;
+                            base_dirs.insert(
+                                instance_path.to_string(),
+                                state.directories.resolve_game_dir(
+                                    instance_path,
+                                    override_dir.as_deref(),
+                                ),
+                            );
+                        }
+                    }
+                }
 
                 async fn hash_file(
-                    instances_dir: &Path,
+                    state: &crate::State,
+                    base_dirs: &HashMap<String, PathBuf>,
                     key: String,
                 ) -> crate::Result<(CachedEntry, bool)> {
                     let path =
                         key.split_once('-').map(|x| x.1).unwrap_or_default();
 
-                    let full_path = instances_dir.join(path);
+                    // Absolute keys (directly associated instances) point at
+                    // the linked installation itself; joining would strip the
+                    // base, so use them as-is. `Path::join` would actually
+                    // replace the base for absolute paths, but the split below
+                    // destroys the leading separator first.
+                    let full_path = if std::path::Path::new(path).is_absolute()
+                    {
+                        PathBuf::from(path)
+                    } else {
+                        let (base_dir, relative) = match path
+                            .split_once('/')
+                            .or_else(|| path.split_once('\\'))
+                        {
+                            Some((instance_path, relative)) => {
+                                let base_dir = base_dirs
+                                    .get(instance_path)
+                                    .cloned()
+                                    .unwrap_or_else(|| {
+                                        state.directories.instances_dir()
+                                    });
+                                (base_dir, relative.to_string())
+                            }
+                            None => (
+                                state.directories.instances_dir(),
+                                path.to_string(),
+                            ),
+                        };
+                        base_dir.join(relative)
+                    };
 
                     let mut file = tokio::fs::File::open(&full_path).await?;
                     let size = file.metadata().await?.len();
@@ -2732,7 +2797,7 @@ impl CachedEntry {
 
                 use futures::stream::StreamExt;
                 let results: Vec<_> = futures::stream::iter(keys)
-                    .map(|x| hash_file(&instances_dir, x.to_string()))
+                    .map(|x| hash_file(&state, &base_dirs, x))
                     .buffer_unordered(64) // hash 64 files at once
                     .collect::<Vec<_>>()
                     .await

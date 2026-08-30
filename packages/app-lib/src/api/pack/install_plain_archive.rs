@@ -293,12 +293,15 @@ pub(crate) async fn install_plain_archive_with_reporter(
         reporter.cancellation_token(),
         archive_path,
         base_folder,
-        instance_path,
+        instance_path.clone(),
     )
     .await?;
 
-    crate::launcher::install_minecraft_for_instance_id_with_reporter(
+    let local_source =
+        crate::launcher::download::LocalRuntimeSource::discover(&instance_path);
+    crate::launcher::install_minecraft_for_instance_id_with_local_source(
         &instance_id,
+        local_source,
         false,
         Some(reporter.clone()),
         crate::launcher::InstanceCompletionPolicy::DeferToInstallJob,

@@ -118,9 +118,7 @@ function getDisplayArgs(preset: JavaArgumentPreset): string {
 function getActivePresets(value: string): JavaArgumentPreset[] {
 	const trimmed = value.trimStart()
 	const matches = presets.value
-		.filter((preset) =>
-			preset.detect ? preset.detect(trimmed) : trimmed.startsWith(preset.args),
-		)
+		.filter((preset) => (preset.detect ? preset.detect(trimmed) : trimmed.startsWith(preset.args)))
 		.sort((a, b) => {
 			const aIsAuto = a.id === 'gc-auto' ? 1 : 0
 			const bIsAuto = b.id === 'gc-auto' ? 1 : 0
@@ -353,9 +351,7 @@ onBeforeUnmount(() => {
 						:aria-expanded="!isGroupCollapsed(groupEntry.group)"
 						:aria-label="
 							formatMessage(
-								isGroupCollapsed(groupEntry.group)
-									? messages.expandGroup
-									: messages.collapseGroup,
+								isGroupCollapsed(groupEntry.group) ? messages.expandGroup : messages.collapseGroup,
 							)
 						"
 						@click="toggleGroupCollapsed(groupEntry.group)"
@@ -413,7 +409,10 @@ onBeforeUnmount(() => {
 											{{ getAutoVerifiedLabel(preset) }}
 										</p>
 									</div>
-									<ButtonStyled :type="isPresetActive(preset) ? 'standard' : 'outlined'" color="brand">
+									<ButtonStyled
+										:type="isPresetActive(preset) ? 'standard' : 'outlined'"
+										color="brand"
+									>
 										<button
 											type="button"
 											:disabled="isPresetActive(preset)"
@@ -430,43 +429,43 @@ onBeforeUnmount(() => {
 								</div>
 								<template v-if="preset.id !== 'gc-auto' || showAutoDetails">
 									<div class="flex items-center gap-2">
-									<div class="h-px min-w-0 flex-1 bg-surface-4" />
-									<button
-										v-tooltip="formatMessage(messages.presetArguments)"
-										type="button"
-										:aria-label="formatMessage(messages.presetArguments)"
-										class="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-full border-none bg-transparent text-secondary transition-colors hover:bg-surface-5 hover:text-contrast"
-										@click="togglePresetCollapsed(preset)"
-									>
-										<DropdownIcon
-											class="size-4 transition-transform"
-											:class="{ 'rotate-180': !isPresetCollapsed(preset) }"
-											aria-hidden="true"
-										/>
-									</button>
-								</div>
-								<Collapsible :collapsed="isPresetCollapsed(preset)">
-									<div class="flex items-start gap-2">
-										<code
-											class="min-w-0 flex-1 overflow-x-auto whitespace-pre-wrap break-all text-left font-mono text-xs leading-relaxed text-primary"
-										>
-											{{ getDisplayArgs(preset) }}
-										</code>
+										<div class="h-px min-w-0 flex-1 bg-surface-4" />
 										<button
+											v-tooltip="formatMessage(messages.presetArguments)"
 											type="button"
 											:aria-label="formatMessage(messages.presetArguments)"
 											class="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-full border-none bg-transparent text-secondary transition-colors hover:bg-surface-5 hover:text-contrast"
-											@click="copyPresetArgs(preset)"
+											@click="togglePresetCollapsed(preset)"
 										>
-											<CheckIcon
-												v-if="copiedPresetId === preset.id"
-												class="size-4 text-green"
+											<DropdownIcon
+												class="size-4 transition-transform"
+												:class="{ 'rotate-180': !isPresetCollapsed(preset) }"
 												aria-hidden="true"
 											/>
-											<CopyIcon v-else class="size-4" aria-hidden="true" />
 										</button>
 									</div>
-								</Collapsible>
+									<Collapsible :collapsed="isPresetCollapsed(preset)">
+										<div class="flex items-start gap-2">
+											<code
+												class="min-w-0 flex-1 overflow-x-auto whitespace-pre-wrap break-all text-left font-mono text-xs leading-relaxed text-primary"
+											>
+												{{ getDisplayArgs(preset) }}
+											</code>
+											<button
+												type="button"
+												:aria-label="formatMessage(messages.presetArguments)"
+												class="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-full border-none bg-transparent text-secondary transition-colors hover:bg-surface-5 hover:text-contrast"
+												@click="copyPresetArgs(preset)"
+											>
+												<CheckIcon
+													v-if="copiedPresetId === preset.id"
+													class="size-4 text-green"
+													aria-hidden="true"
+												/>
+												<CopyIcon v-else class="size-4" aria-hidden="true" />
+											</button>
+										</div>
+									</Collapsible>
 								</template>
 							</div>
 						</div>
@@ -487,12 +486,7 @@ onBeforeUnmount(() => {
 }
 
 .tags-fade-right {
-	mask-image: linear-gradient(
-		to right,
-		black 0%,
-		black calc(100% - 1.25rem),
-		transparent 100%
-	);
+	mask-image: linear-gradient(to right, black 0%, black calc(100% - 1.25rem), transparent 100%);
 	-webkit-mask-image: linear-gradient(
 		to right,
 		black 0%,

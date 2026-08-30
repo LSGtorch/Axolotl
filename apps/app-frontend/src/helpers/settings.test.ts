@@ -7,10 +7,7 @@ import {
 	setLastBrowseContentDisplayMode,
 	setLastBrowseContentProjectType,
 } from './browse-display-mode.ts'
-import {
-	getLastLibraryDisplayMode,
-	setLastLibraryDisplayMode,
-} from './library-display-mode.ts'
+import { getLastLibraryDisplayMode, setLastLibraryDisplayMode } from './library-display-mode.ts'
 import { getSidebarExpanded, setSidebarExpanded } from './sidebar-state.ts'
 
 const storageKey = 'axolotl-browse-content-display-mode'

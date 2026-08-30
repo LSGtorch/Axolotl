@@ -60,6 +60,8 @@ pub struct InstallCreateInstanceRequest {
     pub adjuncts: Vec<theseus::data::LoaderComponent>,
     pub icon_path: Option<String>,
     pub link: Option<InstanceLink>,
+    #[serde(default)]
+    pub game_dir_override: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -107,6 +109,7 @@ pub async fn install_create_instance(
             Some(link) => link.into_core()?,
             None => theseus::data::InstanceLink::Unmanaged,
         },
+        request.game_dir_override,
     )
     .await?)
 }
@@ -162,9 +165,10 @@ pub async fn install_import_instance(
     game_version: Option<String>,
     loader: Option<ModLoader>,
     loader_version: Option<String>,
+    game_dir_override: Option<String>,
 ) -> Result<InstallJobSnapshot> {
     tracing::debug!(
-        "install_import_instance called: launcher_type={launcher_type:?} base_path={} instance_folder={} instance_path={:?} symlink={symlink} game_version={game_version:?} loader={loader:?} loader_version={loader_version:?}",
+        "install_import_instance called: launcher_type={launcher_type:?} base_path={} instance_folder={} instance_path={:?} symlink={symlink} game_version={game_version:?} loader={loader:?} loader_version={loader_version:?} game_dir_override={game_dir_override:?}",
         base_path.display(),
         instance_folder,
         instance_path,
@@ -192,6 +196,7 @@ pub async fn install_import_instance(
         game_version,
         loader,
         loader_version,
+        game_dir_override,
     )
     .await?)
 }
@@ -324,8 +329,13 @@ pub async fn install_job_dismiss(job_id: Uuid) -> Result<()> {
 }
 
 #[tauri::command]
-pub async fn install_job_support_details(job_id: Uuid) -> Result<String> {
-    Ok(theseus::install::job_support_details(job_id).await?)
+pub async fn install_job_support_details(job_id: String) -> Result<String> {
+    let Ok(uuid) = Uuid::parse_str(&job_id) else {
+        // Synthetic, frontend-tracked jobs (e.g. server downloads) use non-UUID
+        // identifiers and do not expose backend diagnostic details.
+        return Ok(String::new());
+    };
+    Ok(theseus::install::job_support_details(uuid).await?)
 }
 
 #[derive(Deserialize, Default)]
@@ -420,6 +430,6 @@ pub async fn download_history_clear() -> Result<u64> {
 }
 
 #[tauri::command]
-pub async fn download_job_support_details(job_id: Uuid) -> Result<String> {
+pub async fn download_job_support_details(job_id: String) -> Result<String> {
     install_job_support_details(job_id).await
 }

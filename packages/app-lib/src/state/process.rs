@@ -10,7 +10,7 @@ use quick_xml::Reader;
 use quick_xml::events::Event;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::fmt::Debug;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -29,6 +29,88 @@ const LAUNCHER_LOG_PATH: &str = "launcher_log.txt";
 const LOG_BUFFER_CAPACITY: usize = 50_000;
 const PROCESS_INITIALIZATION_TIMEOUT: std::time::Duration =
     std::time::Duration::from_secs(15);
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct CrashReportSnapshot {
+    readable: bool,
+    files: BTreeMap<String, (u64, Option<std::time::SystemTime>)>,
+}
+
+async fn snapshot_crash_reports(path: &Path) -> CrashReportSnapshot {
+    let mut snapshot = CrashReportSnapshot {
+        readable: true,
+        files: BTreeMap::new(),
+    };
+    let mut entries = match tokio::fs::read_dir(path).await {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return snapshot;
+        }
+        Err(error) => {
+            tracing::warn!(
+                "Failed to read crash reports directory {}: {error}",
+                path.display()
+            );
+            snapshot.readable = false;
+            return snapshot;
+        }
+    };
+    loop {
+        let entry = match entries.next_entry().await {
+            Ok(Some(entry)) => entry,
+            Ok(None) => break,
+            Err(error) => {
+                tracing::warn!(
+                    "Failed to scan crash reports directory {}: {error}",
+                    path.display()
+                );
+                snapshot.readable = false;
+                break;
+            }
+        };
+        let metadata = match entry.metadata().await {
+            Ok(metadata) if metadata.is_file() => metadata,
+            Ok(_) => continue,
+            Err(_) => {
+                snapshot.readable = false;
+                continue;
+            }
+        };
+        snapshot.files.insert(
+            entry.file_name().to_string_lossy().to_string(),
+            (metadata.len(), metadata.modified().ok()),
+        );
+    }
+    snapshot
+}
+
+fn crash_reports_changed(
+    before: &CrashReportSnapshot,
+    after: &CrashReportSnapshot,
+) -> bool {
+    !before.readable || !after.readable || before.files != after.files
+}
+
+async fn record_post_upgrade_launch_best_effort(
+    instance_id: &str,
+    clean: bool,
+) {
+    let Ok(state) = crate::State::get().await else {
+        return;
+    };
+    if let Err(error) =
+        crate::state::instances::commands::record_instance_post_upgrade_launch(
+            instance_id,
+            clean,
+            &state.pool,
+        )
+        .await
+    {
+        tracing::warn!(
+            "Failed to update post-upgrade launch state for {instance_id}: {error}"
+        );
+    }
+}
 
 struct LogRingBuffer {
     lines: VecDeque<String>,
@@ -238,6 +320,7 @@ impl ProcessManager {
                         &log_path,
                         &format!("\n# Process exited with status: {exit_status}\n"),
                     );
+                    record_post_upgrade_launch_best_effort(instance_id, false).await;
                     return Err(crate::ErrorKind::LauncherError(format!(
                         "Minecraft exited before launcher initialization completed ({exit_status}). Check the selected Java version, wrapper command, and launcher log.",
                     ))
@@ -245,6 +328,7 @@ impl ProcessManager {
                 }
                 _ = tokio::time::sleep(PROCESS_INITIALIZATION_TIMEOUT) => {
                     let _ = process.child.kill().await;
+                    record_post_upgrade_launch_best_effort(instance_id, false).await;
                     return Err(crate::ErrorKind::LauncherError(
                         "Minecraft launcher initialization did not respond within 15 seconds. Check the selected Java version and wrapper command."
                             .to_string(),
@@ -256,8 +340,24 @@ impl ProcessManager {
         if let Err(error) = initialization_result {
             tracing::error!("Failed to run post-process init: {error}");
             let _ = process.child.kill().await;
+            record_post_upgrade_launch_best_effort(instance_id, false).await;
             return Err(error);
         }
+
+        let crash_reports_before = match crate::State::get().await {
+            Ok(state) => Some(
+                snapshot_crash_reports(
+                    &state.directories.crash_reports_dir(instance_path),
+                )
+                .await,
+            ),
+            Err(error) => {
+                tracing::warn!(
+                    "Failed to snapshot crash reports before launch: {error}"
+                );
+                None
+            }
+        };
 
         self.processes.insert(process.metadata.uuid, process);
 
@@ -267,6 +367,7 @@ impl ProcessManager {
             logs_folder,
             post_exit_command,
             metadata.uuid,
+            crash_reports_before,
         ));
 
         emit_process(
@@ -828,6 +929,7 @@ impl Process {
         logs_folder: PathBuf,
         post_exit_command: Option<String>,
         uuid: Uuid,
+        crash_reports_before: Option<CrashReportSnapshot>,
     ) -> crate::Result<()> {
         async fn update_playtime(
             last_updated_playtime: &mut Instant,
@@ -888,6 +990,7 @@ impl Process {
 
         // Wait on current Minecraft Child
         let mc_exit_status;
+        let mut process_missing = false;
         let mut last_updated_playtime = Instant::now();
 
         let state = crate::State::get().await?;
@@ -912,6 +1015,7 @@ impl Process {
                 }
             } else {
                 mc_exit_status = ExitStatus::default();
+                process_missing = true;
                 break;
             }
 
@@ -935,6 +1039,19 @@ impl Process {
 
         // Now fully complete- update playtime one last time
         update_playtime(&mut last_updated_playtime, &instance_id, true).await;
+
+        let crash_reports_after = snapshot_crash_reports(
+            &state.directories.crash_reports_dir(&instance_path),
+        )
+        .await;
+        let clean_launch = mc_exit_status.success()
+            && !manually_killed
+            && !process_missing
+            && crash_reports_before.as_ref().is_some_and(|before| {
+                !crash_reports_changed(before, &crash_reports_after)
+            });
+        record_post_upgrade_launch_best_effort(&instance_id, clean_launch)
+            .await;
 
         // Publish play time update
         // Allow failure, it will be stored locally and sent next time
@@ -966,6 +1083,19 @@ impl Process {
             tracing::warn!("Failed to write exit status to log file: {}", e);
         }
 
+        if mc_exit_status.success()
+            && !manually_killed
+            && let Err(error) =
+                crate::api::logs::save_successful_mod_snapshot(&instance_id)
+                    .await
+        {
+            tracing::warn!(
+                %error,
+                instance = %instance_id,
+                "Failed to save successful launch Mod snapshot"
+            );
+        }
+
         emit_process(
             &instance_id,
             uuid,
@@ -990,15 +1120,50 @@ impl Process {
                     .into_iter();
 
                 if let Some(command) = cmd.next() {
+                    // The post-exit hook runs in the instance's game working
+                    // directory, which honours a per-instance override.
+                    let game_dir = crate::state::instances::adapters::sqlite::instance_rows::get_instance_path_and_game_dir_override_by_id(
+                        &instance_id,
+                        &state.pool,
+                    )
+                    .await?
+                    .map(|(path, override_dir)| {
+                        state
+                            .directories
+                            .resolve_game_dir(&path, override_dir.as_deref())
+                    })
+                    .unwrap_or_else(|| {
+                        state.directories.instances_dir().join(&instance_path)
+                    });
                     let mut command = Command::new(command);
-                    command.args(cmd).current_dir(
-                        state.directories.instances_dir().join(&instance_path),
-                    );
+                    command.args(cmd).current_dir(game_dir);
                     command.spawn().map_err(IOError::from)?;
                 }
             }
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod post_upgrade_tests {
+    use super::*;
+
+    #[test]
+    fn new_or_modified_crash_report_marks_session_changed() {
+        let before = CrashReportSnapshot {
+            readable: true,
+            files: BTreeMap::from([("old.txt".to_string(), (10, None))]),
+        };
+        let unchanged = before.clone();
+        let mut added = before.clone();
+        added.files.insert("new.txt".to_string(), (20, None));
+        let mut modified = before.clone();
+        modified.files.insert("old.txt".to_string(), (11, None));
+
+        assert!(!crash_reports_changed(&before, &unchanged));
+        assert!(crash_reports_changed(&before, &added));
+        assert!(crash_reports_changed(&before, &modified));
     }
 }

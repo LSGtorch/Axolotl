@@ -84,6 +84,7 @@ import InstallToPlayModal from '@/components/ui/modal/InstallToPlayModal.vue'
 import InstanceIconPickerModal from '@/components/ui/modal/InstanceIconPickerModal.vue'
 import JavaDownloadConfirmationModal from '@/components/ui/modal/JavaDownloadConfirmationModal.vue'
 import ModpackAlreadyInstalledModal from '@/components/ui/modal/ModpackAlreadyInstalledModal.vue'
+import ModpackInstallModal from '@/components/ui/modal/ModpackInstallModal.vue'
 import PrivacyConsentModal from '@/components/ui/modal/PrivacyConsentModal.vue'
 import SurveyAnnouncementModal from '@/components/ui/modal/SurveyAnnouncementModal.vue'
 import UpdateToPlayModal from '@/components/ui/modal/UpdateToPlayModal.vue'
@@ -134,9 +135,12 @@ import {
 	exportErrorLogs,
 	getOS,
 	getUpdateSize,
+	isAptLinux,
 	isDev,
 	isElevated,
 	isNetworkMetered,
+	installAptUpdate,
+	restartApp,
 	setRestartAfterPendingUpdate,
 } from '@/helpers/utils.js'
 import { start_join_server, start_join_singleplayer_world } from '@/helpers/worlds.ts'
@@ -211,7 +215,10 @@ function toggleSidebar() {
 const forceSidebar = computed(
 	() => route.path.startsWith('/browse') || route.path.startsWith('/project'),
 )
-const sidebarVisible = computed(() => sidebarToggled.value || forceSidebar.value)
+const forceSidebarHidden = computed(() => route.path === '/settings')
+const sidebarVisible = computed(
+	() => !forceSidebarHidden.value && (sidebarToggled.value || forceSidebar.value),
+)
 const customBackgroundStyle = computed(() => {
 	// A custom image would sit between the desktop and the UI, defeating the
 	// transparent window entirely, so the two are mutually exclusive.
@@ -302,6 +309,7 @@ const onboardingReplay = ref(false)
 const nativeDecorations = ref(false)
 
 const os = ref('')
+const aptLinux = ref(false)
 const isDevEnvironment = ref(false)
 
 /**
@@ -938,6 +946,7 @@ async function setupApp() {
 	if (defaultPageRoute && defaultPageRoute !== '/') await router.push(defaultPageRoute)
 
 	os.value = await getOS()
+	aptLinux.value = await isAptLinux().catch(() => false)
 	const dev = await isDev()
 	isDevEnvironment.value = dev
 	pendingUpdateAnnouncementVersion.value = pending_update_toast_for_version
@@ -1331,10 +1340,9 @@ const {
 	handleCancel: handleContentInstallCancel,
 	setContentInstallModal,
 	setContentInstallPreviewModal,
-	setModpackAlreadyInstalledModal: setContentInstallModpackAlreadyInstalledModal,
-	handleModpackDuplicateCreateAnyway: handleContentInstallModpackDuplicateCreateAnyway,
-	handleModpackDuplicateGoToInstance: handleContentInstallModpackDuplicateGoToInstance,
-	handleModpackDuplicateCancel,
+	setModpackInstallModal: setContentInstallModpackInstallModal,
+	handleModpackInstall: handleContentInstallModpackInstall,
+	handleModpackInstallCancel: handleContentInstallModpackInstallCancel,
 	setCurseForgeManualDownloadsModal: setContentInstallCurseForgeManualDownloadsModal,
 	handleCurseForgeManualDownloadsImported: handleContentInstallCurseForgeManualDownloadsImported,
 	setIncompatibilityWarningModal: setContentIncompatibilityWarningModal,
@@ -1361,7 +1369,9 @@ const {
 const modInstallModal = ref()
 const contentInstallPreviewModal = ref<InstanceType<typeof ContentInstallPreviewModal> | null>(null)
 const modpackAlreadyInstalledModal = ref()
-const contentInstallModpackAlreadyInstalledModal = ref()
+const contentInstallModpackInstallModal = ref<InstanceType<typeof ModpackInstallModal> | null>(null)
+const handleContentInstallModpackDuplicateGoToInstance = (instanceId: string) =>
+	router.push(`/instance/${encodeURIComponent(instanceId)}`)
 const contentInstallCurseForgeManualDownloadsModal = ref()
 const addServerToInstanceModal = ref()
 const incompatibilityWarningModal = ref()
@@ -1450,6 +1460,14 @@ watch(
 	{ flush: 'post' },
 )
 
+watch(
+	incompatibilityWarningModal,
+	(modal) => {
+		dropIncompatibilityWarningModal.value = modal
+	},
+	{ flush: 'post' },
+)
+
 setupAuthProvider(credentials, async (_redirectPath) => {
 	if (AxolotlBrandConfig.capabilities.privateModrinthServices) await signIn()
 })
@@ -1517,10 +1535,11 @@ onMounted(() => {
 	error.setMinecraftAuthErrorModal(minecraftAuthErrorModal.value)
 
 	setContentIncompatibilityWarningModal(incompatibilityWarningModal.value)
+	dropIncompatibilityWarningModal.value = incompatibilityWarningModal.value
 	setContentInstallModal(modInstallModal.value)
 	setContentInstallPreviewModal(contentInstallPreviewModal.value)
 	contentSelection.setPreviewModal(contentInstallPreviewModal.value)
-	setContentInstallModpackAlreadyInstalledModal(contentInstallModpackAlreadyInstalledModal.value)
+	setContentInstallModpackInstallModal(contentInstallModpackInstallModal.value!)
 	setContentInstallCurseForgeManualDownloadsModal(
 		contentInstallCurseForgeManualDownloadsModal.value,
 	)
@@ -1651,6 +1670,10 @@ const updatePopupMessages = defineMessages({
 		id: 'app.update-popup.reload',
 		defaultMessage: 'Reload to update',
 	},
+	aptUpdate: {
+		id: 'app.update-popup.apt-update',
+		defaultMessage: 'Update',
+	},
 	download: {
 		id: 'app.update-popup.download',
 		defaultMessage: 'Download ({size})',
@@ -1711,7 +1734,28 @@ function showDelayedUpdatePopup() {
 		return
 	}
 
-	if (metered.value && !finishedDownloading.value) {
+	if (aptLinux.value && !finishedDownloading.value) {
+		// Debian and derivatives: the update installs through the package
+		// manager with a single pkexec prompt, so there is no download size.
+		addPopupNotification({
+			title: formatMessage(updatePopupMessages.updateAvailable),
+			text: formatMessage(updatePopupMessages.linuxBody, { version: update.version }),
+			type: 'info',
+			autoCloseMs: null,
+			buttons: [
+				{
+					label: formatMessage(updatePopupMessages.aptUpdate),
+					action: () => downloadAvailableAppUpdate(),
+					color: 'brand',
+				},
+				{
+					label: formatMessage(updatePopupMessages.changelog),
+					action: () => openAppUpdateChangelog(),
+					keepOpen: true,
+				},
+			],
+		})
+	} else if (metered.value && !finishedDownloading.value) {
 		addPopupNotification({
 			title: formatMessage(updatePopupMessages.updateAvailable),
 			text: formatMessage(updatePopupMessages.meteredBody, { version: update.version }),
@@ -1797,6 +1841,21 @@ async function performUpdateCheck() {
 	console.log(`Update ${update.version} is available.`)
 
 	metered.value = await isNetworkMetered()
+	if (aptLinux.value) {
+		// Debian and derivatives update through apt; the pkexec prompt is the
+		// single authorization for the whole repo setup + package install.
+		console.log('apt-managed system; updating through apt')
+		if (!metered.value) {
+			console.log('Starting apt update')
+			downloadUpdate(update)
+		} else {
+			console.log(`Metered connection detected, not auto-updating via apt.`)
+			markAppUpdateActionable(update.version)
+			scheduleDelayedUpdatePopup()
+		}
+		return 'available'
+	}
+
 	if (!metered.value) {
 		console.log('Starting download of update')
 		downloadUpdate(update)
@@ -1806,7 +1865,9 @@ async function performUpdateCheck() {
 		scheduleDelayedUpdatePopup()
 	}
 
-	getUpdateSize(update.rid).then((size) => (updateSize.value = size))
+	getUpdateSize(update.rid)
+		.then((size) => (updateSize.value = size))
+		.catch((error) => console.warn('Failed to fetch update size', error))
 	return 'available'
 }
 
@@ -1828,10 +1889,16 @@ async function downloadAvailableUpdate() {
 	return downloadUpdate(availableUpdate.value)
 }
 
-async function downloadUpdate(versionToDownload) {
+const UPDATE_SOURCE_ORDER = ['miawa', 'cnb', 'github']
+
+async function downloadUpdate(versionToDownload, source = getUpdateSource()) {
 	if (!versionToDownload) {
 		handleError(`Failed to download update: no version available`)
 		return
+	}
+
+	if (aptLinux.value) {
+		return installAptUpdateForVersion(versionToDownload)
 	}
 
 	if (downloading.value || appUpdateDownload.progress.value !== 0) {
@@ -1839,7 +1906,7 @@ async function downloadUpdate(versionToDownload) {
 		return
 	}
 
-	console.log(`Downloading update ${versionToDownload.version}`)
+	console.log(`Downloading update ${versionToDownload.version} from ${source}`)
 	downloading.value = true
 
 	try {
@@ -1854,24 +1921,92 @@ async function downloadUpdate(versionToDownload) {
 				markAppUpdateActionable(versionToDownload.version, 'downloaded')
 				scheduleDelayedUpdatePopup()
 			})
-			.catch((e) => {
+			.catch((error) => {
 				downloading.value = false
 				appUpdateDownload.progress.value = 0
-				handleError(e)
+				unlistenUpdateDownload?.().then(() => {
+					unlistenUpdateDownload = null
+				})
+				retryUpdateFromNextSource(source, error)
 			})
 		unlistenUpdateDownload = await subscribeToDownloadProgress(
 			appUpdateDownload,
 			versionToDownload.version,
 		)
-	} catch (e) {
+	} catch (error) {
 		downloading.value = false
 		appUpdateDownload.progress.value = 0
-		handleError(e)
+		retryUpdateFromNextSource(source, error)
 	}
+}
+
+// Debian and derivatives update through apt with a single pkexec prompt.
+// The package is installed directly, so there is no separate download step.
+async function installAptUpdateForVersion(versionToDownload) {
+	if (downloading.value) {
+		console.error(`Update ${versionToDownload.version} already installing`)
+		return
+	}
+
+	console.log(`Installing update ${versionToDownload.version} via apt`)
+	downloading.value = true
+	try {
+		await installAptUpdate(versionToDownload.version)
+		downloading.value = false
+		finishedDownloading.value = true
+		console.log('Finished installing via apt!')
+		markAppUpdateActionable(versionToDownload.version, 'downloaded')
+		scheduleDelayedUpdatePopup()
+	} catch (error) {
+		downloading.value = false
+		handleError(error)
+	}
+}
+
+// Any download failure falls back to the next update source in line
+// (miawa → cnb → github): re-check there and download its installer, so a
+// broken mirror never strands users on an outdated build.
+async function retryUpdateFromNextSource(failedSource, originalError) {
+	const startIndex = UPDATE_SOURCE_ORDER.indexOf(failedSource)
+	const remaining = startIndex >= 0 ? UPDATE_SOURCE_ORDER.slice(startIndex + 1) : []
+
+	for (const next of remaining) {
+		console.warn(`Update download failed via ${failedSource}; retrying via ${next}`, originalError)
+		try {
+			const fallbackUpdate = await checkAppUpdate(next)
+			if (!fallbackUpdate) {
+				console.warn(`No update available via ${next}`)
+				continue
+			}
+			availableUpdate.value = fallbackUpdate
+			updateSize.value = null
+			getUpdateSize(fallbackUpdate.rid)
+				.then((size) => (updateSize.value = size))
+				.catch((error) => console.warn('Failed to fetch update size', error))
+			await downloadUpdate(fallbackUpdate, next)
+			return
+		} catch (error) {
+			console.warn(`Update check via ${next} failed`, error)
+		}
+	}
+
+	handleError(originalError)
 }
 
 async function installUpdate() {
 	restarting.value = true
+
+	if (aptLinux.value) {
+		// The apt package was already installed by pkexec; just relaunch into
+		// the new version.
+		try {
+			await restartApp()
+		} catch (e) {
+			restarting.value = false
+			handleError(e)
+		}
+		return
+	}
 
 	try {
 		await setRestartAfterPendingUpdate(true)
@@ -2225,7 +2360,7 @@ provideAppUpdateDownloadProgress(appUpdateDownload)
 			>
 				{{ formatMessage(messages.authUnreachableBody) }}
 			</Admonition>
-			<div class="page-transition-grid">
+			<div class="page-transition-grid grid min-h-full">
 				<RouterView v-slot="{ Component, route }">
 					<Transition name="page-slide" :css="themeStore.getFeatureFlag('page_transitions')">
 						<div v-if="Component" :key="getPageTransitionKey(route)" class="page-transition-layer">
@@ -2241,7 +2376,7 @@ provideAppUpdateDownloadProgress(appUpdateDownload)
 			class="app-sidebar mt-px shrink-0 flex flex-col border-0 border-l-[1px] border-[--brand-gradient-border] border-solid"
 		>
 			<button
-				v-if="!forceSidebar"
+				v-if="!forceSidebar && !forceSidebarHidden"
 				v-tooltip.left="
 					sidebarToggled
 						? formatMessage(messages.collapseSidebar)
@@ -2266,8 +2401,8 @@ provideAppUpdateDownloadProgress(appUpdateDownload)
 				class="app-sidebar-scrollable relative min-h-0 flex-1"
 				data-overlayscrollbars-initialize
 			>
-				<div id="sidebar-teleport-target" class="sidebar-teleport-content"></div>
-				<div class="sidebar-default-content" :class="{ 'sidebar-enabled': sidebarVisible }">
+				<div id="sidebar-teleport-target" class="sidebar-teleport-content contents"></div>
+				<div class="sidebar-default-content hidden" :class="{ 'sidebar-enabled': sidebarVisible }">
 					<div class="p-4 border-0 border-b-[1px] border-[--brand-gradient-border] border-solid">
 						<h3 class="text-base text-primary font-medium m-0">
 							{{ formatMessage(messages.playingAs) }}
@@ -2322,7 +2457,6 @@ provideAppUpdateDownloadProgress(appUpdateDownload)
 		ref="modpackAlreadyInstalledModal"
 		@create-anyway="handleModpackDuplicateCreateAnyway"
 		@go-to-instance="handleModpackDuplicateGoToInstance"
-		@cancel="handleModpackDuplicateCancel"
 	/>
 	<AddServerToInstanceModal
 		ref="addServerToInstanceModal"
@@ -2346,10 +2480,10 @@ provideAppUpdateDownloadProgress(appUpdateDownload)
 		@cancel="handleIncompatibilityWarningCancel"
 		@search-compat="handleDropInstallSearchCompat"
 	/>
-	<ModpackAlreadyInstalledModal
-		ref="contentInstallModpackAlreadyInstalledModal"
-		@create-anyway="handleContentInstallModpackDuplicateCreateAnyway"
-		@go-to-instance="handleContentInstallModpackDuplicateGoToInstance"
+	<ModpackInstallModal
+		ref="contentInstallModpackInstallModal"
+		@install="handleContentInstallModpackInstall"
+		@cancel="handleContentInstallModpackInstallCancel"
 	/>
 	<CurseForgeManualDownloadsModal
 		ref="contentInstallCurseForgeManualDownloadsModal"
@@ -2810,14 +2944,6 @@ provideAppUpdateDownloadProgress(appUpdateDownload)
 	border-width: 1px;
 	border-style: solid;
 	pointer-events: none;
-}
-
-.sidebar-teleport-content {
-	display: contents;
-}
-
-.sidebar-default-content {
-	display: none;
 }
 
 .sidebar-teleport-content:empty + .sidebar-default-content.sidebar-enabled {

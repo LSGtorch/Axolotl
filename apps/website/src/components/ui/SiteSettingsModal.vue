@@ -345,7 +345,7 @@ onBeforeUnmount(() => {
 								</button>
 							</nav>
 
-							<div class="settings-brand">
+							<div class="settings-brand flex items-center gap-3 mt-auto px-1 pt-4 text-[var(--color-secondary)] text-[0.8rem]">
 								<img src="/axolotl.png" alt="" />
 								<div>
 									<strong>Axolotl Launcher</strong>
@@ -355,7 +355,7 @@ onBeforeUnmount(() => {
 						</aside>
 
 						<div class="settings-main">
-							<section v-if="activeTab === 'appearance'" class="settings-pane">
+							<section v-if="activeTab === 'appearance'" class="settings-pane px-8 pl-6 pb-12">
 								<div class="settings-section">
 									<h3>{{ formatMessage(messages.themeTitle) }}</h3>
 									<p>{{ formatMessage(messages.themeDescription) }}</p>
@@ -367,10 +367,10 @@ onBeforeUnmount(() => {
 									/>
 								</div>
 
-								<div class="settings-section interface-section">
+								<div class="settings-section mt-7 pt-6 border-t border-divider">
 									<h3>{{ formatMessage(messages.interfaceTitle) }}</h3>
 									<p>{{ formatMessage(messages.interfaceDescription) }}</p>
-									<div class="settings-toggles">
+									<div class="flex flex-col mt-3">
 										<div class="setting-row">
 											<label for="advanced-rendering">
 												<strong>{{ formatMessage(messages.advancedRenderingTitle) }}</strong>
@@ -396,7 +396,7 @@ onBeforeUnmount(() => {
 								</div>
 							</section>
 
-							<section v-else-if="activeTab === 'downloads'" class="settings-pane">
+							<section v-else-if="activeTab === 'downloads'" class="settings-pane px-8 pl-6 pb-12">
 								<div class="settings-section">
 									<h3>{{ formatMessage(messages.downloadsTitle) }}</h3>
 									<p>{{ formatMessage(messages.downloadsDescription) }}</p>
@@ -426,7 +426,7 @@ onBeforeUnmount(() => {
 								</div>
 							</section>
 
-							<section v-else-if="activeTab === 'language'" class="settings-pane language-pane">
+							<section v-else-if="activeTab === 'language'" class="settings-pane px-8 pl-6 pb-12 language-pane">
 								<div class="settings-section">
 									<h3>{{ formatMessage(messages.languageTitle) }}</h3>
 									<p>{{ formatMessage(messages.languageDescription) }}</p>
@@ -554,14 +554,6 @@ onBeforeUnmount(() => {
 }
 
 .settings-brand {
-	display: flex;
-	align-items: center;
-	gap: 0.75rem;
-	margin-top: auto;
-	padding: 1rem 0.25rem 0;
-	color: var(--color-secondary);
-	font-size: 0.8rem;
-
 	img {
 		width: 2.25rem;
 		height: 2.25rem;
@@ -606,10 +598,6 @@ onBeforeUnmount(() => {
 	pointer-events: none;
 }
 
-.settings-pane {
-	padding: 0 2rem 3rem 1.5rem;
-}
-
 .settings-section {
 	h3,
 	p {
@@ -626,18 +614,6 @@ onBeforeUnmount(() => {
 		margin-top: 0.25rem;
 		color: var(--color-base);
 	}
-}
-
-.interface-section {
-	margin-top: 1.75rem;
-	padding-top: 1.5rem;
-	border-top: 1px solid var(--color-divider);
-}
-
-.settings-toggles {
-	display: flex;
-	flex-direction: column;
-	margin-top: 0.75rem;
 }
 
 .setting-row {

@@ -291,6 +291,15 @@ pub struct ServerPayload {
     pub event: ServerPayloadType,
 }
 
+/// Classifies why a server process exited on its own, derived from the tail
+/// of its console output so the UI can react (e.g. offer the EULA dialog)
+/// instead of just reporting a dead process.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExitReason {
+    Eula,
+}
+
 #[derive(Serialize, Clone, Debug)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum ServerPayloadType {
@@ -305,6 +314,13 @@ pub enum ServerPayloadType {
     Started,
     Stopped {
         crashed: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reason: Option<ExitReason>,
+    },
+    #[allow(dead_code)]
+    EulaRequired {
+        server_id: String,
+        eula_text: String,
     },
 }
 

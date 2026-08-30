@@ -127,6 +127,8 @@ export interface SymlinkMethodInstance {
 	path?: string
 	launcherType?: string
 	basePath?: string
+	versionPath?: string
+	compatibleMode?: boolean
 }
 
 export type SymlinkImportMethod = 'copy' | 'symlink' | 'direct'
@@ -141,6 +143,7 @@ export interface SymlinkMethodChoice {
 	gameVersion?: string | null
 	loader?: string | null
 	loaderVersion?: string | null
+	gameDirOverride?: string | null
 }
 
 export interface InstanceImportProvider {
@@ -173,6 +176,7 @@ export interface InstanceImportProvider {
 			gameVersion?: string | null
 			loader?: string | null
 			loaderVersion?: string | null
+			gameDirOverride?: string | null
 		}[],
 	) => Promise<void>
 	/** Open a directory picker (platform-specific) */

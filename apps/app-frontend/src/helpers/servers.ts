@@ -2,6 +2,13 @@ import type { ServerTypeId } from '@modrinth/server'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 
+export interface ModpackInfoData {
+	projectId: string
+	versionId: string
+	title: string
+	iconUrl?: string
+}
+
 export interface ServerManifestData {
 	id: string
 	name: string
@@ -10,6 +17,9 @@ export interface ServerManifestData {
 	loaderVersion?: string
 	jarName?: string
 	iconPath?: string
+	modpack?: ModpackInfoData
+	installState?: 'incomplete' | 'failed' | null
+	installError?: string | null
 	javaPath?: string
 	memoryMb?: number
 	jvmArgs: string[]
@@ -26,15 +36,30 @@ export interface ServerInfoData extends ServerManifestData {
 	port: number | null
 }
 
+export type ServerExitReason = 'eula'
+
 export type ServerEventPayload =
 	| { event: 'log'; line: string }
 	| { event: 'download_progress'; downloaded: number; total?: number }
 	| { event: 'started' }
-	| { event: 'stopped'; crashed: boolean }
+	| { event: 'stopped'; crashed: boolean; reason?: ServerExitReason }
+	| { event: 'eula_required'; server_id: string; eula_text: string }
 
 export interface PortProcessInfoData {
 	pid: number
 	name?: string | null
+}
+
+export interface InstallModpackOptions {
+	mrpackUrl: string
+	mrpackSha1?: string
+	jarUrl: string
+	jarFilename: string
+	jarSha1?: string
+	modpackProjectId?: string
+	modpackVersionId?: string
+	modpackTitle?: string
+	modpackIconUrl?: string
 }
 
 const command = (name: string) => `plugin:servers|${name}`
@@ -73,6 +98,10 @@ export const servers = {
 			filename,
 			expectedSha1,
 		}),
+	installModpack: (serverId: string, options: InstallModpackOptions) =>
+		invoke<void>(command('servers_install_modpack'), { serverId, ...options }),
+	installForge: (serverId: string, mcVersion: string, build: string, javaPath?: string) =>
+		invoke<void>(command('servers_install_forge'), { serverId, mcVersion, build, javaPath }),
 	start: (
 		serverId: string,
 		options?: { javaPath?: string; memoryMb?: number; jvmArgs?: string[] },

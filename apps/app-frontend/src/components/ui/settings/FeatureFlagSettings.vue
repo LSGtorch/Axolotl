@@ -117,7 +117,7 @@ watch(
 				{{ formatMessage(messages.developerTools) }}
 			</h2>
 		</template>
-		<div class="developer-tools-actions">
+		<div class="flex flex-wrap gap-2 p-4">
 			<Button type="base" @click="triggerTestError">
 				<WrenchIcon /> {{ formatMessage(messages.testError) }}
 			</Button>
@@ -133,12 +133,3 @@ watch(
 		</div>
 	</SettingsSection>
 </template>
-
-<style scoped>
-.developer-tools-actions {
-	display: flex;
-	flex-wrap: wrap;
-	gap: var(--gap-sm);
-	padding: var(--gap-lg);
-}
-</style>

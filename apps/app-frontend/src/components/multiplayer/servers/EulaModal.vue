@@ -4,12 +4,8 @@ import { ButtonStyled, defineMessages, NewModal, useVIntl } from '@modrinth/ui'
 import { useTemplateRef } from 'vue'
 import type { ComponentExposed } from 'vue-component-type-helpers'
 
-const props = defineProps<{
-	text: string
-}>()
-
 const emit = defineEmits<{
-	accept: []
+	continue: []
 	decline: []
 }>()
 
@@ -19,11 +15,11 @@ const messages = defineMessages({
 	description: {
 		id: 'app.servers.eula.description',
 		defaultMessage:
-			'The server must accept the Minecraft End User License Agreement before it can start. Review the notice below:',
+			'By continuing, you agree to the Minecraft End User License Agreement (EULA). Please review the agreement below before proceeding.',
 	},
-	accept: {
-		id: 'app.servers.eula.accept',
-		defaultMessage: 'Accept and continue',
+	continue: {
+		id: 'app.servers.eula.continue',
+		defaultMessage: 'Continue',
 	},
 	decline: { id: 'app.servers.eula.decline', defaultMessage: 'Cancel' },
 })
@@ -42,10 +38,6 @@ defineExpose({
 			<p class="m-0 text-secondary">
 				{{ formatMessage(messages.description) }}
 			</p>
-			<pre
-				class="max-h-48 overflow-y-auto whitespace-pre-wrap rounded-xl bg-surface-2 p-4 font-mono text-sm text-contrast"
-				>{{ props.text }}</pre
-			>
 		</div>
 		<template #actions>
 			<div class="flex flex-col justify-end gap-2 sm:flex-row">
@@ -56,9 +48,9 @@ defineExpose({
 					</button>
 				</ButtonStyled>
 				<ButtonStyled color="brand">
-					<button type="button" @click="emit('accept')">
+					<button type="button" @click="emit('continue')">
 						<CheckIcon />
-						{{ formatMessage(messages.accept) }}
+						{{ formatMessage(messages.continue) }}
 					</button>
 				</ButtonStyled>
 			</div>

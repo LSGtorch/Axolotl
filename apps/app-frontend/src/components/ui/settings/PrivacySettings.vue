@@ -1,15 +1,6 @@
 <script setup lang="ts">
-import {
-	Combobox,
-	defineMessages,
-	getLogShareProvider,
-	injectNotificationManager,
-	type LogShareProvider,
-	setLogShareProvider,
-	Toggle,
-	useVIntl,
-} from '@modrinth/ui'
-import { computed, ref, watch } from 'vue'
+import { defineMessages, injectNotificationManager, Toggle, useVIntl } from '@modrinth/ui'
+import { computed, ref } from 'vue'
 
 import { getPrivacySettings, setDiscordRpcEnabled, setTelemetryEnabled } from '@/helpers/settings'
 
@@ -21,7 +12,6 @@ const { handleError } = injectNotificationManager()
 const privacy = ref(await getPrivacySettings())
 const telemetrySaving = ref(false)
 const discordSaving = ref(false)
-const selectedProvider = ref<LogShareProvider>(getLogShareProvider())
 const lastSaveState = ref<'idle' | 'saved' | 'error'>('idle')
 const retrySave = ref<(() => void) | undefined>()
 
@@ -48,71 +38,10 @@ const messages = defineMessages({
 		defaultMessage:
 			'Telemetry uses a random installation identifier. Error context is sanitized and limited before it leaves this device. Turning telemetry off clears pending reports immediately.',
 	},
-	logAnalysisTitle: {
-		id: 'app.settings.logs.title',
-		defaultMessage: 'Log analysis service',
-	},
-	logAnalysisDescription: {
-		id: 'app.settings.logs.description',
-		defaultMessage:
-			'Choose the service used to analyze and share Minecraft logs. LogShare.CN is preferred and mclo.gs is used as a fallback so sharing keeps working.',
-	},
-	auto: {
-		id: 'app.settings.logs.provider.auto',
-		defaultMessage: 'Automatic (recommended)',
-	},
-	autoDescription: {
-		id: 'app.settings.logs.provider.auto-description',
-		defaultMessage:
-			'Prefers LogShare.CN, automatically switching to mclo.gs when it is unavailable.',
-	},
-	logshare: {
-		id: 'app.settings.logs.provider.logshare',
-		defaultMessage: 'LogShare.CN',
-	},
-	logshareDescription: {
-		id: 'app.settings.logs.provider.logshare-description',
-		defaultMessage:
-			'Uses LogShare.CN for analysis and sharing, including AI analysis, falling back to mclo.gs when unavailable.',
-	},
-	mclogs: {
-		id: 'app.settings.logs.provider.mclogs',
-		defaultMessage: 'mclo.gs',
-	},
-	mclogsDescription: {
-		id: 'app.settings.logs.provider.mclogs-description',
-		defaultMessage: 'Uses mclo.gs for analysis and sharing. AI analysis is not available.',
-	},
 })
-
-const providerInfo: Record<LogShareProvider, { label: string; description: string }> = {
-	auto: {
-		label: formatMessage(messages.auto),
-		description: formatMessage(messages.autoDescription),
-	},
-	logshare: {
-		label: formatMessage(messages.logshare),
-		description: formatMessage(messages.logshareDescription),
-	},
-	mclogs: {
-		label: formatMessage(messages.mclogs),
-		description: formatMessage(messages.mclogsDescription),
-	},
-}
-
-const options = Object.entries(providerInfo).map(([value, info]) => ({
-	value,
-	label: info.label,
-}))
-
-const selectedInfo = computed(() => providerInfo[selectedProvider.value])
 const saveStatus = computed(() => {
 	if (telemetrySaving.value || discordSaving.value) return 'saving'
 	return lastSaveState.value
-})
-
-watch(selectedProvider, (provider) => {
-	setLogShareProvider(provider)
 })
 
 async function updateTelemetry(value: boolean) {
@@ -160,7 +89,7 @@ async function updateDiscordRpc(value: boolean) {
 </script>
 
 <template>
-	<div class="settings-page">
+	<div class="flex w-full flex-col gap-4">
 		<header class="settings-page-header">
 			<SettingsSaveStatus :status="saveStatus" :retry="retrySave" />
 		</header>
@@ -200,39 +129,14 @@ async function updateDiscordRpc(value: boolean) {
 		</div>
 
 		<p class="settings-page-note">{{ formatMessage(messages.dataHandling) }}</p>
-		<div class="settings-page-card">
-			<SettingsRow>
-				<template #label>
-					<span id="settings-target-privacy-log-analysis" tabindex="-1">
-						{{ formatMessage(messages.logAnalysisTitle) }}
-					</span>
-				</template>
-				<template #description>{{ formatMessage(messages.logAnalysisDescription) }}</template>
-				<template #control>
-					<Combobox
-						id="log-share-provider"
-						v-model="selectedProvider"
-						:name="formatMessage(messages.logAnalysisTitle)"
-						:options="options"
-					/>
-				</template>
-			</SettingsRow>
-			<p class="settings-page-note settings-page-note-inset">{{ selectedInfo.description }}</p>
-		</div>
 	</div>
 </template>
 
 <style scoped>
-.settings-page {
-	display: flex;
-	width: 100%;
-	flex-direction: column;
-	gap: var(--gap-lg);
-}
-
 .settings-page-card {
 	overflow: hidden;
-	border: 1px solid var(--settings-card-border, color-mix(in srgb, var(--surface-4) 72%, transparent));
+	border: 1px solid
+		var(--settings-card-border, color-mix(in srgb, var(--surface-4) 72%, transparent));
 	border-radius: var(--radius-md);
 	background: var(--surface-2);
 }
@@ -248,12 +152,5 @@ async function updateDiscordRpc(value: boolean) {
 	color: var(--color-secondary);
 	font-size: 0.8125rem;
 	line-height: 1.5;
-}
-
-.settings-page-note-inset {
-	margin: 0 var(--gap-lg) var(--gap-lg);
-	padding: var(--gap-md);
-	border-radius: var(--radius-sm);
-	background: var(--surface-3);
 }
 </style>

@@ -99,7 +99,7 @@ async function savePublicNodes() {
 				{{ formatMessage(messages.publicNodesDescription) }}
 			</p>
 		</template>
-		<div class="settings-content">
+		<div class="flex flex-col gap-3 p-4">
 			<StyledInput
 				id="terracotta-public-nodes"
 				v-model="publicNodesInput"
@@ -126,7 +126,7 @@ async function savePublicNodes() {
 			>
 				{{ formatMessage(messages.publicNodeInvalid, { node: parsedPublicNodes.invalidNode }) }}
 			</p>
-			<div class="settings-actions">
+			<div class="settings-actions flex justify-end pt-3">
 				<Button
 					type="colored"
 					color="brand"
@@ -144,17 +144,7 @@ async function savePublicNodes() {
 </template>
 
 <style scoped>
-.settings-content {
-	display: flex;
-	flex-direction: column;
-	gap: var(--gap-md);
-	padding: var(--gap-lg);
-}
-
 .settings-actions {
-	display: flex;
-	justify-content: flex-end;
-	padding-top: var(--gap-md);
 	border-top: 1px solid
 		var(--settings-divider, color-mix(in srgb, var(--surface-4) 55%, transparent));
 }

@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { XIcon } from '@modrinth/assets'
+import { ChevronDownIcon, XIcon } from '@modrinth/assets'
 import { Avatar, ButtonStyled, Checkbox, defineMessages, NewModal, useVIntl } from '@modrinth/ui'
+import { openUrl } from '@tauri-apps/plugin-opener'
 import { computed, ref } from 'vue'
 
 import { getActiveDependencyConflictIdentities } from '@/providers/content-selection-logic'
@@ -11,6 +12,8 @@ export interface ContentInstallPreviewDependency {
 	iconUrl?: string | null
 	versionNumber?: string
 	fileName?: string
+	description?: string
+	projectUrl?: string
 	requiredBy: string[]
 	alreadyInstalled: boolean
 	status?: 'installed' | 'included'
@@ -146,6 +149,18 @@ const messages = defineMessages({
 		id: 'app.content-install.preview.cancel',
 		defaultMessage: 'Cancel',
 	},
+	viewDetails: {
+		id: 'app.content-install.preview.view-details',
+		defaultMessage: 'View details',
+	},
+	openProjectPage: {
+		id: 'app.content-install.preview.open-project-page',
+		defaultMessage: 'Open project page',
+	},
+	descriptionUnavailable: {
+		id: 'app.content-install.preview.description-unavailable',
+		defaultMessage: 'No description available.',
+	},
 	install: {
 		id: 'app.content-install.preview.install',
 		defaultMessage: 'Install',
@@ -176,6 +191,7 @@ const messages = defineMessages({
 const modal = ref<InstanceType<typeof NewModal> | null>(null)
 const data = ref<ContentInstallPreviewData | null>(null)
 const selectedIds = ref<Set<string>>(new Set())
+const expandedDependencyIds = ref<Set<string>>(new Set())
 const removedPrimaryKeys = ref<Set<string>>(new Set())
 let settled = false
 let batchMode = false
@@ -265,6 +281,22 @@ function toggleAll(value: boolean) {
 	selectedIds.value = next
 }
 
+function hasDependencyDetails(dependency: ContentInstallPreviewDependency) {
+	return !!dependency.description || !!dependency.projectUrl
+}
+
+function toggleDependencyDetails(id: string) {
+	const next = new Set(expandedDependencyIds.value)
+	if (next.has(id)) next.delete(id)
+	else next.add(id)
+	expandedDependencyIds.value = next
+}
+
+async function openDependencyPage(dependency: ContentInstallPreviewDependency) {
+	if (!dependency.projectUrl) return
+	await openUrl(dependency.projectUrl)
+}
+
 function initialSelectedIds(value: ContentInstallPreviewData) {
 	if (!value.installDependencies) return new Set<string>()
 	return new Set(
@@ -308,6 +340,7 @@ function show(value: ContentInstallPreviewData): Promise<string[] | null> {
 	conflictPrompt.value = null
 	removedPrimaryKeys.value = new Set()
 	selectedIds.value = initialSelectedIds(value)
+	expandedDependencyIds.value = new Set()
 	settled = false
 	modal.value?.show()
 	return new Promise<string[] | null>((resolve) => {
@@ -326,13 +359,12 @@ function showBatch(
 	conflictPrompt.value = null
 	removedPrimaryKeys.value = new Set()
 	selectedIds.value = initialSelectedIds(value)
+	expandedDependencyIds.value = new Set()
 	settled = false
 	modal.value?.show()
 	return new Promise<ContentInstallBatchPreviewResult | null>((resolve) => {
 		resolveShow = (result) =>
-			resolve(
-				result && !Array.isArray(result) && typeof result !== 'boolean' ? result : null,
-			)
+			resolve(result && !Array.isArray(result) && typeof result !== 'boolean' ? result : null)
 	})
 }
 
@@ -363,6 +395,7 @@ defineExpose({ show, showBatch, showConflict })
 		:header="formatMessage(conflictMode ? messages.conflictHeader : messages.header)"
 		scrollable
 		max-content-height="70vh"
+		width="40rem"
 		max-width="40rem"
 		:on-hide="hide"
 	>
@@ -409,7 +442,7 @@ defineExpose({ show, showBatch, showConflict })
 				</div>
 			</div>
 		</div>
-		<div v-else-if="data" class="flex flex-col gap-4">
+		<div v-else-if="data" class="flex min-w-0 flex-col gap-4">
 			<div v-if="batchMode" class="flex flex-col gap-2">
 				<span class="font-semibold text-contrast">{{
 					formatMessage(messages.selectedContentHeader)
@@ -525,62 +558,118 @@ defineExpose({ show, showBatch, showConflict })
 						<div
 							v-for="dependency in group.dependencies"
 							:key="dependency.id"
-							class="flex items-start gap-3 rounded-xl border border-solid border-surface-4 bg-surface-2 p-3"
+							class="flex w-full min-w-0 flex-col overflow-hidden rounded-xl border border-solid border-surface-4 bg-surface-2"
 							:class="{ 'opacity-60': dependency.alreadyInstalled }"
 						>
-							<Checkbox
-								:model-value="selectedIds.has(dependency.id)"
-								class="mt-2 shrink-0"
-								@update:model-value="(value) => toggleDependency(dependency.id, value)"
-							/>
-							<Avatar
-								:src="dependency.iconUrl"
-								:alt="dependency.title"
-								size="2.5rem"
-								:tint-by="dependency.title"
-								no-shadow
-							/>
-							<div class="flex min-w-0 flex-1 flex-col gap-0.5">
-								<span class="truncate font-semibold text-contrast">{{ dependency.title }}</span>
-								<span v-if="dependency.versionNumber" class="truncate text-sm text-secondary">
-									{{ dependency.versionNumber }}
-								</span>
-								<span
-									v-if="dependency.requiredBy.length > 0"
-									class="truncate text-sm text-secondary"
-								>
-									{{
-										formatMessage(messages.requiredBy, {
-											projects: dependency.requiredBy.join(', '),
-										})
-									}}
-								</span>
-								<div class="flex flex-wrap gap-1 pt-1">
-									<span
-										v-if="dependency.versionMismatch"
-										class="rounded-full bg-warning-bg px-2 py-0.5 text-xs font-medium text-warning-text"
+							<div class="flex items-start gap-3 p-3">
+								<Checkbox
+									:model-value="selectedIds.has(dependency.id)"
+									class="mt-2 shrink-0"
+									@update:model-value="(value) => toggleDependency(dependency.id, value)"
+								/>
+								<Avatar
+									:src="dependency.iconUrl"
+									:alt="dependency.title"
+									size="2.5rem"
+									:tint-by="dependency.title"
+									no-shadow
+								/>
+								<div class="flex min-w-0 flex-1 flex-col gap-0.5">
+									<button
+										v-if="hasDependencyDetails(dependency)"
+										type="button"
+										class="group flex w-full min-w-0 cursor-pointer items-center gap-1 border-none bg-transparent p-0 text-left"
+										:aria-expanded="expandedDependencyIds.has(dependency.id)"
+										:aria-label="formatMessage(messages.viewDetails, { project: dependency.title })"
+										@click="toggleDependencyDetails(dependency.id)"
 									>
-										{{ formatMessage(messages.versionMismatch) }}
+										<span
+											v-tooltip="
+												dependency.description
+													? {
+															content: dependency.description,
+															placement: 'top',
+															popperClass: 'preview-dependency-tooltip',
+														}
+													: null
+											"
+											class="min-w-0 truncate font-semibold text-contrast group-hover:underline"
+										>
+											{{ dependency.title }}
+										</span>
+										<ChevronDownIcon
+											aria-hidden="true"
+											class="shrink-0 text-secondary transition-transform duration-150"
+											:class="{
+												'rotate-180': expandedDependencyIds.has(dependency.id),
+											}"
+										/>
+									</button>
+									<span v-else class="truncate font-semibold text-contrast">
+										{{ dependency.title }}
 									</span>
 									<span
-										v-if="dependency.selectionReason"
-										class="rounded-full bg-surface-4 px-2 py-0.5 text-xs font-medium text-secondary"
+										v-if="dependency.versionNumber"
+										class="min-w-0 truncate text-sm text-secondary"
 									>
-										{{ dependency.selectionReason }}
+										{{ dependency.versionNumber }}
 									</span>
 									<span
-										v-if="dependency.alreadyInstalled"
-										class="rounded-full bg-surface-4 px-2 py-0.5 text-xs font-medium text-secondary"
+										v-if="dependency.requiredBy.length > 0"
+										class="min-w-0 truncate text-sm text-secondary"
 									>
 										{{
-											formatMessage(
-												dependency.status === 'included'
-													? messages.alreadyIncluded
-													: messages.alreadyInstalled,
-											)
+											formatMessage(messages.requiredBy, {
+												projects: dependency.requiredBy.join(', '),
+											})
 										}}
 									</span>
+									<div class="flex flex-wrap gap-1 pt-1">
+										<span
+											v-if="dependency.versionMismatch"
+											class="rounded-full bg-warning-bg px-2 py-0.5 text-xs font-medium text-warning-text"
+										>
+											{{ formatMessage(messages.versionMismatch) }}
+										</span>
+										<span
+											v-if="dependency.selectionReason"
+											class="rounded-full bg-surface-4 px-2 py-0.5 text-xs font-medium text-secondary"
+										>
+											{{ dependency.selectionReason }}
+										</span>
+										<span
+											v-if="dependency.alreadyInstalled"
+											class="rounded-full bg-surface-4 px-2 py-0.5 text-xs font-medium text-secondary"
+										>
+											{{
+												formatMessage(
+													dependency.status === 'included'
+														? messages.alreadyIncluded
+														: messages.alreadyInstalled,
+												)
+											}}
+										</span>
+									</div>
 								</div>
+							</div>
+							<div
+								v-if="expandedDependencyIds.has(dependency.id)"
+								class="mb-3 flex w-auto min-w-0 flex-col gap-2.5 rounded-lg bg-surface-1 px-3 py-2.5 mx-3"
+							>
+								<p
+									v-if="dependency.description"
+									class="m-0 w-full min-w-0 text-sm leading-relaxed text-secondary [overflow-wrap:anywhere]"
+								>
+									{{ dependency.description }}
+								</p>
+								<p v-else class="m-0 w-full min-w-0 text-sm text-secondary">
+									{{ formatMessage(messages.descriptionUnavailable) }}
+								</p>
+								<ButtonStyled v-if="dependency.projectUrl" class="self-start" type="outlined">
+									<button type="button" @click="openDependencyPage(dependency)">
+										{{ formatMessage(messages.openProjectPage) }}
+									</button>
+								</ButtonStyled>
 							</div>
 						</div>
 					</div>
@@ -626,3 +715,11 @@ defineExpose({ show, showBatch, showConflict })
 		</template>
 	</NewModal>
 </template>
+
+<style>
+.preview-dependency-tooltip.v-popper--theme-tooltip .v-popper__inner {
+	max-width: 22rem;
+	white-space: normal;
+	overflow-wrap: anywhere;
+}
+</style>

@@ -99,10 +99,6 @@ const messages = defineMessages({
 		id: 'app.appearance-settings.accent-color.custom',
 		defaultMessage: 'Custom',
 	},
-	accentColorCustomPalette: {
-		id: 'app.appearance-settings.accent-color.custom-palette',
-		defaultMessage: 'Preset palette',
-	},
 	accentColorCustomHue: {
 		id: 'app.appearance-settings.accent-color.custom-hue',
 		defaultMessage: 'Hue',
@@ -345,21 +341,6 @@ const accentColorOptions: Array<{
 	{ value: 'purple', color: 'var(--color-purple)', label: messages.accentColorPurple },
 ]
 
-const CUSTOM_ACCENT_PALETTE = [
-	'#ef4444',
-	'#f97316',
-	'#f59e0b',
-	'#84cc16',
-	'#22c55e',
-	'#14b8a6',
-	'#06b6d4',
-	'#3b82f6',
-	'#6366f1',
-	'#a855f7',
-	'#ec4899',
-	'#f43f5e',
-]
-
 const isCustomAccent = computed(() => settings.value.accent_color.startsWith('custom:'))
 const customAccentHex = ref(parseCustomAccentColor(settings.value.accent_color) ?? '#db2777')
 const customAccentHexInput = ref(customAccentHex.value)
@@ -485,7 +466,7 @@ watch(
 )
 </script>
 <template>
-	<div class="settings-page">
+	<div class="flex flex-col gap-6">
 		<SettingsSection v-if="props.scope === 'interface'">
 			<template #header>
 				<h2
@@ -499,7 +480,7 @@ watch(
 					{{ formatMessage(messages.colorThemeDescription) }}
 				</p>
 			</template>
-			<div class="appearance-panel">
+			<div class="flex flex-col gap-4 p-4">
 				<ThemeSelector
 					:update-color-theme="
 						(theme: ColorTheme) => {
@@ -527,9 +508,9 @@ watch(
 					{{ formatMessage(messages.accentColorDescription) }}
 				</p>
 			</template>
-			<div class="appearance-panel">
+			<div class="flex flex-col gap-4 p-4 @container">
 				<div
-					class="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6"
+					class="grid grid-cols-6 gap-1 @2xl:gap-2"
 					role="radiogroup"
 					:aria-label="formatMessage(messages.accentColorTitle)"
 				>
@@ -539,7 +520,7 @@ watch(
 						type="button"
 						role="radio"
 						:aria-checked="settings.accent_color === accentColor.value"
-						class="flex min-w-0 items-center gap-2 rounded-lg border border-solid px-3 py-2.5 font-semibold transition-all active:scale-[0.97]"
+						class="flex min-w-0 items-center justify-center gap-2 rounded-lg border border-solid px-1 py-2.5 @2xl:px-2 @4xl:px-3 font-semibold transition-all active:scale-[0.97]"
 						:class="
 							settings.accent_color === accentColor.value
 								? 'border-brand bg-brand-highlight text-brand'
@@ -556,17 +537,17 @@ watch(
 							class="size-4 shrink-0 rounded-full ring-2 ring-white/20"
 							:style="{ backgroundColor: accentColor.color }"
 						/>
-						<span class="truncate">{{ formatMessage(accentColor.label) }}</span>
+						<span class="hidden truncate @xl:inline">{{ formatMessage(accentColor.label) }}</span>
 						<CheckIcon
 							v-if="settings.accent_color === accentColor.value"
-							class="ml-auto size-4 shrink-0"
+							class="ml-auto hidden size-4 shrink-0 @4xl:block"
 						/>
 					</button>
 					<button
 						type="button"
 						role="radio"
 						:aria-checked="isCustomAccent"
-						class="flex min-w-0 items-center gap-2 rounded-lg border border-solid px-3 py-2.5 font-semibold transition-all active:scale-[0.97]"
+						class="flex min-w-0 items-center justify-center gap-2 rounded-lg border border-solid px-1 py-2.5 @2xl:px-2 @4xl:px-3 font-semibold transition-all active:scale-[0.97]"
 						:class="
 							isCustomAccent
 								? 'border-brand bg-brand-highlight text-brand'
@@ -582,8 +563,10 @@ watch(
 									: 'conic-gradient(#ef4444, #f59e0b, #22c55e, #06b6d4, #6366f1, #ec4899, #ef4444)',
 							}"
 						/>
-						<span class="truncate">{{ formatMessage(messages.accentColorCustom) }}</span>
-						<CheckIcon v-if="isCustomAccent" class="ml-auto size-4 shrink-0" />
+						<span class="hidden truncate @xl:inline">{{
+							formatMessage(messages.accentColorCustom)
+						}}</span>
+						<CheckIcon v-if="isCustomAccent" class="ml-auto hidden size-4 shrink-0 @4xl:block" />
 					</button>
 				</div>
 
@@ -591,24 +574,7 @@ watch(
 					v-if="isCustomAccent"
 					class="rounded-lg border border-solid border-surface-4 bg-surface-3 p-4"
 				>
-					<div
-						class="flex flex-wrap gap-2"
-						role="group"
-						:aria-label="formatMessage(messages.accentColorCustomPalette)"
-					>
-						<button
-							v-for="presetColor in CUSTOM_ACCENT_PALETTE"
-							:key="presetColor"
-							type="button"
-							class="size-7 shrink-0 cursor-pointer rounded-full border-none ring-2 transition-transform hover:scale-110 active:scale-95"
-							:class="customAccentHex === presetColor ? 'ring-brand' : 'ring-white/20'"
-							:style="{ backgroundColor: presetColor }"
-							:aria-label="presetColor"
-							@click="applyCustomAccent(presetColor)"
-						/>
-					</div>
-
-					<label class="mt-4 block">
+					<label class="block">
 						<span class="text-sm font-semibold text-contrast">
 							{{ formatMessage(messages.accentColorCustomHue) }}
 						</span>
@@ -675,7 +641,7 @@ watch(
 					{{ formatMessage(messages.customBackgroundDescription) }}
 				</p>
 			</template>
-			<div class="appearance-panel appearance-panel--divided">
+			<div class="flex flex-col gap-4 p-4 appearance-panel--divided">
 				<div
 					class="relative h-44 overflow-hidden rounded-lg border border-solid border-surface-4 bg-surface-1"
 				>
@@ -1098,19 +1064,6 @@ watch(
 </template>
 
 <style scoped lang="scss">
-.settings-page {
-	display: flex;
-	flex-direction: column;
-	gap: var(--gap-xl);
-}
-
-.appearance-panel {
-	display: flex;
-	flex-direction: column;
-	gap: var(--gap-lg);
-	padding: var(--gap-lg);
-}
-
 .appearance-panel--divided {
 	border-bottom: 1px solid var(--settings-divider, var(--surface-4));
 }

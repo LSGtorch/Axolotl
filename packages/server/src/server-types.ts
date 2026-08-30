@@ -7,6 +7,7 @@ import type {
 } from './types.ts'
 
 const FABRIC_META_URL = 'https://meta.fabricmc.net/v2'
+const QUILT_META_URL = 'https://meta.quiltmc.org/v3'
 const PAPER_API_URL = 'https://fill.papermc.io/v3'
 const PAPER_PROJECT = 'paper'
 
@@ -21,36 +22,42 @@ export const SERVER_TYPES: Record<ServerTypeId, ServerTypeDefinition> = {
 		label: 'Vanilla',
 		installMode: 'direct',
 		needsLoaderVersion: false,
+		implemented: true,
 	},
 	fabric: {
 		id: 'fabric',
 		label: 'Fabric',
 		installMode: 'direct',
 		needsLoaderVersion: true,
+		implemented: true,
 	},
 	paper: {
 		id: 'paper',
 		label: 'Paper',
 		installMode: 'direct',
 		needsLoaderVersion: false,
+		implemented: true,
 	},
 	forge: {
 		id: 'forge',
 		label: 'Forge',
 		installMode: 'installer',
-		needsLoaderVersion: true,
+		needsLoaderVersion: false,
+		implemented: true,
 	},
 	neoforge: {
 		id: 'neoforge',
 		label: 'NeoForge',
 		installMode: 'installer',
 		needsLoaderVersion: true,
+		implemented: false,
 	},
 	quilt: {
 		id: 'quilt',
 		label: 'Quilt',
 		installMode: 'installer',
 		needsLoaderVersion: true,
+		implemented: false,
 	},
 }
 
@@ -59,7 +66,18 @@ export function listServerTypes(): ServerTypeDefinition[] {
 }
 
 export function isServerTypeSupported(type: ServerTypeId): boolean {
-	return SERVER_TYPES[type].installMode !== 'installer'
+	return SERVER_TYPES[type].implemented
+}
+
+/** Base URL of the Forge Maven repository hosting installer and launcher artifacts. */
+export const FORGE_MAVEN_URL = 'https://maven.minecraftforge.net/net/minecraftforge/forge'
+
+/** Base URL of the Forge web host that publishes the promotions manifest. */
+export const FORGE_FILES_URL = 'https://files.minecraftforge.net/net/minecraftforge/forge'
+
+/** URL of the Forge promotions manifest, mapping `<mc>-recommended`/`latest` to a build. */
+export function forgePromotionsSlimUrl(): string {
+	return `${FORGE_FILES_URL}/promotions_slim.json`
 }
 
 /** URL of the Fabric server launcher jar for a specific game/loader/installer combination. */
@@ -77,6 +95,23 @@ export function fabricInstallerVersionsUrl(): string {
 
 export function fabricLoaderVersionsForGameUrl(gameVersion: string): string {
 	return `${FABRIC_META_URL}/versions/loader/${gameVersion}`
+}
+
+/** URL of the Quilt server launcher jar for a specific game/loader/installer combination. */
+export function quiltServerJarUrl(
+	gameVersion: string,
+	loaderVersion: string,
+	installerVersion: string,
+): string {
+	return `${QUILT_META_URL}/versions/loader/${gameVersion}/${loaderVersion}/${installerVersion}/server/jar`
+}
+
+export function quiltInstallerVersionsUrl(): string {
+	return `${QUILT_META_URL}/versions/installer`
+}
+
+export function quiltLoaderVersionsForGameUrl(gameVersion: string): string {
+	return `${QUILT_META_URL}/versions/loader/${gameVersion}`
 }
 
 export function paperBuildsUrl(gameVersion: string): string {
@@ -103,6 +138,13 @@ export function resolveServerJar(
 			return {
 				url: fabricServerJarUrl(input.gameVersion, input.loaderVersion, input.installerVersion),
 				filename: 'fabric-server.jar',
+			}
+		}
+		case 'quilt': {
+			if (!input.loaderVersion || !input.installerVersion) return null
+			return {
+				url: quiltServerJarUrl(input.gameVersion, input.loaderVersion, input.installerVersion),
+				filename: 'quilt-server.jar',
 			}
 		}
 		case 'paper': {

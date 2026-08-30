@@ -317,6 +317,24 @@
 							</div>
 						</div>
 
+						<div v-if="method === 'symlink'" class="flex flex-col gap-2">
+							<span class="text-sm font-semibold text-contrast">
+								{{ formatMessage(messages.gameDirLabel) }}
+							</span>
+							<RadioButtons
+								v-model="gameDirMode"
+								:items="gameDirModeItems"
+								@update:model-value="setGameDirMode"
+							>
+								<template #default="{ item }">
+									{{ formatMessage(gameDirModeLabel(item)) }}
+								</template>
+							</RadioButtons>
+							<span v-if="gameDirOverride" class="text-sm text-secondary break-all">
+								{{ gameDirOverride }}
+							</span>
+						</div>
+
 						<div v-if="planError" class="text-xs text-danger">{{ planError }}</div>
 					</div>
 
@@ -400,6 +418,7 @@ import Chips from '#ui/components/base/Chips.vue'
 import Combobox, { type ComboboxOption } from '#ui/components/base/Combobox.vue'
 import HorizontalRule from '#ui/components/base/HorizontalRule.vue'
 import ProgressBar from '#ui/components/base/ProgressBar.vue'
+import RadioButtons from '#ui/components/base/RadioButtons.vue'
 import StyledInput from '#ui/components/base/StyledInput.vue'
 import TagItem from '#ui/components/base/TagItem.vue'
 import NewModal from '#ui/components/modal/NewModal.vue'
@@ -437,6 +456,18 @@ const messages = defineMessages({
 	method: {
 		id: 'drop.symlink_method.method',
 		defaultMessage: 'Import method',
+	},
+	gameDirLabel: {
+		id: 'drop.symlink_method.game-dir.label',
+		defaultMessage: 'Game directory',
+	},
+	gameDirIsolated: {
+		id: 'drop.symlink_method.game-dir.isolated',
+		defaultMessage: 'Version isolated',
+	},
+	gameDirNotIsolated: {
+		id: 'drop.symlink_method.game-dir.not-isolated',
+		defaultMessage: 'Version shared (.minecraft/)',
 	},
 	instance: {
 		id: 'drop.symlink_method.instance',
@@ -665,6 +696,7 @@ const instances = ref<SymlinkMethodInstance[]>([])
 const symlinkCapable = ref<'supported' | 'requires_admin' | 'unsupported'>('supported')
 const activeIndex = ref(0)
 const method = ref<'copy' | 'symlink' | 'direct' | null>(null)
+const gameDirMode = ref<'isolated' | 'not-isolated'>('isolated')
 const methodSectionRef = ref<HTMLElement | null>(null)
 const methodShake = ref(false)
 const gameVersion = ref('')
@@ -694,6 +726,23 @@ let rescanTimer: number | null = null
 
 const activeInstance = computed(() => instances.value[activeIndex.value])
 const activeSnapshot = computed(() => snapshots.value[activeIndex.value] ?? null)
+// The `.minecraft` root for the active instance: computed so the game-dir
+// override can be derived (isolated -> <root>/versions/<name>, shared -> <root>).
+const activeGameRoot = computed(
+	() =>
+		activeSnapshot.value?.minecraftRoot ||
+		activeInstance.value?.basePath ||
+		activeInstance.value?.path ||
+		null,
+)
+const gameDirOverride = computed(() => {
+	const root = activeGameRoot.value
+	if (method.value !== 'symlink' || !root) return null
+	if (gameDirMode.value === 'isolated') {
+		return activeInstance.value?.versionPath ?? activeInstance.value?.path ?? null
+	}
+	return root
+})
 const statsLoading = computed(() => Object.values(scanning.value).some(Boolean))
 const planError = computed(() => planErrors.value[activeIndex.value] ?? null)
 const pageAnimationClass = computed(() => (pageAnim.value ? `page-${pageAnim.value}` : ''))
@@ -808,6 +857,21 @@ function selectMethod(value: 'copy' | 'symlink' | 'direct') {
 	method.value = value
 }
 
+const gameDirModeItems = ['isolated', 'not-isolated'] as const
+
+function gameDirModeLabel(mode: (typeof gameDirModeItems)[number]) {
+	switch (mode) {
+		case 'isolated':
+			return messages.gameDirIsolated
+		default:
+			return messages.gameDirNotIsolated
+	}
+}
+
+function setGameDirMode(mode: (typeof gameDirModeItems)[number]) {
+	gameDirMode.value = mode
+}
+
 function resetChanges() {
 	if (!canReset.value) return
 	const snapshot = activeSnapshot.value
@@ -912,7 +976,10 @@ const statRows = computed(() =>
 )
 
 const confirmLabel = computed(() => {
-	if (method.value === 'direct' && !(instances.value.length > 1 && activeIndex.value < instances.value.length - 1)) {
+	if (
+		method.value === 'direct' &&
+		!(instances.value.length > 1 && activeIndex.value < instances.value.length - 1)
+	) {
 		return formatMessage(messages.importNow)
 	}
 	return instances.value.length > 1 && activeIndex.value < instances.value.length - 1
@@ -1212,6 +1279,7 @@ function handleConfirm() {
 	const choices: SymlinkMethodChoice[] = instances.value.map((instance, index) => {
 		const saved = instanceChoices.value[index]
 		const snapshot = snapshots.value[index] ?? null
+		const root = snapshot?.minecraftRoot || instance.basePath || instance.path || null
 		return {
 			instanceName: instance.name,
 			instancePath: instance.path,
@@ -1222,6 +1290,12 @@ function handleConfirm() {
 			loader: saved?.loader || importPlanDefaultLoader(snapshot?.loader) || null,
 			loaderVersion:
 				saved?.loaderVersion || importPlanDefaultLoaderVersion(snapshot?.loaderVersion) || null,
+			gameDirOverride:
+				method.value === 'symlink' && root
+					? gameDirMode.value === 'isolated'
+						? (instance.versionPath ?? instance.path ?? null)
+						: root
+					: null,
 		}
 	})
 
@@ -1279,6 +1353,7 @@ function show(options: {
 	pageAnim.value = null
 	internalUpdating.value = true
 	activeIndex.value = 0
+	gameDirMode.value = 'isolated'
 	resetActiveFields()
 	internalUpdating.value = false
 	isOpen.value = true

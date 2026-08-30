@@ -1,5 +1,6 @@
 <template>
 	<div v-if="data">
+		<UpgradeProjectReturnBar />
 		<Teleport to="#sidebar-teleport-target">
 			<ProjectSidebarCompatibility
 				v-if="!isServerProject"
@@ -209,6 +210,25 @@
 								{{ installButtonLabel }}
 							</button>
 						</ButtonStyled>
+						<!-- 开服功能暂有问题，隐藏该按钮
+						<Transition name="start-server">
+							<ButtonStyled
+								v-if="serverCapableModpack"
+								key="modpack-start-server"
+								size="large"
+								type="outlined"
+							>
+								<button
+									v-tooltip="formatMessage(messages.startServer)"
+									type="button"
+									@click="openModpackServerFlow"
+								>
+									<ServerIcon />
+									{{ formatMessage(messages.startServer) }}
+								</button>
+							</ButtonStyled>
+						</Transition>
+						-->
 						<ButtonStyled size="large" circular type="transparent">
 							<OverflowMenu
 								:tooltip="`More options`"
@@ -229,8 +249,9 @@
 													),
 													action: () => void toggleFavorite(),
 												},
-										]
+											]
 										: []),
+									...getDependentSearchActions(),
 									{
 										id: 'open-in-browser',
 										link: `https://modrinth.com/${data.project_type}/${data.slug}`,
@@ -268,7 +289,8 @@
 									<HeartIcon /> {{ formatMessage(commonMessages.followButton) }}
 								</template>
 								<template v-if="favoriteSupported" #save>
-									<BookmarkIcon :class="{ 'text-brand': favoriteSaved }" />
+									<BookmarkFilledIcon v-if="favoriteSaved" class="text-brand" />
+									<BookmarkIcon v-else />
 									{{
 										formatMessage(
 											favoritePending
@@ -276,7 +298,7 @@
 												: favoriteSaved
 													? messages.removeFromFavorites
 													: messages.addToFavorites,
-											)
+										)
 									}}
 								</template>
 								<template #report> <ReportIcon /> Report </template>
@@ -317,6 +339,7 @@
 					:translations="translations"
 					:translation-mode="translationMode"
 					:translation-style="translationStyle"
+					:start-server="(version) => openModpackServerFlow(version)"
 				/>
 			</template>
 			<template v-else> Project data couldn't not be loaded. </template>
@@ -363,11 +386,13 @@
 			@browse-modpacks="() => {}"
 			@create="serverInstallContent.handleServerModpackFlowCreate"
 		/>
+		<CreateModpackServerModal ref="modpackServerModal" @created="handleModpackServerCreated" />
 	</div>
 </template>
 
 <script setup>
 import {
+	BookmarkFilledIcon,
 	BookmarkIcon,
 	BookOpenIcon,
 	CheckIcon,
@@ -378,9 +403,12 @@ import {
 	HeartIcon,
 	LanguagesIcon,
 	MoreVerticalIcon,
+	PackageIcon,
 	PlayIcon,
 	PlusIcon,
 	ReportIcon,
+	SearchIcon,
+	ServerIcon,
 	SpinnerIcon,
 	StopCircleIcon,
 } from '@modrinth/assets'
@@ -391,9 +419,12 @@ import {
 	commonProjectSettingsMessages,
 	CreationFlowModal,
 	defineMessages,
+	formatDependencyProjectFilterOption,
+	formatProjectTypeSentence,
 	getLatestMatchingInstallVersion,
 	getTargetInstallPreferences,
 	injectNotificationManager,
+	injectPopupNotificationManager,
 	NavTabs,
 	OverflowMenu,
 	ProjectBackgroundGradient,
@@ -418,6 +449,7 @@ import { useRoute, useRouter } from 'vue-router'
 
 import { SwapIcon } from '@/assets/icons/index.js'
 import BrowseInstanceSelector from '@/components/browse/BrowseInstanceSelector.vue'
+import CreateModpackServerModal from '@/components/multiplayer/servers/modpack/CreateModpackServerModal.vue'
 import ContextMenu from '@/components/ui/ContextMenu.vue'
 import InstanceIndicator from '@/components/ui/InstanceIndicator.vue'
 import {
@@ -464,9 +496,12 @@ import { createServerInstallContent } from '@/providers/setup/server-install-con
 import { useBreadcrumbs } from '@/store/breadcrumbs'
 import { useTheming } from '@/store/state.js'
 
+import UpgradeProjectReturnBar from './UpgradeProjectReturnBar.vue'
+
 dayjs.extend(relativeTime)
 
 const { addNotification, handleError } = injectNotificationManager()
+const popupNotificationManager = injectPopupNotificationManager()
 const { install: installVersion } = injectContentInstall()
 const contentSelection = injectContentSelection()
 const route = useRoute()
@@ -555,6 +590,34 @@ const messages = defineMessages({
 	favoritesLoading: {
 		id: 'app.content-favorites.loading',
 		defaultMessage: 'Updating favorites…',
+},
+	viewDependents: {
+		id: 'project.actions.view-dependents',
+		defaultMessage: 'View dependents',
+	},
+	viewProjectTypeDependents: {
+		id: 'project.actions.view-project-type-dependents',
+		defaultMessage: 'View {projectType} dependents',
+	},
+	viewModpacks: {
+		id: 'project.actions.view-modpacks',
+		defaultMessage: 'View modpacks',
+	},
+	startServer: {
+		id: 'app.project.modpack-server.start',
+		defaultMessage: 'Start server',
+	},
+	serverCreated: {
+		id: 'app.project.modpack-server.created-title',
+		defaultMessage: 'Server created',
+	},
+	serverCreatedDescription: {
+		id: 'app.project.modpack-server.created-description',
+		defaultMessage: '{name} is ready. Configure and start it in Multiplayer.',
+	},
+	openServer: {
+		id: 'app.project.modpack-server.open',
+		defaultMessage: 'Open server',
 	},
 })
 
@@ -578,6 +641,44 @@ const favoritePending = computed(() =>
 const favoriteSaved = computed(() =>
 	data.value ? contentFavorites.isFavorite('modrinth', data.value.id) : false,
 )
+
+const serverCapableModpack = computed(
+	() => data.value?.project_type === 'modpack' && data.value.server_side !== 'unsupported',
+)
+const modpackServerModal = ref()
+
+async function openModpackServerFlow(targetVersion) {
+	if (!data.value) return
+	// The version handed in by the UI can be an incomplete object that is missing
+	// `id`/`loaders`/`game_versions`/`files`. Re-fetch a complete version from the
+	// API so the modpack server flow has the data it needs (otherwise it misdetects
+	// the loader as Vanilla and fails with "No server launcher available").
+	let version = targetVersion
+	const isComplete = (v) => !!v && Array.isArray(v.game_versions) && Array.isArray(v.files)
+	if (!isComplete(version)) {
+		const versionId = version?.id ?? data.value.versions?.[0]
+		version = versionId ? await get_version(versionId, 'bypass').catch(() => null) : null
+	}
+	if (!version) return
+	modpackServerModal.value?.show(data.value, version)
+}
+
+function handleModpackServerCreated(serverId) {
+	popupNotificationManager.addPopupNotification({
+		title: formatMessage(messages.serverCreated),
+		text: formatMessage(messages.serverCreatedDescription, { name: data.value?.title ?? '' }),
+		type: 'success',
+		buttons: [
+			{
+				label: formatMessage(messages.openServer),
+				color: 'brand',
+				action: () => {
+					void router.push(`/multiplayer/servers/${encodeURIComponent(serverId)}`)
+				},
+			},
+		],
+	})
+}
 
 async function toggleFavorite() {
 	if (!data.value || !favoriteSupported.value || favoritePending.value) return
@@ -687,7 +788,9 @@ const projectBrowseBackUrl = computed(() => {
 	return buildBrowseHref(`/browse/${type}`)
 })
 const projectBackLabel = computed(() =>
-	formatMessage(instanceContentBackUrl.value ? messages.backToInstanceContent : messages.backToBrowse),
+	formatMessage(
+		instanceContentBackUrl.value ? messages.backToInstanceContent : messages.backToBrowse,
+	),
 )
 const fromBrowse = computed(
 	() => typeof route.query.b === 'string' && route.query.b.startsWith('/browse/'),
@@ -824,6 +927,44 @@ const installButtonTooltip = computed(() => {
 const showSwitchVersion = computed(() => !!instance.value && installed.value)
 const onVersionsPage = computed(() => route.name === 'Versions')
 
+function getDependentSearchTypes() {
+	if (!data.value) return []
+	if (data.value.project_type !== 'mod')
+		return [isServerProject.value ? 'server' : data.value.project_type]
+	const loaders = data.value.loaders ?? []
+	const types = []
+	if (loaders.some((loader) => ['fabric', 'forge', 'neoforge', 'quilt'].includes(loader)))
+		types.push('mod')
+	if (loaders.some((loader) => ['paper', 'purpur', 'spigot', 'folia'].includes(loader)))
+		types.push('plugin')
+	if (loaders.some((loader) => ['datapack'].includes(loader))) types.push('datapack')
+	return types.length ? types : ['mod']
+}
+
+function getDependentSearchActions() {
+	if (!data.value) return []
+	const types = getDependentSearchTypes()
+	return [
+		...types.map((projectType) => ({
+			id: formatMessage(
+				types.length === 1 ? messages.viewDependents : messages.viewProjectTypeDependents,
+				{ projectType: formatProjectTypeSentence(formatMessage, projectType) },
+			),
+			icon: SearchIcon,
+			link: `/browse/${projectType}?dep=${encodeURIComponent(formatDependencyProjectFilterOption(data.value.id, ['required']))}`,
+		})),
+		...(data.value.project_type !== 'modpack' && types.length !== 1
+			? [
+					{
+						id: formatMessage(messages.viewModpacks),
+						icon: PackageIcon,
+						link: `/browse/modpack?dep=${encodeURIComponent(formatDependencyProjectFilterOption(data.value.id, ['required']))}`,
+					},
+				]
+			: []),
+	]
+}
+
 function goToVersions() {
 	router.push(versionsHref.value)
 }
@@ -924,6 +1065,7 @@ async function fetchProjectData() {
 	serverStatusOnline.value = !!projectV3.value?.minecraft_java_server?.ping?.data
 
 	breadcrumbs.setName('Project', data.value.title)
+	breadcrumbs.setNameIcon('Project', data.value.icon_url)
 
 	fetchDeferredServerData(project)
 	void maybeAutoTranslate()
@@ -1253,12 +1395,6 @@ const handleOptionsClick = (args) => {
 </script>
 
 <style scoped lang="scss">
-.root-container {
-	display: flex;
-	flex-direction: row;
-	min-height: 100%;
-}
-
 .project-sidebar {
 	position: fixed;
 	width: calc(300px + 1.5rem);
@@ -1276,12 +1412,6 @@ const handleOptionsClick = (args) => {
 	}
 }
 
-.sidebar-card {
-	display: flex;
-	flex-direction: column;
-	gap: 1rem;
-}
-
 .content-container {
 	display: flex;
 	flex-direction: column;
@@ -1297,12 +1427,29 @@ const handleOptionsClick = (args) => {
 	gap: 0.5rem;
 }
 
-.stats {
-	display: flex;
-	flex-direction: column;
-	flex-wrap: wrap;
-	gap: var(--gap-md);
+.start-server-enter-active {
+	transition:
+		opacity 0.28s ease,
+		transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
 
+.start-server-enter-from {
+	opacity: 0;
+	transform: translateY(6px) scale(0.96);
+}
+
+.start-server-leave-active {
+	transition:
+		opacity 0.16s ease,
+		transform 0.16s ease;
+}
+
+.start-server-leave-to {
+	opacity: 0;
+	transform: translateY(4px) scale(0.97);
+}
+
+.stats {
 	.stat {
 		display: flex;
 		flex-direction: row;
@@ -1324,19 +1471,9 @@ const handleOptionsClick = (args) => {
 			min-width: var(--stat-strong-size);
 		}
 	}
-
-	.date {
-		margin-top: auto;
-	}
 }
 
 .tabs {
-	display: flex;
-	flex-direction: row;
-	gap: 1rem;
-	margin-bottom: var(--gap-md);
-	justify-content: space-between;
-
 	.tab {
 		display: flex;
 		flex-direction: row;

@@ -24,7 +24,7 @@ const settingsComponentFiles = {
 	'language-translation': ['./LanguageSettings.vue', './TranslationSettings.vue'],
 	ai: ['./AISettings.vue'],
 	'java-performance': ['./JavaSettings.vue'],
-	'launch-defaults': ['./DefaultInstanceSettings.vue'],
+	'launch-defaults': ['./DefaultInstanceSettings.vue', './CrashAnalysisAISettings.vue'],
 	'content-downloads': ['./AppearanceSettings.vue', './ResourceManagementSettings.vue'],
 	'network-multiplayer': ['./ResourceManagementSettings.vue', './MultiplayerSettings.vue'],
 	'storage-backups': ['./ResourceManagementSettings.vue', './StorageSettings.vue'],
@@ -95,7 +95,10 @@ test('tolerates small spelling errors and limits the result set', () => {
 		item: index,
 		text: `Setting ${index}`,
 	}))
-	assert.equal(filterSettingsSearchDocuments('setting', documents).length, MAX_SETTINGS_SEARCH_RESULTS)
+	assert.equal(
+		filterSettingsSearchDocuments('setting', documents).length,
+		MAX_SETTINGS_SEARCH_RESULTS,
+	)
 })
 
 test('settings search index has unique entries with categories', () => {

@@ -284,6 +284,9 @@
   "console.command.disabled-placeholder": {
     "defaultMessage": "命令输入已禁用"
   },
+  "console.command.placeholder": {
+    "defaultMessage": "发送命令"
+  },
   "console.command.server-not-running-placeholder": {
     "defaultMessage": "服务器未运行"
   },
@@ -295,6 +298,12 @@
   },
   "console.crash.finding.amd-driver.title": {
     "defaultMessage": "AMD 显卡驱动崩溃"
+  },
+  "console.crash.finding.connector-incompatible-fabric-mods.action": {
+    "defaultMessage": "移除或替换 Connector 错误中指出的 Fabric 模组，改用兼容 Forge 的替代版本。"
+  },
+  "console.crash.finding.connector-incompatible-fabric-mods.title": {
+    "defaultMessage": "Sinytra Connector 发现不兼容的 Fabric 模组"
   },
   "console.crash.finding.content-verification.action": {
     "defaultMessage": "从可信来源重新安装证据中指出的文件。"
@@ -313,6 +322,12 @@
   },
   "console.crash.finding.definite-mod.title": {
     "defaultMessage": "特定模组导致了崩溃"
+  },
+  "console.crash.finding.disk-space.action": {
+    "defaultMessage": "请释放实例所在磁盘的空间，然后重试启动。"
+  },
+  "console.crash.finding.disk-space.title": {
+    "defaultMessage": "磁盘空间不足"
   },
   "console.crash.finding.duplicate-mod.action": {
     "defaultMessage": "在 mods 文件夹中，每个模组只保留一个兼容版本。"
@@ -337,6 +352,12 @@
   },
   "console.crash.finding.fallback-title": {
     "defaultMessage": "未知诊断：{finding}"
+  },
+  "console.crash.finding.file-in-use.action": {
+    "defaultMessage": "关闭证据中指出的程序，包括其他启动器、备份工具或杀毒扫描，然后重试。"
+  },
+  "console.crash.finding.file-in-use.title": {
+    "defaultMessage": "另一个进程正在使用必需文件"
   },
   "console.crash.finding.forge-error.action": {
     "defaultMessage": "查看 Forge 故障证据，并在撤销近期更改后测试指出的模组。"
@@ -404,6 +425,12 @@
   "console.crash.finding.jvm-arguments.title": {
     "defaultMessage": "JVM 参数无效"
   },
+  "console.crash.finding.known-signature.action": {
+    "defaultMessage": "在修改实例前查看证据以及相关的 Minecraft、加载器、Java、图形或模组版本。"
+  },
+  "console.crash.finding.known-signature.title": {
+    "defaultMessage": "检测到已知崩溃特征"
+  },
   "console.crash.finding.large-resource-pack.action": {
     "defaultMessage": "禁用该资源包，或改用分辨率更低的版本。"
   },
@@ -424,6 +451,18 @@
   },
   "console.crash.finding.missing-dependency.title": {
     "defaultMessage": "模组依赖项缺失或不受支持"
+  },
+  "console.crash.finding.missing-embeddium.action": {
+    "defaultMessage": "请安装 Oculus 针对此 Minecraft 和 Forge 版本所需的 Embeddium 版本。"
+  },
+  "console.crash.finding.missing-embeddium.title": {
+    "defaultMessage": "Oculus 需要 Embeddium"
+  },
+  "console.crash.finding.missing-indium.action": {
+    "defaultMessage": "请安装与已安装 Fabric Loader 和 Sodium 版本兼容的 Indium 版本。"
+  },
+  "console.crash.finding.missing-indium.title": {
+    "defaultMessage": "模组需要 Indium"
   },
   "console.crash.finding.mixin-bootstrap.action": {
     "defaultMessage": "修复模组加载器安装，并确认所有模组均适用于已安装的加载器。"
@@ -570,10 +609,31 @@
     "defaultMessage": "崩溃报告怀疑一个或多个模组"
   },
   "console.crash.local-header": {
-    "defaultMessage": "{findings, plural, other {# 项本地诊断结果}}，来自 {sources, plural, other {# 个相关文件}}"
+    "defaultMessage": "{findings, plural, one {# 项本地诊断结果} other {# 项本地诊断结果}}，来自 {sources, plural, one {# 个相关文件} other {# 个相关文件}}"
+  },
+  "console.crash.mod-change": {
+    "defaultMessage": "{kind}：{filename}"
+  },
+  "console.crash.mod-change.added": {
+    "defaultMessage": "新增"
+  },
+  "console.crash.mod-change.modified": {
+    "defaultMessage": "已修改"
+  },
+  "console.crash.mod-change.removed": {
+    "defaultMessage": "已移除"
+  },
+  "console.crash.mod-changes.summary": {
+    "defaultMessage": "新增 {added} 项，移除 {removed} 项，修改 {modified} 项"
+  },
+  "console.crash.mod-changes.title": {
+    "defaultMessage": "上次成功启动后模组文件发生了变化"
   },
   "console.crash.problems-detected": {
-    "defaultMessage": "检测到 {count, plural, other {# 个问题}}"
+    "defaultMessage": "检测到 {count, plural, one {# 个问题} other {# 个问题}}"
+  },
+  "console.crash.windows-events.title": {
+    "defaultMessage": "相关 Windows 应用程序事件"
   },
   "console.delete-modal.confirmation": {
     "defaultMessage": "删除后无法恢复此日志文件。确定要继续吗？"
@@ -618,7 +678,7 @@
     "defaultMessage": "点击右上角「开始游戏」即可接收实时日志"
   },
   "console.empty.server-title": {
-    "defaultMessage": "欢迎使用 Modrinth 服务器！"
+    "defaultMessage": "欢迎使用 Axolotl 服务器！"
   },
   "console.empty.server-description": {
     "defaultMessage": "点击启动按钮即可启动服务器！"
@@ -914,6 +974,9 @@
   "content.page-layout.no-content-found": {
     "defaultMessage": "未找到内容。"
   },
+  "content.page-layout.view-dependencies": {
+    "defaultMessage": "查看依赖关系"
+  },
   "content.page-layout.search-placeholder": {
     "defaultMessage": "搜索到 {count, number}个{contentType}……"
   },
@@ -1076,6 +1139,21 @@
   "creation-flow.modal.custom-setup.content-loader.label": {
     "defaultMessage": "内容加载器"
   },
+  "creation-flow.modal.custom-setup.game-dir.choose-folder": {
+    "defaultMessage": "选择文件夹"
+  },
+  "creation-flow.modal.custom-setup.game-dir.isolated": {
+    "defaultMessage": "自定义 · 版本隔离 (.minecraft/versions/实例名/)"
+  },
+  "creation-flow.modal.custom-setup.game-dir.label": {
+    "defaultMessage": "游戏目录"
+  },
+  "creation-flow.modal.custom-setup.game-dir.managed": {
+    "defaultMessage": "Axolotl 目录"
+  },
+  "creation-flow.modal.custom-setup.game-dir.not-isolated": {
+    "defaultMessage": "自定义 · 版本共享 (.minecraft/)"
+  },
   "creation-flow.modal.custom-setup.game-version.load-failed": {
     "defaultMessage": "游戏版本加载失败"
   },
@@ -1090,6 +1168,9 @@
   },
   "creation-flow.modal.custom-setup.game-version-type.alpha": {
     "defaultMessage": "愚人节版"
+  },
+  "creation-flow.modal.custom-setup.game-version-type.ancient": {
+    "defaultMessage": "远古版"
   },
   "creation-flow.modal.custom-setup.game-version-type.release": {
     "defaultMessage": "正式版"
@@ -1282,6 +1363,9 @@
   },
   "files.delete-modal.warning.folder": {
     "defaultMessage": "该文件夹以及文件夹以下的所有内容将被永久删除。此操作无法被撤销。"
+  },
+  "files.editor.editor-unavailable-placeholder": {
+    "defaultMessage": "代码编辑器不可用"
   },
   "files.editor.failed-to-open-text": {
     "defaultMessage": "无法加载文件内容。"
@@ -3335,6 +3419,33 @@
   "report.item-type.version": {
     "defaultMessage": "版本"
   },
+  "search.filter.dependency_type.embedded": {
+    "defaultMessage": "内置"
+  },
+  "search.filter.dependency_type.optional": {
+    "defaultMessage": "可选"
+  },
+  "search.filter.dependency_type.required": {
+    "defaultMessage": "必需"
+  },
+  "search.filter.dependent_project": {
+    "defaultMessage": "依赖于：{project}"
+  },
+  "search.filter.dependent_project.search_placeholder": {
+    "defaultMessage": "搜索项目……"
+  },
+  "search.filter.excluded_projects": {
+    "defaultMessage": "排除：{projects}"
+  },
+  "search.filter.included_content.remove_project.tooltip": {
+    "defaultMessage": "移除项目"
+  },
+  "search.filter.included_content.search_placeholder": {
+    "defaultMessage": "搜索内容……"
+  },
+  "search.filter.included_projects": {
+    "defaultMessage": "包含：{projects}"
+  },
   "search.filter.locked.default": {
     "defaultMessage": "筛选已锁定"
   },
@@ -3376,6 +3487,12 @@
   },
   "search.filter_type.advanced.exclude_plugin": {
     "defaultMessage": "排除插件"
+  },
+  "search.filter_type.compatible_dependency_project_ids": {
+    "defaultMessage": "依赖于"
+  },
+  "search.filter_type.included_content": {
+    "defaultMessage": "包含内容"
   },
   "search.filter_type.environment": {
     "defaultMessage": "运行环境"
@@ -4337,6 +4454,21 @@
   "drop.symlink_method.copy_title": {
     "message": "复制文件"
   },
+  "drop.symlink_method.base_path": {
+    "message": "原目录"
+  },
+  "drop.symlink_method.direct_desc": {
+    "message": "不改变原有文件结构，直接使用原目录启动，可与其他启动器混用"
+  },
+  "drop.symlink_method.direct_paths": {
+    "message": "位置信息"
+  },
+  "drop.symlink_method.direct_title": {
+    "message": "直接关联"
+  },
+  "drop.symlink_method.import_now": {
+    "message": "直接导入"
+  },
   "drop.symlink_method.copy_desc": {
     "message": "复制到 Axolotl 目录"
   },
@@ -4381,6 +4513,15 @@
   },
   "drop.symlink_method.detecting": {
     "message": "检测中..."
+  },
+  "drop.symlink_method.game-dir.isolated": {
+    "message": "版本隔离"
+  },
+  "drop.symlink_method.game-dir.label": {
+    "message": "游戏目录"
+  },
+  "drop.symlink_method.game-dir.not-isolated": {
+    "message": "版本共享（.minecraft/）"
   },
   "drop.symlink_method.game_version": {
     "message": "游戏版本"
@@ -4510,10 +4651,5 @@
   },
   "drop.confirm.as-data-pack-desc": {
     "defaultMessage": "将数据包安装到存档"
-  },
-  "app.translation-settings.provider.deepl": "DeepL 翻译",
-  "app.settings.updates.miawa": "柠泽镜像",
-  "drop.symlink_method.import_now": {
-    "message": "直接导入"
   }
 }

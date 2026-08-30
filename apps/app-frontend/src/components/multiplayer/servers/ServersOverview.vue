@@ -25,7 +25,8 @@ import {
 const router = useRouter()
 const { formatMessage } = useVIntl()
 const { servers, isRefreshing, refresh, stopServer } = useServers()
-const { eulaModal, eulaText, tryStartServer, acceptEula, declineEula } = useServerLifecycle()
+const { eulaModal, eulaText, tryStartServer, acceptEula, declineEula, resumeInstall } =
+	useServerLifecycle()
 const createModal = useTemplateRef<ComponentExposed<typeof CreateServerModal>>('createModal')
 
 const messages = defineMessages({
@@ -62,7 +63,10 @@ onMounted(() => {
 	void refresh()
 })
 
-function openServer(id: string) {
+async function openServer(id: string) {
+	// Refresh first so the freshly created server is present in the shared store
+	// before ServerDetail mounts; otherwise it briefly shows "server not found".
+	await refresh().catch(() => {})
 	void router.push('/multiplayer/servers/' + encodeURIComponent(id))
 }
 
@@ -152,7 +156,13 @@ async function toggleRunning(server: ServerView) {
 			</ButtonStyled>
 		</EmptyState>
 
-		<div v-else class="server-grid" :class="{ 'library-cards': displayMode === 'cards' }">
+		<div
+			v-else
+			class="grid grid-cols-[repeat(auto-fill,minmax(16rem,1fr))] w-full max-w-[72rem] gap-3"
+			:class="{
+				'grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] gap-4': displayMode === 'cards',
+			}"
+		>
 			<ServerCard
 				v-for="entry in servers"
 				:key="entry.id"
@@ -160,25 +170,13 @@ async function toggleRunning(server: ServerView) {
 				:variant="displayMode === 'cards' ? 'library' : 'standard'"
 				@open="openServer(entry.id)"
 				@start-stop="toggleRunning(entry)"
+				@resume="resumeInstall(entry)"
 			/>
 		</div>
 
-		<CreateServerModal ref="createModal" />
-		<EulaModal ref="eulaModal" :text="eulaText" @accept="acceptEula" @decline="declineEula" />
+		<CreateServerModal ref="createModal" @created="openServer" />
+		<EulaModal ref="eulaModal" :text="eulaText" @continue="acceptEula" @decline="declineEula" />
 	</div>
 </template>
 
-<style lang="scss" scoped>
-.server-grid {
-	display: grid;
-	grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
-	width: 100%;
-	max-width: 72rem;
-	gap: 0.75rem;
-
-	&.library-cards {
-		grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr));
-		gap: 1rem;
-	}
-}
-</style>
+<style lang="scss" scoped></style>

@@ -27,6 +27,7 @@ paste = { workspace = true }
 path-util = { workspace = true }
 quartz_nbt = { workspace = true, features = ["serde"] }
 regex = { workspace = true }
+semver = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 serde_with = { workspace = true }

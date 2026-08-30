@@ -699,10 +699,7 @@ async function openFile(node: StudioTreeNode) {
 		if (/\.(dat|nbt)$/i.test(node.name)) {
 			let nextContent: string
 			try {
-				nextContent = readNbtContent(
-					await readBinary(node.path),
-					node.path,
-				)
+				nextContent = readNbtContent(await readBinary(node.path), node.path)
 			} catch (error) {
 				addNotification({
 					title: formatMessage(messages.nbtLoadFailed),
@@ -768,7 +765,8 @@ async function revealContextMenuItem() {
 }
 
 async function initialize() {
-	instanceRoot.value = props.server?.path ?? (props.instance ? await get_full_path(props.instance.id) : '')
+	instanceRoot.value =
+		props.server?.path ?? (props.instance ? await get_full_path(props.instance.id) : '')
 	resetDocuments()
 	await loadRoot()
 }

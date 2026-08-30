@@ -10,7 +10,7 @@ import {
 	useVIntl,
 	type VIntlFormatters,
 } from '#ui/composables/i18n'
-import { formatLoaderLabel } from '#ui/utils/loaders'
+import { defaultInstanceName } from '#ui/utils/loaders'
 
 import { createContext, injectModrinthClient } from '../../../providers'
 import type { ImportableLauncher } from '../../../providers/instance-import'
@@ -31,6 +31,7 @@ export type Difficulty = 'peaceful' | 'easy' | 'normal' | 'hard'
 export type LoaderVersionType = 'stable' | 'latest' | 'other'
 export type AdjunctLoader = 'optifine' | 'lite_loader'
 export type GeneratorSettingsMode = 'default' | 'flat' | 'custom'
+export type GameDirOverrideMode = 'builtin' | 'isolated' | 'not-isolated'
 export type LoaderManifest = LauncherMeta.Manifest.v0.Manifest
 export type LoaderManifestResolver = (
 	loader: string,
@@ -169,6 +170,8 @@ export interface CreationFlowContextValue {
 	instanceIcon: Ref<File | null>
 	instanceIconUrl: Ref<string | null>
 	instanceIconPath: Ref<string | null>
+	gameDirOverrideMode: Ref<GameDirOverrideMode>
+	gameDirOverride: Ref<string | null>
 
 	// Loader/version state (custom setup)
 	selectedLoader: Ref<string | null>
@@ -326,6 +329,13 @@ export function createCreationFlowContext(
 	const instanceIconUrl = ref<string | null>(null)
 	const instanceIconPath = ref<string | null>(null)
 
+	// Game directory isolation (instance flow only): how the instance's game
+	// working directory is laid out relative to a .minecraft root.
+	// `gameDirOverride` holds the picked `.minecraft` root; the finished path
+	// (root vs root/versions/<name>) is resolved at create time by mode.
+	const gameDirOverrideMode = ref<GameDirOverrideMode>('builtin')
+	const gameDirOverride = ref<string | null>(null)
+
 	// Revoke old object URL when icon is cleared to avoid memory leaks
 	watch(instanceIconUrl, (_newUrl, oldUrl) => {
 		if (oldUrl && oldUrl.startsWith('blob:')) {
@@ -349,8 +359,7 @@ export function createCreationFlowContext(
 		const version = selectedGameVersion.value
 		if (!version) return ''
 
-		const loaderName = loader ? formatLoaderLabel(loader) : 'Vanilla'
-		const baseName = `${loaderName} ${version}`
+		const baseName = defaultInstanceName(loader, version, selectedLoaderVersion.value)
 
 		const names = new Set(existingInstanceNames.value)
 		if (!names.has(baseName)) return baseName
@@ -502,6 +511,8 @@ export function createCreationFlowContext(
 		instanceIconUrl.value = null
 		instanceIcon.value = null
 		instanceIconPath.value = null
+		gameDirOverrideMode.value = 'builtin'
+		gameDirOverride.value = null
 
 		selectedLoader.value = null
 		selectedGameVersion.value = null
@@ -626,6 +637,8 @@ export function createCreationFlowContext(
 		instanceIcon,
 		instanceIconUrl,
 		instanceIconPath,
+		gameDirOverrideMode,
+		gameDirOverride,
 		selectedLoader,
 		selectedGameVersion,
 		loaderVersionType,

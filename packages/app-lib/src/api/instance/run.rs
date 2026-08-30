@@ -169,10 +169,10 @@ async fn run_credentials(
 
         if let Some(command) = cmd.next() {
             let full_path = crate::util::io::canonicalize(
-                state
-                    .directories
-                    .instances_dir()
-                    .join(&context.instance.path),
+                state.directories.resolve_game_dir(
+                    &context.instance.path,
+                    context.instance.game_dir_override.as_deref(),
+                ),
             )?;
             let mut command = Command::new(command);
             command.args(cmd).current_dir(&full_path).kill_on_drop(true);
@@ -304,10 +304,10 @@ async fn run_credentials(
     }
 
     if memory.automatic {
-        let instance_path = state
-            .directories
-            .instances_dir()
-            .join(&context.instance.path);
+        let instance_path = state.directories.resolve_game_dir(
+            &context.instance.path,
+            context.instance.game_dir_override.as_deref(),
+        );
         memory.maximum = crate::api::jre::automatic_memory_max_mb_for_instance(
             &instance_path,
             matches!(
@@ -319,6 +319,7 @@ async fn run_credentials(
                     | crate::state::ModLoader::Cleanroom
                     | crate::state::ModLoader::LiteLoader
                     | crate::state::ModLoader::LegacyFabric
+                    | crate::state::ModLoader::Babric
             ),
         );
         tracing::info!(

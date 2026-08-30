@@ -25,6 +25,10 @@ pub use model::{
     InstallJobSnapshot, InstallJobStatus, InstallModpackPreview,
     InstallPhaseDetails, InstallPhaseId, InstallPostInstallEdit,
     InstallProgress, InstallProgressSecondary, InstallRequest,
+    InstanceUpgradeCompatibilityWarning, InstanceUpgradeDisplayNames,
+    InstanceUpgradeExecution, InstanceUpgradeExternalChange,
+    InstanceUpgradeExternalChangeKind, InstanceUpgradeResult,
+    InstanceUpgradeWatchBaseline, SharedUpgradeMode,
 };
 pub use runner::{
     cancel_job, clear_job_history, create_instance,
@@ -35,5 +39,5 @@ pub use runner::{
     install_existing_instance, install_pack_to_existing_instance,
     job_support_details, list_jobs, repair_cache_and_retry_job, resume_job,
     retry_job, retry_job_as_new, skip_missing_content_and_resume_job,
-    update_managed_curseforge_modpack,
+    update_managed_curseforge_modpack, upgrade_unmanaged_instance,
 };

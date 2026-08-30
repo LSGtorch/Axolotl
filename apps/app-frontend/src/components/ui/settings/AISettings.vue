@@ -28,6 +28,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 
 import providerDescriptionsEn from '@/data/lobehub-provider-descriptions/en-US.json'
 import providerDescriptionsZh from '@/data/lobehub-provider-descriptions/zh-CN.json'
+import { sponsoredProviderWebsites } from '@/data/sponsoredProviders'
 import {
 	type AIProviderConfig,
 	type AIProviderDefinition,
@@ -98,6 +99,14 @@ const messages = defineMessages({
 	disabledProviders: {
 		id: 'app.ai-settings.disabled-providers',
 		defaultMessage: 'Disabled providers',
+	},
+	sponsoredProviders: {
+		id: 'app.ai-settings.sponsored-providers',
+		defaultMessage: 'Sponsored providers',
+	},
+	visitWebsite: {
+		id: 'app.ai-settings.visit-website',
+		defaultMessage: 'Visit website',
 	},
 	configuredModels: {
 		id: 'app.ai-settings.configured-models',
@@ -246,16 +255,26 @@ const filteredProviderItems = computed(() => {
 })
 
 const enabledProviderItems = computed(() =>
-	filteredProviderItems.value.filter(({ config }) => config.enabled),
+	filteredProviderItems.value.filter(
+		({ config, definition }) => config.enabled && !definition.sponsored,
+	),
+)
+const sponsoredProviderItems = computed(() =>
+	filteredProviderItems.value.filter(({ definition }) => definition.sponsored),
 )
 const disabledProviderItems = computed(() =>
-	filteredProviderItems.value.filter(({ config }) => !config.enabled),
+	filteredProviderItems.value.filter(
+		({ config, definition }) => !config.enabled && !definition.sponsored,
+	),
 )
 const allEnabledProviderItems = computed(() =>
-	providerItems.value.filter(({ config }) => config.enabled),
+	providerItems.value.filter(({ config, definition }) => config.enabled && !definition.sponsored),
+)
+const allSponsoredProviderItems = computed(() =>
+	providerItems.value.filter(({ definition }) => definition.sponsored),
 )
 const allDisabledProviderItems = computed(() =>
-	providerItems.value.filter(({ config }) => !config.enabled),
+	providerItems.value.filter(({ config, definition }) => !config.enabled && !definition.sponsored),
 )
 const providerDescriptions = computed<Record<string, string>>(() =>
 	locale.value.toLocaleLowerCase().startsWith('zh')
@@ -345,6 +364,17 @@ async function reloadState() {
 	await getAIState()
 	selectedTestModel.value =
 		selectedConfig.value?.models.find((model) => model.enabled)?.id ?? selectedTestModel.value
+}
+
+async function openSponsoredWebsite() {
+	if (!selectedDefinition.value?.sponsored) return
+	const url = sponsoredProviderWebsites[selectedDefinition.value.id]
+	if (!url) return
+	try {
+		await openUrl(url)
+	} catch (error) {
+		handleError(error)
+	}
 }
 
 async function setMasterEnabled(enabled: boolean) {
@@ -711,7 +741,7 @@ onMounted(async () => {
 				<button
 					v-if="!search.trim()"
 					type="button"
-					class="ai-provider-item ai-provider-all"
+					class="ai-provider-item mb-1"
 					:class="{ selected: selectedId === 'all' }"
 					@click="selectProvider('all')"
 				>
@@ -721,8 +751,8 @@ onMounted(async () => {
 					</span>
 				</button>
 
-				<div v-if="enabledProviderItems.length" class="ai-provider-group">
-					<p class="ai-provider-group-title">
+				<div v-if="enabledProviderItems.length" class="flex flex-none flex-col gap-1">
+					<p class="m-0 flex items-center justify-between px-2 pb-1 pt-2 text-xs font-semibold text-secondary">
 						<span>{{ formatMessage(messages.enabledProviders) }}</span>
 						<span>{{ enabledProviderItems.length }}</span>
 					</p>
@@ -742,8 +772,29 @@ onMounted(async () => {
 					</button>
 				</div>
 
-				<div v-if="disabledProviderItems.length" class="ai-provider-group">
-					<p class="ai-provider-group-title">
+				<div v-if="sponsoredProviderItems.length" class="flex flex-none flex-col gap-1">
+					<p class="m-0 flex items-center justify-between px-2 pb-1 pt-2 text-xs font-semibold text-secondary">
+						<span>{{ formatMessage(messages.sponsoredProviders) }}</span>
+						<span>{{ sponsoredProviderItems.length }}</span>
+					</p>
+					<button
+						v-for="{ definition: provider, config } in sponsoredProviderItems"
+						:key="provider.id"
+						type="button"
+						class="ai-provider-item"
+						:class="{ selected: selectedId === provider.id }"
+						@click="selectProvider(provider.id)"
+					>
+						<AIIcon kind="provider-avatar" :value="provider.id" :size="22" />
+						<span class="min-w-0 flex-1 truncate text-left text-sm font-semibold">
+							{{ provider.name }}
+						</span>
+						<span v-if="config.enabled" class="size-2 shrink-0 rounded-full bg-green" />
+					</button>
+				</div>
+
+				<div v-if="disabledProviderItems.length" class="flex flex-none flex-col gap-1">
+					<p class="m-0 flex items-center justify-between px-2 pb-1 pt-2 text-xs font-semibold text-secondary">
 						<span>{{ formatMessage(messages.disabledProviders) }}</span>
 						<span>{{ disabledProviderItems.length }}</span>
 					</p>
@@ -785,7 +836,7 @@ onMounted(async () => {
 					<h2>{{ formatMessage(messages.enabledProviders) }}</h2>
 					<span>{{ allEnabledProviderItems.length }}</span>
 				</div>
-				<div class="ai-provider-grid">
+				<div class="ai-provider-grid grid grid-cols-2 gap-3">
 					<article
 						v-for="{ definition, config } in allEnabledProviderItems"
 						:key="definition.id"
@@ -807,7 +858,55 @@ onMounted(async () => {
 								{{ providerDescription(definition.id) }}
 							</span>
 						</button>
-						<div class="ai-provider-card-footer">
+						<div class="mt-auto flex min-h-11 items-center justify-between gap-3 bg-transparent px-4 text-xs font-semibold text-secondary">
+							<span>
+								<span class="capitalize">{{ definition.protocol }}</span>
+								·
+								{{ formatMessage(messages.configuredModels, { count: config.models.length }) }}
+							</span>
+							<Toggle
+								:id="`ai-overview-provider-${definition.id}`"
+								:model-value="config.enabled"
+								:disabled="busy"
+								small
+								@update:model-value="setProviderEnabledById(definition.id, $event)"
+							/>
+						</div>
+					</article>
+				</div>
+			</div>
+
+			<div v-if="allSponsoredProviderItems.length" class="ai-overview-group">
+				<div class="ai-overview-heading">
+					<h2>{{ formatMessage(messages.sponsoredProviders) }}</h2>
+					<span>{{ allSponsoredProviderItems.length }}</span>
+				</div>
+				<div class="ai-provider-grid grid grid-cols-2 gap-3">
+					<article
+						v-for="{ definition, config } in allSponsoredProviderItems"
+						:key="definition.id"
+						class="ai-provider-card"
+					>
+						<button
+							type="button"
+							class="ai-provider-card-main"
+							@click="selectProvider(definition.id)"
+						>
+							<span class="ai-provider-card-title">
+								<template v-if="definition.sponsored">
+									<AIIcon kind="provider-wordmark" :value="definition.id" :size="28" />
+								</template>
+								<template v-else-if="definition.id === 'chatgpt'">
+									<AIIcon kind="provider-avatar" :value="definition.id" :size="24" />
+									<strong>{{ definition.name }}</strong>
+								</template>
+								<AIIcon v-else kind="provider-combine" :value="definition.id" :size="24" />
+							</span>
+							<span class="ai-provider-card-description">
+								{{ providerDescription(definition.id) }}
+							</span>
+						</button>
+						<div class="mt-auto flex min-h-11 items-center justify-between gap-3 bg-transparent px-4 text-xs font-semibold text-secondary">
 							<span>
 								<span class="capitalize">{{ definition.protocol }}</span>
 								·
@@ -830,7 +929,7 @@ onMounted(async () => {
 					<h2>{{ formatMessage(messages.disabledProviders) }}</h2>
 					<span>{{ allDisabledProviderItems.length }}</span>
 				</div>
-				<div class="ai-provider-grid">
+				<div class="ai-provider-grid grid grid-cols-2 gap-3">
 					<article
 						v-for="{ definition, config } in allDisabledProviderItems"
 						:key="definition.id"
@@ -852,7 +951,7 @@ onMounted(async () => {
 								{{ providerDescription(definition.id) }}
 							</span>
 						</button>
-						<div class="ai-provider-card-footer">
+						<div class="mt-auto flex min-h-11 items-center justify-between gap-3 bg-transparent px-4 text-xs font-semibold text-secondary">
 							<span>
 								<span class="capitalize">{{ definition.protocol }}</span>
 								·
@@ -885,6 +984,9 @@ onMounted(async () => {
 					</div>
 				</div>
 				<div class="flex shrink-0 items-center gap-2 text-sm font-semibold text-secondary">
+					<Button v-if="selectedDefinition.sponsored" type="quiet" @click="openSponsoredWebsite">
+						<ExternalIcon />{{ formatMessage(messages.visitWebsite) }}
+					</Button>
 					{{ formatMessage(selectedConfig.enabled ? messages.enabled : messages.disabled) }}
 					<Toggle
 						:id="`ai-provider-${selectedDefinition.id}`"
@@ -901,7 +1003,7 @@ onMounted(async () => {
 						!['bedrock', 'vertexai'].includes(selectedDefinition.id) ||
 						selectedDefinition.required_settings.length
 					"
-					class="ai-provider-connection-fields"
+					class="ai-provider-connection-fields grid grid-cols-1 gap-4 lg:grid-cols-2"
 				>
 					<label
 						v-if="!['bedrock', 'vertexai'].includes(selectedDefinition.id)"
@@ -1305,24 +1407,6 @@ onMounted(async () => {
 	touch-action: pan-y;
 }
 
-.ai-provider-group {
-	display: flex;
-	flex: none;
-	flex-direction: column;
-	gap: var(--gap-xs);
-}
-
-.ai-provider-group-title {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	margin: 0;
-	padding: var(--gap-sm) var(--gap-sm) var(--gap-xs);
-	color: var(--color-secondary);
-	font-size: 0.75rem;
-	font-weight: 600;
-}
-
 .ai-provider-item {
 	display: flex;
 	width: 100%;
@@ -1350,10 +1434,6 @@ onMounted(async () => {
 .ai-provider-item.selected {
 	background: var(--color-button-bg-selected);
 	color: var(--color-button-text-selected);
-}
-
-.ai-provider-all {
-	margin-bottom: var(--gap-xs);
 }
 
 .ai-master-switch {
@@ -1413,18 +1493,13 @@ onMounted(async () => {
 	font-weight: 700;
 }
 
-.ai-provider-grid {
-	display: grid;
-	grid-template-columns: repeat(2, minmax(0, 1fr));
-	gap: var(--gap-md);
-}
-
 .ai-provider-card {
 	display: flex;
 	min-width: 0;
 	flex-direction: column;
 	overflow: hidden;
-	border: 1px solid var(--settings-card-border, color-mix(in srgb, var(--surface-4) 72%, transparent));
+	border: 1px solid
+		var(--settings-card-border, color-mix(in srgb, var(--surface-4) 72%, transparent));
 	border-radius: var(--radius-md);
 	background: var(--surface-2);
 	transition:
@@ -1481,20 +1556,7 @@ onMounted(async () => {
 	font-size: 0.8125rem;
 	line-height: 1.45;
 	text-align: left;
-}
-
-.ai-provider-card-footer {
-	display: flex;
-	min-height: 2.75rem;
-	align-items: center;
-	justify-content: space-between;
-	gap: 0.75rem;
-	margin-top: auto;
-	padding: 0 1rem;
-	background: transparent;
-	color: var(--color-secondary);
-	font-size: 0.75rem;
-	font-weight: 600;
+	white-space: pre-line;
 }
 
 .ai-provider-detail {
@@ -1529,17 +1591,7 @@ onMounted(async () => {
 	scrollbar-gutter: stable;
 }
 
-.ai-provider-connection-fields {
-	display: grid;
-	grid-template-columns: repeat(1, minmax(0, 1fr));
-	gap: 1rem;
-}
-
 @media (min-width: 1024px) {
-	.ai-provider-connection-fields {
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-	}
-
 	.ai-provider-connection-fields > :first-child:last-child {
 		grid-column: span 2 / span 2;
 	}
@@ -1552,6 +1604,7 @@ onMounted(async () => {
 }
 
 .ai-provider-actions {
+	display: flex;
 	flex-direction: row;
 	flex-wrap: wrap;
 	align-items: end;
@@ -1595,7 +1648,8 @@ onMounted(async () => {
 	align-items: center;
 	gap: 0.5rem;
 	padding: 0.75rem;
-	border: 1px solid var(--settings-card-border, color-mix(in srgb, var(--surface-4) 72%, transparent));
+	border: 1px solid
+		var(--settings-card-border, color-mix(in srgb, var(--surface-4) 72%, transparent));
 	border-radius: var(--radius-sm);
 	background: var(--surface-2);
 }

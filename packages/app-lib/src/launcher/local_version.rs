@@ -328,6 +328,9 @@ pub fn discover_version_json(
 
 /// Compatibility entry point used by slice A validation. Generic local chains
 /// follow standard Mojang inheritance semantics and do not consume HMCL patches.
+/// Currently exercised by the direct-link resolution tests only, so the
+/// non-test build treats it as dead.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn load_version_chain(
     root: &Path,
     version_id: &str,

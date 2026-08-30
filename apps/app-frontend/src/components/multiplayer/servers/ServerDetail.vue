@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {
 	ArrowLeftIcon,
+	DownloadIcon,
 	FolderOpenIcon,
 	GlobeIcon,
 	LoaderCircleIcon,
@@ -37,6 +38,7 @@ import ServerFilesPanel from '@/components/multiplayer/servers/ServerFilesPanel.
 import ServerIcon from '@/components/multiplayer/servers/ServerIcon.vue'
 import ServerSettingsPanel from '@/components/multiplayer/servers/ServerSettingsPanel.vue'
 import { useMultiplayerSession } from '@/composables/useMultiplayerSession'
+import { serverSetupStatus } from '@/composables/useServerInstalls'
 import { useServerLifecycle } from '@/composables/useServerLifecycle'
 import { useServers } from '@/composables/useServers'
 import { type PortProcessInfoData, servers as serversApi } from '@/helpers/servers'
@@ -47,7 +49,8 @@ const router = useRouter()
 const serverId = route.params.id as string
 
 const { servers, refresh, stopServer } = useServers()
-const { eulaModal, eulaText, tryStartServer, acceptEula, declineEula } = useServerLifecycle()
+const { eulaModal, eulaText, tryStartServer, acceptEula, declineEula, resumeInstall } =
+	useServerLifecycle()
 const filePicker = injectFilePicker()
 const multiplayerSession = useMultiplayerSession()
 const { formatMessage } = useVIntl()
@@ -59,6 +62,17 @@ const messages = defineMessages({
 	back: { id: 'app.servers.detail.back', defaultMessage: 'Servers' },
 	start: { id: 'app.servers.action.start', defaultMessage: 'Start' },
 	stop: { id: 'app.servers.action.stop', defaultMessage: 'Stop' },
+	continueDownload: {
+		id: 'app.servers.action.continue-download',
+		defaultMessage: 'Continue download',
+	},
+	retryDownload: { id: 'app.servers.action.retry-download', defaultMessage: 'Retry download' },
+	downloading: { id: 'app.servers.status.downloading', defaultMessage: 'Downloading' },
+	downloadInterrupted: {
+		id: 'app.servers.status.download-interrupted',
+		defaultMessage: 'Download interrupted',
+	},
+	downloadFailed: { id: 'app.servers.status.download-failed', defaultMessage: 'Download failed' },
 	openFolder: { id: 'app.servers.action.open-folder', defaultMessage: 'Open folder' },
 	share: { id: 'app.servers.action.share', defaultMessage: 'Share online' },
 	notFound: {
@@ -108,6 +122,24 @@ const statusMeta = computed(() => (server.value ? SERVER_STATUS_META[server.valu
 const showStatus = computed(() =>
 	server.value ? isServerStatusVisible(server.value.status) : false,
 )
+
+const setupStatus = computed(() => (server.value ? serverSetupStatus(server.value) : null))
+
+/** Setup states take precedence over the runtime status tag. */
+const displayTag = computed(() => {
+	switch (setupStatus.value) {
+		case 'installing':
+			return { label: messages.downloading, color: 'text-orange' }
+		case 'interrupted':
+			return { label: messages.downloadInterrupted, color: 'text-orange' }
+		case 'failed':
+			return { label: messages.downloadFailed, color: 'text-red' }
+		default:
+			return showStatus.value && statusMeta.value
+				? { label: statusMeta.value.label, color: statusMeta.value.color }
+				: null
+	}
+})
 
 const isLoaded = ref(false)
 const hasSeenServer = ref(false)
@@ -261,7 +293,7 @@ async function shareOnline() {
 </script>
 
 <template>
-	<div class="multiplayer-fixed-render flex min-h-0 w-full flex-1 flex-col gap-3">
+	<div class="multiplayer-fixed-render flex h-full min-h-0 w-full flex-col gap-3">
 		<div v-if="!server && isLoaded && !hasSeenServer" class="text-secondary">
 			{{ formatMessage(messages.notFound) }}
 		</div>
@@ -312,9 +344,9 @@ async function shareOnline() {
 							<h2 class="m-0 truncate text-xl font-semibold text-contrast">
 								{{ server.name }}
 							</h2>
-							<TagItem v-if="showStatus && statusMeta" class="shrink-0">
-								<span :class="`font-semibold ${statusMeta.color}`">
-									{{ formatMessage(statusMeta.label) }}
+							<TagItem v-if="displayTag" class="shrink-0">
+								<span :class="`font-semibold ${displayTag.color}`">
+									{{ formatMessage(displayTag.label) }}
 								</span>
 							</TagItem>
 						</div>
@@ -335,16 +367,34 @@ async function shareOnline() {
 				</div>
 
 				<div class="flex flex-wrap gap-2">
-					<ButtonStyled v-if="server.status !== 'running' && !portConflict" color="brand">
-						<button type="button" @click="toggleRunning">
-							<PlayIcon />
-							{{ formatMessage(messages.start) }}
-						</button>
-					</ButtonStyled>
-					<ButtonStyled v-else-if="server.status === 'running'" color="red" type="outlined">
+					<ButtonStyled v-if="server.status === 'running'" color="red" type="outlined">
 						<button type="button" @click="toggleRunning">
 							<StopCircleIcon />
 							{{ formatMessage(messages.stop) }}
+						</button>
+					</ButtonStyled>
+					<ButtonStyled v-else-if="setupStatus === 'installing'" type="outlined">
+						<button type="button" disabled>
+							<LoaderCircleIcon class="animate-spin" />
+							{{ formatMessage(messages.downloading) }}
+						</button>
+					</ButtonStyled>
+					<ButtonStyled v-else-if="setupStatus === 'interrupted'" color="brand">
+						<button type="button" @click="resumeInstall(server)">
+							<DownloadIcon />
+							{{ formatMessage(messages.continueDownload) }}
+						</button>
+					</ButtonStyled>
+					<ButtonStyled v-else-if="setupStatus === 'failed'" color="brand">
+						<button type="button" @click="resumeInstall(server)">
+							<RefreshCwIcon />
+							{{ formatMessage(messages.retryDownload) }}
+						</button>
+					</ButtonStyled>
+					<ButtonStyled v-else-if="!portConflict" color="brand">
+						<button type="button" @click="toggleRunning">
+							<PlayIcon />
+							{{ formatMessage(messages.start) }}
 						</button>
 					</ButtonStyled>
 					<ButtonStyled v-if="server.status === 'running' && server.port" type="outlined">
@@ -398,6 +448,14 @@ async function shareOnline() {
 				</template>
 			</Admonition>
 
+			<Admonition
+				v-if="setupStatus === 'failed' && server.installError"
+				type="warning"
+				:header="formatMessage(messages.downloadFailed)"
+			>
+				{{ server.installError }}
+			</Admonition>
+
 			<NavTabs
 				mode="local"
 				:active-index="tabIndex"
@@ -405,7 +463,7 @@ async function shareOnline() {
 				@tab-click="tabIndex = $event"
 			/>
 
-			<div v-if="tabIndex === 0" class="max-h-[calc(100dvh-var(--top-bar-height))] min-h-0 flex-1">
+			<div v-if="tabIndex === 0" class="min-h-0 flex-1">
 				<ServerConsole :server="server" />
 			</div>
 			<div v-else-if="tabIndex === 1" class="min-h-0 flex-1 overflow-y-auto pr-1">
@@ -415,24 +473,33 @@ async function shareOnline() {
 				<ServerSettingsPanel :server="server" @deleted="router.push('/multiplayer/servers')" />
 			</div>
 
-			<EulaModal ref="eulaModal" :text="eulaText" @accept="acceptEula" @decline="declineEula" />
+			<EulaModal ref="eulaModal" :text="eulaText" @continue="acceptEula" @decline="declineEula" />
 		</template>
 	</div>
 </template>
 
 <style>
 /*
- * fixed 渲染模式（服务器详情页）：页面自身不滚动，控制台/设置区内部滚动，
- * 命令输入框始终停留在可视区域内。
- * 显式把 page-transition-grid 定高（100%），让整条 h-full 百分比高度链有确定参照，
- * 避免网格行高被日志内容撑开导致终端无限增高。
- * 只去掉 .app-viewport 的 scrollbar-gutter（避免多余的空滚动条轨道），
- * 保留 overflow: auto 作为兜底——内容万一超出视口仍可滚动，不会被裁切。
+ * fixed 渲染模式（服务器详情页）：控制台/设置区内部滚动。
+ * page-transition-grid 与 page-transition-layer 显式定高（100%）且允许
+ * 收缩（min-height: 0）。grid 必须显式声明 minmax(0, 1fr) 行——隐式 auto 行
+ * 以内容自适应，行高不 definite 时 layer 的百分比高度会退化为 auto，
+ * 整条 h-full 链随之失效，日志一多终端就会把页面撑出视口。
+ * app-viewport 保留 overflow: auto 作为兜底：控制台区块在有日志时固定为
+ * calc(100dvh - 80px)，高于可视剩余空间，页面需要可以滚动露出命令输入框；
+ * scrollbar-gutter: auto 避免滚动条出现/消失时布局跳动。
  */
-.app-viewport:has(.multiplayer-fixed-render) .page-transition-grid {
-	height: 100%;
-}
 .app-viewport:has(.multiplayer-fixed-render) {
 	scrollbar-gutter: auto;
+}
+
+.app-viewport:has(.multiplayer-fixed-render) .page-transition-grid,
+.app-viewport:has(.multiplayer-fixed-render) .page-transition-layer {
+	height: 100%;
+	min-height: 0;
+}
+
+.app-viewport:has(.multiplayer-fixed-render) .page-transition-grid {
+	grid-template-rows: minmax(0, 1fr);
 }
 </style>

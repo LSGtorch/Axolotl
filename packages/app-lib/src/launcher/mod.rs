@@ -10,7 +10,8 @@ use crate::instance::QuickPlayType;
 use crate::launcher::direct_link::{
     DirectLinkedLaunch, LinkedLauncherDialect, apply_hmcl_settings,
     conservative_launch_facts, extract_linked_natives, hmcl_java_candidates,
-    hmcl_with_global_fallback, merged_to_version_info, pcl_available_memory_gb,
+    hmcl_with_global_fallback, merged_to_version_info,
+    normalize_merged_loader_libraries, pcl_available_memory_gb,
     pcl_ram_profile,
 };
 use crate::launcher::download::{LocalRuntimeSource, download_log_config};
@@ -49,12 +50,27 @@ use winreg::{RegKey, enums::HKEY_CURRENT_USER};
 mod args;
 mod direct_ensure;
 mod direct_link;
+mod natives;
+
 pub mod download;
 pub mod jvm_args;
 pub mod language;
 pub mod local_version;
 pub mod optifine;
 pub mod quick_play_version;
+
+const UTF8_GAME_ARGUMENT_PREFIX: &str = "__THESEUS_UTF8__:";
+
+fn encode_game_argument(argument: String) -> String {
+    if argument.is_ascii() && !argument.starts_with(UTF8_GAME_ARGUMENT_PREFIX) {
+        argument
+    } else {
+        format!(
+            "{UTF8_GAME_ARGUMENT_PREFIX}{}",
+            BASE64_STANDARD.encode(argument.as_bytes())
+        )
+    }
+}
 
 #[cfg(target_os = "windows")]
 fn set_high_performance_gpu_preference(
@@ -503,6 +519,7 @@ fn installed_offline_loader_version(
             | ModLoader::Cleanroom
             | ModLoader::LiteLoader
             | ModLoader::LegacyFabric
+            | ModLoader::Babric
     ) {
         return None;
     }
@@ -592,10 +609,16 @@ pub async fn resolve_minecraft_manifest_with_cache(
     Ok((refreshed, idx))
 }
 
-async fn get_instance_full_path(instance_path: &str) -> crate::Result<PathBuf> {
+async fn get_instance_full_path(
+    instance_path: &str,
+    game_dir_override: Option<&str>,
+) -> crate::Result<PathBuf> {
     let state = State::get().await?;
-    let instances_dir = state.directories.instances_dir();
-    let full_path = io::canonicalize(instances_dir.join(instance_path))?;
+    let full_path = io::canonicalize(
+        state
+            .directories
+            .resolve_game_dir(instance_path, game_dir_override),
+    )?;
     Ok(full_path)
 }
 
@@ -725,7 +748,11 @@ async fn install_minecraft_with_local_source(
     .await?;
     emit_instance(&instance.id, InstancePayloadType::Edited).await?;
 
-    let instance_path = get_instance_full_path(&instance.path).await?;
+    let instance_path = get_instance_full_path(
+        &instance.path,
+        instance.game_dir_override.as_deref(),
+    )
+    .await?;
     if let Some(reporter) = &reporter {
         reporter
             .update(
@@ -1419,7 +1446,11 @@ pub async fn launch_minecraft(
     let instance_path = if let Some(resolved) = &resolved_linked {
         io::canonicalize(&resolved.game_dir)?
     } else {
-        get_instance_full_path(&instance.path).await?
+        get_instance_full_path(
+            &instance.path,
+            instance.game_dir_override.as_deref(),
+        )
+        .await?
     };
     let offline_skin_pack = if direct_launch.is_some() {
         // Writing the offline skin pack would modify the linked folder.
@@ -1466,6 +1497,27 @@ pub async fn launch_minecraft(
             .take()
             .expect("direct launch resolution accompanies direct metadata")
             .merged;
+        // Same loader normalization the managed install path applies. The
+        // merged list drives the ensure pass, native extraction, the launch
+        // classpath, and the VersionInfo projection below, so dropping the
+        // Cleanroom conflicts here — the whole vanilla LWJGL 2 family
+        // (`org.lwjgl.lwjgl:lwjgl` binding, `lwjgl_util` at
+        // 2.9.4-nightly-20150209, and the natives-only `lwjgl-platform`
+        // carrier whose root-level `lwjgl.dll` would otherwise be what
+        // `System.loadLibrary("lwjgl")` resolves first), plus the vanilla JNA
+        // platform and Mojang ICU (pre-existing Axolotl Cleanroom rule) —
+        // covers direct ensure, classpath, and launch at once; the Cleanroom
+        // LWJGL 3 line, lwjglxx, and the vanilla JNA core are never affected.
+        for removed_library in
+            normalize_merged_loader_libraries(content_set.loader, &mut merged)
+        {
+            tracing::info!(
+                loader = content_set.loader.as_str(),
+                version = %merged.id,
+                removed_library,
+                "Removed loader-incompatible library from linked version profile"
+            );
+        }
         linked_libraries = Some(merged.libraries.clone());
 
         // Best-effort reuse of the shared metadata manifest for behaviors
@@ -1764,9 +1816,10 @@ pub async fn launch_minecraft(
         // directory and the bitness of the JVM chosen above.
         let (modable, opti_fine) =
             pcl_ram_profile(version_info.libraries.as_slice());
-        let is_32_bit_java = crate::util::platform::architecture_width(
-            &java_version.architecture,
-        ) == "32";
+        let is_32_bit_java =
+            crate::launcher::direct_link::linked_architecture_width(
+                &java_version.architecture,
+            ) == "32";
         if let Some(maximum) = pcl.resolve_ram_mb(
             &instance_path,
             modable,
@@ -1820,10 +1873,20 @@ pub async fn launch_minecraft(
         // The game jar lives inside the linked installation.
         direct.client_jar(&version_jar)
     } else {
-        state
+        let vanilla_client_path = state
             .directories
             .version_dir(&version_jar)
-            .join(format!("{version_jar}.jar"))
+            .join(format!("{version_jar}.jar"));
+        match crate::api::instance::assemble_for_launch(
+            &instance_path,
+            &content_set.game_version,
+            &vanilla_client_path,
+        )
+        .await?
+        {
+            Some(assembled) => assembled,
+            None => vanilla_client_path,
+        }
     };
 
     let args = version_info.arguments.clone().unwrap_or_default();
@@ -1899,6 +1962,8 @@ pub async fn launch_minecraft(
     if let (Some(direct), Some(libraries)) =
         (direct_launch.clone(), linked_libraries.clone())
     {
+        // Linked instances rebuild the Axolotl-owned natives cache on every
+        // launch; the managed restore path below must never touch them.
         let target = natives_dir.clone();
         let java_arch = java_version.architecture.clone();
         tokio::task::spawn_blocking(move || {
@@ -1911,6 +1976,33 @@ pub async fn launch_minecraft(
             )
         })
         .await??;
+    } else if direct_launch.is_none() {
+        if offline_mode {
+            natives::prepare_native_libraries(
+                &state.directories.natives_dir(),
+                &state.directories.libraries_dir(),
+                &state.directories.caches_dir(),
+                version_info.libraries.as_slice(),
+                &version_jar,
+                &java_version.architecture,
+                minecraft_updated,
+            )
+            .await?;
+        } else {
+            download::download_libraries(
+                &state,
+                None,
+                version_info.libraries.as_slice(),
+                &version_jar,
+                None,
+                0.0,
+                &java_version.architecture,
+                false,
+                minecraft_updated,
+                None,
+            )
+            .await?;
+        }
     }
 
     tracing::debug!(
@@ -2084,7 +2176,8 @@ pub async fn launch_minecraft(
                 quick_play_version,
             )
             .await?
-            .into_iter(),
+            .into_iter()
+            .map(encode_game_argument),
         )
         // Linked-launcher game arguments (PCL VersionAdvanceGame, HMCL
         // auto-connect server) ride at the tail of the vanilla arguments.
@@ -2242,6 +2335,46 @@ pub async fn launch_minecraft(
         .await
 }
 
+#[cfg(test)]
+mod game_argument_encoding_tests {
+    use super::*;
+
+    #[test]
+    fn ascii_game_argument_stays_unchanged() {
+        assert_eq!(
+            encode_game_argument("--username".to_string()),
+            "--username"
+        );
+    }
+
+    #[test]
+    fn non_ascii_game_argument_uses_ascii_transport() {
+        let original = r"E:\Games\Minecraft\profiles\Prominence™ II";
+        let encoded = encode_game_argument(original.to_string());
+
+        assert!(encoded.is_ascii());
+        let payload = encoded
+            .strip_prefix(UTF8_GAME_ARGUMENT_PREFIX)
+            .expect("non-ASCII argument should be encoded");
+        assert_eq!(
+            BASE64_STANDARD.decode(payload).unwrap(),
+            original.as_bytes()
+        );
+    }
+
+    #[test]
+    fn reserved_prefix_is_escaped() {
+        let original = format!("{UTF8_GAME_ARGUMENT_PREFIX}literal");
+        let encoded = encode_game_argument(original.clone());
+        let payload = encoded.strip_prefix(UTF8_GAME_ARGUMENT_PREFIX).unwrap();
+
+        assert_eq!(
+            BASE64_STANDARD.decode(payload).unwrap(),
+            original.as_bytes()
+        );
+    }
+}
+
 fn update_offline_skin_resource_pack_option(
     options_string: &mut String,
     offline_skin_pack: crate::minecraft_skins::OfflineSkinPackOptions,
@@ -2301,6 +2434,19 @@ fn update_offline_skin_resource_pack_option(
 #[cfg(test)]
 mod loader_resolution_tests {
     use super::*;
+    use daedalus::minecraft::RuleAction;
+
+    #[test]
+    fn disallow_only_library_rules_are_not_downloaded() {
+        let rules = [d::minecraft::Rule {
+            action: RuleAction::Disallow,
+            os: None,
+            features: None,
+        }];
+
+        assert!(!parse_rules(&rules, "8", &QuickPlayType::None, false,));
+        assert!(parse_rules(&[], "8", &QuickPlayType::None, false,));
+    }
 
     fn loader_version(id: &str, stable: bool) -> LoaderVersion {
         LoaderVersion {

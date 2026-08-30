@@ -12,25 +12,30 @@ import {
 	ScaleIcon,
 	UsersIcon,
 } from '@modrinth/assets'
-import {
-	Avatar,
-	defineMessages,
-	NewButton as Button,
-	useVIntl,
-} from '@modrinth/ui'
+import { Avatar, defineMessages, NewButton as Button, useVIntl } from '@modrinth/ui'
 import { getVersion } from '@tauri-apps/api/app'
-import { inject, ref } from 'vue'
+import { inject, nextTick, onScopeDispose, ref, shallowRef } from 'vue'
 
 import AfdianIcon from '@/assets/external/afdian.png'
 import QqIcon from '@/assets/external/qq.svg?component'
+import EasterEggContributorsModal from '@/components/ui/easteregg/EasterEggContributorsModal.vue'
+import EasterEggGameModal from '@/components/ui/easteregg/EasterEggGameModal.vue'
 import { AxolotlBrandConfig } from '@/config'
-import { contributors, teamMembers } from '@/data/about'
+import { contributors, type TeamMember, teamMembers } from '@/data/about'
 
+import AboutScene from '../AboutScene.vue'
+import { type AboutMemberExperience, getAboutMemberExperience } from './about-member-experiences'
 import QqChannelIcon from './QqChannelIcon.vue'
 
 const { formatMessage } = useVIntl()
 const version = await getVersion()
 const copied = ref(false)
+const experienceHost = ref<HTMLElement>()
+const activeMemberExperience = shallowRef<AboutMemberExperience>()
+const pressingMemberName = ref<string>()
+let longPressTimer: ReturnType<typeof window.setTimeout> | undefined
+let pressStart = { x: 0, y: 0 }
+let suppressNextMemberClick = false
 const replayOnboarding = inject<(mode: 'main' | 'instance') => Promise<void>>('replayOnboarding')
 
 const licenseUrl = `${AxolotlBrandConfig.repositoryUrl}/blob/main/LICENSE`
@@ -43,6 +48,96 @@ async function copyQqGroupNumber() {
 		copied.value = false
 	}, 3000)
 }
+
+function cancelMemberLongPress() {
+	if (longPressTimer) window.clearTimeout(longPressTimer)
+	longPressTimer = undefined
+	pressingMemberName.value = undefined
+}
+
+function startMemberLongPress(member: TeamMember, event: PointerEvent) {
+	const experience = getAboutMemberExperience(member.experience)
+	if (!experience || event.button !== 0) return
+
+	cancelMemberLongPress()
+	pressStart = { x: event.clientX, y: event.clientY }
+	pressingMemberName.value = member.name
+	longPressTimer = window.setTimeout(async () => {
+		activeMemberExperience.value = experience
+		suppressNextMemberClick = true
+		cancelMemberLongPress()
+		await nextTick()
+		experienceHost.value?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+	}, experience.longPressDuration)
+}
+
+function moveMemberLongPress(event: PointerEvent) {
+	if (!longPressTimer) return
+	if (Math.hypot(event.clientX - pressStart.x, event.clientY - pressStart.y) > 8) {
+		cancelMemberLongPress()
+	}
+}
+
+function handleMemberClick(event: MouseEvent) {
+	if (!suppressNextMemberClick) return
+	suppressNextMemberClick = false
+	event.preventDefault()
+	event.stopPropagation()
+}
+
+function handleMemberContextMenu(member: TeamMember, event: MouseEvent) {
+	if (getAboutMemberExperience(member.experience)) event.preventDefault()
+}
+
+function closeMemberExperience() {
+	activeMemberExperience.value = undefined
+}
+
+const gameModal = ref<InstanceType<typeof EasterEggGameModal> | null>(null)
+const contributorsModal = ref<InstanceType<typeof EasterEggContributorsModal> | null>(null)
+
+let typedBuffer = ''
+const secretCodes = ['cyf112233', 'cxkcxkckx']
+
+const konamiSequence = [
+	'ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown',
+	'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight',
+	'KeyB', 'KeyA',
+]
+let konamiIndex = 0
+
+function handleEasterEggKeydown(event: KeyboardEvent) {
+	typedBuffer = (typedBuffer + event.key).toLowerCase()
+	const maxCodeLen = Math.max(...secretCodes.map((c) => c.length))
+	if (typedBuffer.length > maxCodeLen) {
+		typedBuffer = typedBuffer.slice(-maxCodeLen)
+	}
+	if (secretCodes.some((code) => typedBuffer.endsWith(code))) {
+		typedBuffer = ''
+		gameModal.value?.show()
+		return
+	}
+
+	const expected = konamiSequence[konamiIndex]
+	if (event.code === expected) {
+		konamiIndex++
+		if (konamiIndex === konamiSequence.length) {
+			konamiIndex = 0
+			contributorsModal.value?.show()
+		}
+	} else {
+		konamiIndex = event.code === konamiSequence[0] ? 1 : 0
+	}
+}
+
+function onEasterEggOpenGame() {
+	gameModal.value?.show()
+}
+
+document.addEventListener('keydown', handleEasterEggKeydown)
+onScopeDispose(() => document.removeEventListener('keydown', handleEasterEggKeydown))
+
+onScopeDispose(cancelMemberLongPress)
 
 const messages = defineMessages({
 	productTitle: {
@@ -170,15 +265,28 @@ const projectLinks = [
 		icon: QqChannelIcon,
 	},
 ]
-
 </script>
 
 <template>
-	<div class="about-page">
+	<div class="about-page flex flex-col gap-6">
 		<section id="settings-target-about-product" tabindex="-1" class="about-panel">
-			<div class="flex items-center gap-4">
-				<img class="size-20 object-contain" src="@/assets/axolotl.png" alt="" />
-				<div class="min-w-0">
+			<div class="flex flex-col items-center gap-4">
+				<div
+					ref="experienceHost"
+					class="relative m-0 w-full overflow-hidden h-64 rounded-xl"
+					style="
+						mask-image: linear-gradient(to bottom, black 97%, transparent 100%);
+						-webkit-mask-image: linear-gradient(to bottom, black 97%, transparent 100%);
+					"
+				>
+					<AboutScene />
+					<component
+						:is="activeMemberExperience?.component"
+						v-if="activeMemberExperience"
+						@exit="closeMemberExperience"
+					/>
+				</div>
+				<div class="min-w-0 text-center">
 					<h2 class="m-0 text-xl font-semibold text-contrast">
 						{{
 							formatMessage(messages.productTitle, {
@@ -191,7 +299,7 @@ const projectLinks = [
 					</p>
 				</div>
 			</div>
-			<p class="m-0 mt-4 text-primary">
+			<p class="m-0 mt-3 text-center text-primary">
 				{{ formatMessage(messages.productDescription) }}
 			</p>
 		</section>
@@ -208,8 +316,18 @@ const projectLinks = [
 						:href="member.url"
 						:target="member.url ? '_blank' : undefined"
 						:rel="member.url ? 'noopener noreferrer' : undefined"
-						class="flex min-w-0 flex-col items-center gap-3 rounded-xl bg-surface-4 p-4"
-						:class="member.url ? 'transition-colors hover:bg-surface-5' : 'cursor-default'"
+						class="flex min-w-0 select-none flex-col items-center gap-3 rounded-xl bg-surface-4 p-4"
+						:class="[
+							member.url ? 'transition-colors hover:bg-surface-5' : 'cursor-default',
+							pressingMemberName === member.name ? 'ring-4 ring-brand-shadow' : '',
+						]"
+						@pointerdown="startMemberLongPress(member, $event)"
+						@pointermove="moveMemberLongPress"
+						@pointerup="cancelMemberLongPress"
+						@pointercancel="cancelMemberLongPress"
+						@dragstart="cancelMemberLongPress"
+						@click="handleMemberClick"
+						@contextmenu="handleMemberContextMenu(member, $event)"
 					>
 						<Avatar :src="member.avatarUrl" :alt="member.name" size="4rem" circle no-shadow />
 						<span class="block truncate text-center font-semibold text-contrast">{{
@@ -406,17 +524,13 @@ const projectLinks = [
 				{{ formatMessage(messages.replayOnboarding) }}
 			</Button>
 		</div>
-
 	</div>
+
+	<EasterEggGameModal ref="gameModal" />
+	<EasterEggContributorsModal ref="contributorsModal" @open-game="onEasterEggOpenGame" />
 </template>
 
 <style scoped>
-.about-page {
-	display: flex;
-	flex-direction: column;
-	gap: var(--gap-xl);
-}
-
 .about-settings-details {
 	border-top: 1px solid
 		var(--settings-divider, color-mix(in srgb, var(--surface-4) 55%, transparent));
@@ -424,7 +538,8 @@ const projectLinks = [
 
 .about-panel {
 	padding: 1.25rem;
-	border: 1px solid var(--settings-card-border, color-mix(in srgb, var(--surface-4) 72%, transparent));
+	border: 1px solid
+		var(--settings-card-border, color-mix(in srgb, var(--surface-4) 72%, transparent));
 	border-radius: var(--radius-md);
 	background: var(--surface-2);
 }
@@ -434,7 +549,8 @@ const projectLinks = [
 }
 
 .about-page :deep(.rounded-xl.bg-surface-4) {
-	border: 1px solid var(--settings-card-border, color-mix(in srgb, var(--surface-4) 72%, transparent));
+	border: 1px solid
+		var(--settings-card-border, color-mix(in srgb, var(--surface-4) 72%, transparent));
 	border-radius: var(--radius-md);
 	background: var(--surface-2);
 }

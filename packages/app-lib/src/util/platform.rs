@@ -71,7 +71,7 @@ pub const ARCH_WIDTH: &str = "64";
 pub const ARCH_WIDTH: &str = "32";
 
 // Platform rule handling
-pub fn normalize_architecture(java_arch: &str) -> &str {
+fn normalize_architecture(java_arch: &str) -> &str {
     if java_arch.eq_ignore_ascii_case("amd64") {
         "x86_64"
     } else if java_arch.eq_ignore_ascii_case("i386")
@@ -87,20 +87,10 @@ pub fn normalize_architecture(java_arch: &str) -> &str {
     }
 }
 
-pub fn architecture_width(java_arch: &str) -> &'static str {
-    match normalize_architecture(java_arch)
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "x86" | "arm" => "32",
-        "x86_64" | "aarch64" => "64",
-        _ => ARCH_WIDTH,
-    }
-}
-
 pub fn os_rule(
     rule: &OsRule,
     java_arch: &str,
+    // Minecraft updated over 1.18.2 (supports MacOS Natively)
     _minecraft_updated: bool,
 ) -> bool {
     let mut rule_match = true;

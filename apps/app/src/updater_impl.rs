@@ -1,5 +1,7 @@
 use crate::api::Result;
+use semver::Version;
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tauri::http::HeaderValue;
 use tauri::http::header::ACCEPT;
@@ -8,7 +10,7 @@ use tauri_plugin_http::reqwest;
 use tauri_plugin_http::reqwest::ClientBuilder;
 use tauri_plugin_updater::{Error, Update, UpdaterExt};
 use theseus::{
-    LoadingBarType, emit_loading, init_loading, launcher_user_agent,
+    LoadingBarType, emit_loading, init_loading, launcher_user_agent, settings,
 };
 use tokio::time::Instant;
 use url::Url;
@@ -18,6 +20,19 @@ const MIAWA_HOST: &str = "https://miawa.cn";
 const MIAWA_API_TIMEOUT: std::time::Duration =
     std::time::Duration::from_secs(15);
 
+// Debian and derivatives update via the apt package manager. The whole
+// operation (repo setup script plus package install) runs as a single
+// `pkexec` invocation so the polkit authorization prompt appears only once.
+const AXOLOTL_APT_SETUP_URL: &str = "https://ppa.axlmc.org/setup.sh";
+const AXOLOTL_APT_PACKAGE: &str = "axolotl-launcher";
+
+// The updater plugin builds `Update` with no request timeout, so a stalled
+// connection would hang the download forever. Bound the whole download
+// (installers can exceed 100 MB) so failures always surface and can fall
+// back to another source.
+const UPDATE_DOWNLOAD_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(15 * 60);
+
 // ── Miawa API types ──────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -26,13 +41,8 @@ struct MiawaEnvelope<T> {
 }
 
 #[derive(Deserialize)]
-struct MiawaLaunchers {
-    axolotl: Vec<MiawaLauncherEntry>,
-}
-
-#[derive(Deserialize)]
-struct MiawaLauncherEntry {
-    tag_name: String,
+struct MiawaLatest {
+    version: String,
 }
 
 #[derive(Deserialize)]
@@ -66,38 +76,37 @@ fn miawa_client() -> reqwest::Client {
         .expect("Failed to build Miawa HTTP client")
 }
 
-/// Latest launcher tag name (e.g. "v1.8.11") reported by the Miawa API.
-async fn miawa_latest_tag() -> Result<String> {
+async fn miawa_latest_version() -> Result<String> {
     let client = miawa_client();
-    let launchers: MiawaEnvelope<MiawaLaunchers> = client
-        .get(format!("{MIAWA_API_BASE}/launchers"))
+    let latest: MiawaEnvelope<MiawaLatest> = client
+        .get(format!("{MIAWA_API_BASE}/latest/axolotl"))
         .send()
         .await
         .map_err(|e| {
             theseus::Error::from(theseus::ErrorKind::OtherError(format!(
-                "Miawa launchers request failed: {e}"
+                "Miawa latest version request failed: {e}"
             )))
         })?
         .json()
         .await
         .map_err(|e| {
             theseus::Error::from(theseus::ErrorKind::OtherError(format!(
-                "Failed to parse Miawa launchers response: {e}"
+                "Failed to parse Miawa latest version response: {e}"
             )))
         })?;
 
-    launchers
-        .data
-        .axolotl
-        .into_iter()
-        .next()
-        .map(|l| l.tag_name)
-        .ok_or_else(|| {
-            theseus::Error::from(theseus::ErrorKind::OtherError(
-                "Miawa returned empty axolotl list".to_string(),
-            ))
-            .into()
-        })
+    Ok(latest.data.version)
+}
+
+fn miawa_update_available(current: &Version, remote_tag: &str) -> Result<bool> {
+    let remote =
+        Version::parse(remote_tag.trim_start_matches('v')).map_err(|e| {
+            theseus::Error::from(theseus::ErrorKind::OtherError(format!(
+                "Failed to parse Miawa latest version {remote_tag:?}: {e}"
+            )))
+        })?;
+
+    Ok(remote > *current)
 }
 
 /// Resolve a download URL for a Miawa file path via the prepare API.
@@ -206,9 +215,11 @@ async fn check_with_updater<R: Runtime>(
     source: &str,
 ) -> Result<Option<UpdateMetadata>> {
     let endpoints = update_endpoints(source)?;
-    let Some(update) = check_with_endpoints(webview, endpoints).await? else {
+    let Some(mut update) = check_with_endpoints(webview, endpoints).await?
+    else {
         return Ok(None);
     };
+    update.timeout = Some(UPDATE_DOWNLOAD_TIMEOUT);
 
     let metadata = UpdateMetadata {
         rid: webview.resources_table().add(update.clone()),
@@ -222,14 +233,20 @@ async fn check_with_updater<R: Runtime>(
     Ok(Some(metadata))
 }
 
-/// Miawa check: hand the updater plugin a prepared (dynamic) latest.json
-/// URL as its endpoint, then redirect the plugin's download URL to the
-/// mirror. Everything else (version comparison, signature, unpacking,
-/// per-platform install) stays inside tauri-plugin-updater.
 async fn check_miawa<R: Runtime>(
     webview: &Webview<R>,
 ) -> Result<Option<UpdateMetadata>> {
-    let tag_name = miawa_latest_tag().await?;
+    let tag_name = miawa_latest_version().await?;
+    let current_version = webview.app_handle().package_info().version.clone();
+
+    if !miawa_update_available(&current_version, &tag_name)? {
+        tracing::info!(
+            current = %current_version,
+            latest = %tag_name,
+            "Miawa has no newer version; skipping latest.json check"
+        );
+        return Ok(None);
+    }
 
     let latest_url =
         miawa_prepare_url(&format!("axolotl/{tag_name}/latest.json")).await?;
@@ -240,6 +257,7 @@ async fn check_miawa<R: Runtime>(
     else {
         return Ok(None);
     };
+    update.timeout = Some(UPDATE_DOWNLOAD_TIMEOUT);
 
     // Redirect the actual download to the Miawa mirror.
     let filename = update
@@ -437,4 +455,82 @@ pub async fn enqueue_update_for_installation<R: Runtime>(
 pub fn remove_enqueued_update<R: Runtime>(webview: Webview<R>) {
     let pending_data = webview.state::<PendingUpdateData>().inner();
     pending_data.0.lock().unwrap().take();
+}
+
+// ── Debian / derivatives apt update ─────────────────────────────
+
+/// Whether this Linux system updates Axolotl through apt (Debian and its
+/// derivatives) and has `pkexec` available for a single privileged prompt.
+#[tauri::command]
+pub fn is_apt_linux() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        let debian_like = Path::new("/etc/debian_version").exists()
+            || Path::new("/etc/apt").is_dir()
+            || Path::new("/usr/bin/apt-get").exists();
+        let has_pkexec = ["/usr/bin/pkexec", "/bin/pkexec"]
+            .iter()
+            .any(|path| Path::new(path).exists());
+        debian_like && has_pkexec
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+}
+
+/// Update Axolotl on Debian and its derivatives through apt, prompting for
+/// root once via `pkexec`. Runs the repo setup script and the package
+/// install in a single privileged shell so only one authorization is asked.
+#[tauri::command]
+pub async fn install_apt_update(version: String) -> Result<()> {
+    if !is_apt_linux() {
+        return Err(theseus::Error::from(theseus::ErrorKind::OtherError(
+            "apt updates are only supported on Debian-based Linux systems with pkexec"
+                .to_string(),
+        ))
+        .into());
+    }
+
+    // Everything runs as root under one pkexec prompt; no `sudo` needed inside.
+    let script = format!(
+        "curl -fsSL {AXOLOTL_APT_SETUP_URL} | bash && \
+         apt-get update && \
+         apt-get install -y {AXOLOTL_APT_PACKAGE}"
+    );
+
+    let output = tokio::task::spawn_blocking(move || {
+        std::process::Command::new("pkexec")
+            .arg("sh")
+            .arg("-c")
+            .arg(&script)
+            .output()
+    })
+    .await
+    .map_err(|join| {
+        theseus::Error::from(theseus::ErrorKind::OtherError(format!(
+            "Failed to run the apt updater: {join}"
+        )))
+    })?
+    .map_err(|io| {
+        theseus::Error::from(theseus::ErrorKind::OtherError(format!(
+            "Failed to start pkexec: {io}"
+        )))
+    })?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(theseus::Error::from(theseus::ErrorKind::OtherError(
+            format!("apt update failed: {}", stderr.trim()),
+        ))
+        .into());
+    }
+
+    // Persist the post-update announcement trigger so the new release notes
+    // show after the app restarts into the freshly installed version.
+    let mut current = settings::get().await?;
+    current.pending_update_toast_for_version = Some(version);
+    settings::set(current).await?;
+
+    Ok(())
 }
