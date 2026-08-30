@@ -28,6 +28,7 @@
     "Axolotl_Launcher_1.9.4_x64_modern-setup.exe.sig",
     "Axolotl_Launcher_1.9.4_x64_nsis-setup.exe",
     "Axolotl_Launcher_1.9.4_x64_nsis-setup.exe.sig",
-    "Axolotl_Launcher_1.9.4_x64_portable.zip"
+    "Axolotl_Launcher_1.9.4_x64_portable.zip",
+    "latest.json"
   ]
 }
