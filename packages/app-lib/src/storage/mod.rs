@@ -634,15 +634,23 @@ async fn scan_instance(
     );
 
     let mut visited = HashSet::new();
-    let total = match fs::symlink_metadata(&instance_path).await {
-        Ok(meta) if crate::util::io::is_symlink_or_reparse(&meta) => {
-            to_size(referenced_stats(&instance_path, &mut visited).await)
-        }
-        _ => to_size(
-            scan_path(&instance_path, ScanMode::Host, &mut visited).await,
-        ),
+    let Ok(root_meta) = fs::symlink_metadata(&instance_path).await else {
+        return Ok(None);
     };
-    if total.total() == 0 {
+    let total = if crate::util::io::is_symlink_or_reparse(&root_meta) {
+        to_size(referenced_stats(&instance_path, &mut visited).await)
+    } else if root_meta.is_dir() {
+        to_size(scan_path(&instance_path, ScanMode::Host, &mut visited).await)
+    } else {
+        return Ok(None);
+    };
+    // Ordinary instances report nothing for an empty profile folder. A
+    // directly associated instance keeps a zero-size node as long as its real
+    // linked root exists, so a freshly created external installation (or one
+    // whose content has not been unpacked yet) stays visible in the storage
+    // category instead of vanishing; a root that does not exist at all is
+    // never reported.
+    if total.total() == 0 && !instance.instance.is_direct_linked() {
         return Ok(None);
     }
 
@@ -722,7 +730,12 @@ pub async fn scan_instances_category() -> crate::Result<Option<StorageNode>> {
     // managed root) to avoid double counting and the empty-instances case where
     // the root still holds files.
     let total = root_total;
-    if total.total() == 0 {
+    // The category stays visible while it has something to report: either the
+    // managed root holds files, or a registered directly associated instance
+    // contributes a node of its own (a zero-size node for an existing but
+    // still-empty linked root, or a full node sized from the external root).
+    // With no instances and an empty managed root there is nothing to show.
+    if total.total() == 0 && children.is_empty() {
         return Ok(None);
     }
 
@@ -1115,6 +1128,101 @@ mod tests {
             !reported.starts_with(&instances_dir),
             "storage must not report the nonexistent managed profile folder, \
              got {reported:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn direct_link_instance_with_empty_root_keeps_zero_size_node() {
+        let state = global_state().await;
+        let minecraft = TempDir::new().unwrap();
+        write_self_contained_version(minecraft.path(), "1.12.2-storage-empty");
+
+        let instance = crate::state::create_direct_link_instance(
+            crate::state::CreateDirectLinkInstance {
+                name: None,
+                launcher_type:
+                    crate::api::pack::import::ImportLauncherType::Generic,
+                base_path: minecraft.path().to_path_buf(),
+                instance_folder: "versions/1.12.2-storage-empty".to_string(),
+                instance_path: None,
+            },
+            &state,
+        )
+        .await
+        .unwrap();
+        // Drop the only content: the linked root then exists but holds
+        // nothing, like a freshly created external installation.
+        std::fs::remove_dir_all(minecraft.path().join("versions")).unwrap();
+
+        let metadata = crate::state::get_instance(&instance.id, &state.pool)
+            .await
+            .unwrap()
+            .expect("metadata for direct-link instance");
+
+        let node = scan_instance(&metadata).await.unwrap().expect(
+            "a direct-link instance whose linked root exists but is empty \
+             must keep a zero-size storage node",
+        );
+        assert_eq!(
+            node.size.total(),
+            0,
+            "the empty linked root contributes no bytes"
+        );
+        assert_eq!(node.instance_id.as_deref(), Some(instance.id.as_str()));
+        let reported = Path::new(&node.paths[0].path)
+            .canonicalize()
+            .unwrap_or_else(|_| Path::new(&node.paths[0].path).to_path_buf());
+        let linked_root = minecraft
+            .path()
+            .canonicalize()
+            .unwrap_or_else(|_| minecraft.path().to_path_buf());
+        assert_eq!(
+            reported, linked_root,
+            "storage must report the (empty) linked root itself"
+        );
+    }
+
+    #[tokio::test]
+    async fn instances_category_keeps_direct_link_with_empty_external_root() {
+        let state = global_state().await;
+        let minecraft = TempDir::new().unwrap();
+        write_self_contained_version(minecraft.path(), "1.12.2-category-empty");
+
+        let instance = crate::state::create_direct_link_instance(
+            crate::state::CreateDirectLinkInstance {
+                name: None,
+                launcher_type:
+                    crate::api::pack::import::ImportLauncherType::Generic,
+                base_path: minecraft.path().to_path_buf(),
+                instance_folder: "versions/1.12.2-category-empty".to_string(),
+                instance_path: None,
+            },
+            &state,
+        )
+        .await
+        .unwrap();
+        std::fs::remove_dir_all(minecraft.path().join("versions")).unwrap();
+
+        let category = scan_instances_category().await.unwrap().expect(
+            "the instances category must be reported when a registered \
+             direct-link instance has an existing external root, even an \
+             empty one",
+        );
+        let child = category
+            .children
+            .as_ref()
+            .and_then(|children| {
+                children.iter().find(|node| {
+                    node.instance_id.as_deref() == Some(instance.id.as_str())
+                })
+            })
+            .expect(
+                "the empty-root direct-link instance must stay in the category",
+            );
+        assert_eq!(
+            child.size.total(),
+            0,
+            "the empty linked root contributes no bytes"
         );
     }
 }

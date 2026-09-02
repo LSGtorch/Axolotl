@@ -29,6 +29,12 @@ pub struct FileWatcher {
     /// root. One `.minecraft` may back several instances; an event under the
     /// root notifies all of them.
     external_root_instances: Arc<RwLock<HashMap<String, HashSet<String>>>>,
+    /// Linked roots of directly associated instances that do not exist on
+    /// disk yet: maps each watched existing ancestor directory to every
+    /// pending root key whose events are delivered through that ancestor
+    /// watch. The ancestor watch is released only when its last pending root
+    /// is unwatched.
+    pending_root_ancestors: Arc<RwLock<HashMap<String, HashSet<String>>>>,
     content_changes: Arc<RwLock<HashMap<String, InstanceContentChangeState>>>,
     manual_import_directory: Arc<RwLock<Option<PathBuf>>>,
     manual_import_generation: Arc<AtomicU64>,
@@ -60,6 +66,8 @@ pub async fn init_watcher() -> crate::Result<FileWatcher> {
     let external_root_instances =
         Arc::new(RwLock::new(HashMap::<String, HashSet<String>>::new()));
     let event_external_root_instances = external_root_instances.clone();
+    let pending_root_ancestors =
+        Arc::new(RwLock::new(HashMap::<String, HashSet<String>>::new()));
     let content_changes = Arc::new(RwLock::new(HashMap::<
         String,
         InstanceContentChangeState,
@@ -199,6 +207,7 @@ pub async fn init_watcher() -> crate::Result<FileWatcher> {
         watcher: RwLock::new(file_watcher),
         instance_ids,
         external_root_instances,
+        pending_root_ancestors,
         content_changes,
         manual_import_directory,
         manual_import_generation,
@@ -332,6 +341,14 @@ pub(crate) async fn watch_instances_init(
 /// paths are watched — and their root is additionally registered in the
 /// external-root map so events under it are attributed back to every instance
 /// sharing the root.
+///
+/// A directly associated instance whose linked game directory does not exist
+/// yet (the external launcher has not created it) is still registered:
+/// bookkeeping and the external-root entry are kept and the nearest existing
+/// ancestor is watched recursively, so the root and the content appearing
+/// under it are attributed and delivered once the launcher materializes them
+/// (see `watch_pending_external_root`). Managed instances keep registering
+/// nothing until their profile folder exists.
 pub(crate) async fn watch_instance_folder(
     instance_id: &str,
     instance_path: &str,
@@ -340,6 +357,17 @@ pub(crate) async fn watch_instance_folder(
     create_missing_dirs: bool,
 ) {
     let Ok(metadata) = tokio::fs::metadata(full_instance_path).await else {
+        if !create_missing_dirs {
+            register_watched_instance(
+                watcher,
+                instance_path,
+                instance_id,
+                full_instance_path,
+                true,
+            )
+            .await;
+            watch_pending_external_root(full_instance_path, watcher).await;
+        }
         return;
     };
 
@@ -347,67 +375,113 @@ pub(crate) async fn watch_instance_folder(
         return;
     }
 
-    let mut to_watch = Vec::new();
-    for full_path in instance_watch_paths(full_instance_path) {
-        if &full_path == full_instance_path {
-            // The root is watched non-recursively after the subfolders.
-            continue;
-        }
-        let meta = tokio::fs::symlink_metadata(&full_path).await;
-        let exists = meta.is_ok();
-        let is_symlink = meta.ok().is_some_and(|m| m.file_type().is_symlink());
-        let sub_path = full_path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default();
-
-        if create_missing_dirs
-            && !exists
-            && !is_symlink
-            && !sub_path.contains('.')
-        {
-            if let Err(e) = crate::util::io::create_dir_all(&full_path).await {
+    if !create_missing_dirs {
+        // Directly associated instances watch the linked root recursively:
+        // content may appear later in a subfolder that did not exist at watch
+        // time — the external launcher creates it, and PCL can even switch its
+        // game directory to `versions/<id>` once content shows up there. The
+        // recursive root delivers all of these events; per-subfolder watches
+        // are intentionally not added, which also avoids duplicate watch
+        // handles when several instances share one `.minecraft`.
+        if !path_watch_covered(watcher, full_instance_path).await {
+            let mut debouncer = watcher.watcher.write().await;
+            if let Err(e) = debouncer
+                .watcher()
+                .watch(full_instance_path, RecursiveMode::Recursive)
+            {
                 tracing::error!(
-                    "Failed to create directory for watcher {full_path:?}: {e}"
+                    "Failed to watch linked root for watcher {full_instance_path:?}: {e}"
+                );
+            }
+        }
+    } else {
+        let mut to_watch = Vec::new();
+        for full_path in instance_watch_paths(full_instance_path) {
+            if &full_path == full_instance_path {
+                // The root is watched non-recursively after the subfolders.
+                continue;
+            }
+            let meta = tokio::fs::symlink_metadata(&full_path).await;
+            let exists = meta.is_ok();
+            let is_symlink =
+                meta.ok().is_some_and(|m| m.file_type().is_symlink());
+            let sub_path = full_path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+
+            if create_missing_dirs
+                && !exists
+                && !is_symlink
+                && !sub_path.contains('.')
+            {
+                if let Err(e) =
+                    crate::util::io::create_dir_all(&full_path).await
+                {
+                    tracing::error!(
+                        "Failed to create directory for watcher {full_path:?}: {e}"
+                    );
+                    return;
+                }
+            }
+
+            // Only watch directories that exist after the (optional) creation:
+            // `notify` cannot watch a missing path, and directly associated
+            // instances must never create content folders inside their external
+            // linked root, so their missing subfolders are simply skipped.
+            if tokio::fs::metadata(&full_path)
+                .await
+                .is_ok_and(|meta| meta.is_dir())
+            {
+                to_watch.push(full_path);
+            }
+        }
+
+        let mut debouncer = watcher.watcher.write().await;
+        for full_path in &to_watch {
+            if let Err(e) = debouncer
+                .watcher()
+                .watch(full_path, RecursiveMode::Recursive)
+            {
+                tracing::error!(
+                    "Failed to watch directory for watcher {full_path:?}: {e}"
                 );
                 return;
             }
         }
 
-        // Only watch directories that exist after the (optional) creation:
-        // `notify` cannot watch a missing path, and directly associated
-        // instances must never create content folders inside their external
-        // linked root, so their missing subfolders are simply skipped.
-        if tokio::fs::metadata(&full_path)
-            .await
-            .is_ok_and(|meta| meta.is_dir())
-        {
-            to_watch.push(full_path);
-        }
-    }
-
-    let mut debouncer = watcher.watcher.write().await;
-    for full_path in &to_watch {
         if let Err(e) = debouncer
             .watcher()
-            .watch(full_path, RecursiveMode::Recursive)
+            .watch(full_instance_path, RecursiveMode::NonRecursive)
         {
             tracing::error!(
-                "Failed to watch directory for watcher {full_path:?}: {e}"
+                "Failed to watch root instance directory for watcher {full_instance_path:?}: {e}"
             );
-            return;
         }
     }
 
-    if let Err(e) = debouncer
-        .watcher()
-        .watch(full_instance_path, RecursiveMode::NonRecursive)
-    {
-        tracing::error!(
-            "Failed to watch root instance directory for watcher {full_instance_path:?}: {e}"
-        );
-    }
+    register_watched_instance(
+        watcher,
+        instance_path,
+        instance_id,
+        full_instance_path,
+        !create_missing_dirs,
+    )
+    .await;
+}
 
+/// Registers the instance-id / content-change / external-root bookkeeping for
+/// one watched instance. Runs for directly associated instances both when
+/// their linked root exists and when it does not yet, so event attribution and
+/// `unwatch_instance_folder` work in either case; managed instances register
+/// only the instance-id and content-change maps.
+async fn register_watched_instance(
+    watcher: &FileWatcher,
+    instance_path: &str,
+    instance_id: &str,
+    full_instance_path: &Path,
+    direct_link: bool,
+) {
     watcher
         .instance_ids
         .write()
@@ -418,7 +492,7 @@ pub(crate) async fn watch_instance_folder(
         .write()
         .await
         .insert(instance_id.to_string(), new_instance_content_change_state());
-    if !create_missing_dirs {
+    if direct_link {
         watcher
             .external_root_instances
             .write()
@@ -427,6 +501,102 @@ pub(crate) async fn watch_instance_folder(
             .or_default()
             .insert(instance_id.to_string());
     }
+}
+
+/// Registers a directly associated instance whose linked game directory does
+/// not exist on disk yet and watches the closest existing ancestor of that
+/// root so events are delivered once the external launcher creates the root
+/// and its content (see also `watch_instance_folder`).
+///
+/// The ancestor is watched recursively: the pending root's own key is already
+/// registered in the external-root map, so every event below the root is
+/// attributed to the instance with a path relative to the root. The watch is
+/// refcounted in `pending_root_ancestors` — added once per ancestor, released
+/// only when the last pending root sharing it is unwatched — and skipped when
+/// another watch (a real linked root or an earlier pending ancestor) already
+/// covers the ancestor. The filesystem root itself is never watched.
+async fn watch_pending_external_root(
+    full_instance_path: &Path,
+    watcher: &FileWatcher,
+) {
+    let Some(ancestor) = nearest_existing_ancestor(full_instance_path).await
+    else {
+        tracing::warn!(
+            path = %full_instance_path.display(),
+            "Linked game directory does not exist and no watchable ancestor \
+             was found; events under it cannot be delivered by the watcher"
+        );
+        return;
+    };
+    let root_key = full_instance_path.to_string_lossy().into_owned();
+    let ancestor_key = ancestor.to_string_lossy().into_owned();
+
+    // The first pending root for an ancestor establishes its watch; later
+    // roots only refcount it (and the check below also skips the watch when
+    // the ancestor is already watched as a real linked root).
+    let add_watch = !path_watch_covered(watcher, &ancestor).await;
+    watcher
+        .pending_root_ancestors
+        .write()
+        .await
+        .entry(ancestor_key)
+        .or_default()
+        .insert(root_key);
+
+    if add_watch {
+        let mut debouncer = watcher.watcher.write().await;
+        if let Err(e) = debouncer
+            .watcher()
+            .watch(&ancestor, RecursiveMode::Recursive)
+        {
+            tracing::error!(
+                "Failed to watch pending linked root ancestor {ancestor:?}: {e}"
+            );
+        }
+    }
+}
+
+/// The closest existing ancestor directory of `path`, walking up from its
+/// parent. `None` when only the filesystem root exists above it (recursively
+/// watching the filesystem root is never attempted).
+async fn nearest_existing_ancestor(path: &Path) -> Option<PathBuf> {
+    let mut candidate = path.parent()?;
+    loop {
+        // Never watch the filesystem root itself.
+        if candidate.parent().is_none() {
+            return None;
+        }
+        if tokio::fs::metadata(candidate)
+            .await
+            .is_ok_and(|meta| meta.is_dir())
+        {
+            return Some(candidate.to_path_buf());
+        }
+        candidate = candidate.parent()?;
+    }
+}
+
+/// Whether `path` already receives events from an existing watch: a directly
+/// associated instance registered it as a real linked root, or a pending root
+/// watches it as its ancestor. Used to skip duplicate watch registrations and
+/// to keep a watch alive while another instance still needs it.
+async fn path_watch_covered(watcher: &FileWatcher, path: &Path) -> bool {
+    let key = path.to_string_lossy().into_owned();
+    if watcher
+        .external_root_instances
+        .read()
+        .await
+        .get(&key)
+        .is_some_and(|ids| !ids.is_empty())
+    {
+        return true;
+    }
+    watcher
+        .pending_root_ancestors
+        .read()
+        .await
+        .get(&key)
+        .is_some_and(|roots| !roots.is_empty())
 }
 
 /// Stops watching an instance folder and forgets its instance-id mapping.
@@ -440,7 +610,10 @@ pub(crate) async fn watch_instance_folder(
 /// directory, which may back several instances: the filesystem watch on that
 /// root is released only when the removed instance was the last one
 /// registered under it, so deleting one of several instances sharing a
-/// `.minecraft` keeps delivering events to the remaining instances. Managed
+/// `.minecraft` keeps delivering events to the remaining instances. A pending
+/// ancestor watch (a linked root that did not exist yet) is released the same
+/// way, and a path that is still needed by another watch — a real linked root
+/// or a pending ancestor of another instance — is never unwatched. Managed
 /// instances own their profile folder exclusively and are always unwatched.
 pub(crate) async fn unwatch_instance_folder(
     instance_path: &str,
@@ -448,6 +621,7 @@ pub(crate) async fn unwatch_instance_folder(
     watcher: &FileWatcher,
 ) {
     let instance_id = watcher.instance_ids.write().await.remove(instance_path);
+    let root_key = full_instance_path.to_string_lossy().into_owned();
 
     // Release the filesystem watch unless other directly associated
     // instances still share this external root.
@@ -456,15 +630,50 @@ pub(crate) async fn unwatch_instance_folder(
         let mut external_roots = watcher.external_root_instances.write().await;
         release_watch = deregister_external_root(
             &mut external_roots,
-            &full_instance_path.to_string_lossy(),
+            &root_key,
             instance_id,
         );
     }
 
+    // Drop the pending-ancestor registration of this root and remember which
+    // ancestor watches became free of pending roots; they are released below
+    // once no other watch covers the path.
+    let mut released_pending_ancestors = Vec::new();
+    {
+        let mut pending = watcher.pending_root_ancestors.write().await;
+        for (ancestor, roots) in pending.iter_mut() {
+            if roots.remove(&root_key) && roots.is_empty() {
+                released_pending_ancestors.push(ancestor.clone());
+            }
+        }
+        pending.retain(|_, roots| !roots.is_empty());
+    }
+
     if release_watch {
-        let mut debouncer = watcher.watcher.write().await;
+        let mut to_unwatch = Vec::new();
         for full_path in instance_watch_paths(full_instance_path) {
-            let _ = debouncer.watcher().unwatch(&full_path);
+            if !path_watch_covered(watcher, &full_path).await {
+                to_unwatch.push(full_path);
+            }
+        }
+        if !to_unwatch.is_empty() {
+            let mut debouncer = watcher.watcher.write().await;
+            for full_path in to_unwatch {
+                let _ = debouncer.watcher().unwatch(&full_path);
+            }
+        }
+    }
+
+    let mut to_unwatch_ancestors = Vec::new();
+    for ancestor in released_pending_ancestors {
+        if !path_watch_covered(watcher, Path::new(&ancestor)).await {
+            to_unwatch_ancestors.push(ancestor);
+        }
+    }
+    if !to_unwatch_ancestors.is_empty() {
+        let mut debouncer = watcher.watcher.write().await;
+        for ancestor in to_unwatch_ancestors {
+            let _ = debouncer.watcher().unwatch(Path::new(&ancestor));
         }
     }
 
@@ -1092,5 +1301,233 @@ mod config_file_name_tests {
             watcher.external_root_instances.read().await.is_empty(),
             "managed instances never register an external root"
         );
+    }
+
+    #[tokio::test]
+    async fn direct_link_missing_root_keeps_bookkeeping_and_delivers_events_once_created()
+     {
+        let temp = tempfile::tempdir().unwrap();
+        let watcher = init_watcher().await.unwrap();
+        let root = temp.path().join("minecraft");
+
+        watch_instance_folder(
+            "instance-1",
+            "virtual-profile-path",
+            &root,
+            &watcher,
+            false, // direct link: never create folders inside the linked root
+        )
+        .await;
+
+        // The bookkeeping is registered even though the linked root does not
+        // exist yet...
+        assert_eq!(
+            watcher
+                .instance_ids
+                .read()
+                .await
+                .get("virtual-profile-path")
+                .map(String::as_str),
+            Some("instance-1")
+        );
+        assert!(
+            watcher
+                .content_changes
+                .read()
+                .await
+                .contains_key("instance-1")
+        );
+        let root_key = root.to_string_lossy().into_owned();
+        assert_eq!(
+            watcher
+                .external_root_instances
+                .read()
+                .await
+                .get(&root_key)
+                .cloned(),
+            Some(HashSet::from(["instance-1".to_string()]))
+        );
+        let ancestor_key = temp.path().to_string_lossy().into_owned();
+        assert_eq!(
+            watcher
+                .pending_root_ancestors
+                .read()
+                .await
+                .get(&ancestor_key)
+                .cloned(),
+            Some(HashSet::from([root_key.clone()]))
+        );
+        assert!(
+            !root.exists(),
+            "watching a missing linked root must not create it"
+        );
+
+        // ...and once the external launcher creates the root and its content,
+        // the ancestor watch attributes and records the events. The creation
+        // steps are spaced out: `notify` adds watches for freshly created
+        // directories asynchronously, and files written in the same instant
+        // as their parent directory are dropped by the kernel.
+        std::fs::create_dir_all(&root).unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        std::fs::create_dir_all(root.join("mods")).unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        std::fs::write(root.join("mods/new.jar"), b"bytes").unwrap();
+        let mut snapshot = None;
+        for _ in 0..80 {
+            if let Some(snapshot_value) =
+                watcher.content_watch_snapshot("instance-1").await
+                && snapshot_value.dirty_paths.contains("mods/new.jar")
+            {
+                snapshot = Some(snapshot_value);
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert!(
+            snapshot.is_some(),
+            "content created after the linked root appears must be attributed \
+             and recorded through the pending ancestor watch"
+        );
+
+        // Unwatching cleans up the pending-ancestor state and all bookkeeping.
+        unwatch_instance_folder("virtual-profile-path", &root, &watcher).await;
+        assert!(watcher.pending_root_ancestors.read().await.is_empty());
+        assert!(watcher.external_root_instances.read().await.is_empty());
+        assert!(watcher.content_changes.read().await.is_empty());
+        assert!(watcher.instance_ids.read().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn pending_direct_link_ancestor_watch_is_released_only_with_its_last_root()
+     {
+        let temp = tempfile::tempdir().unwrap();
+        let watcher = init_watcher().await.unwrap();
+        let root_a = temp.path().join("minecraft-a");
+        let root_b = temp.path().join("minecraft-b");
+
+        watch_instance_folder(
+            "instance-1",
+            "virtual-a",
+            &root_a,
+            &watcher,
+            false,
+        )
+        .await;
+        watch_instance_folder(
+            "instance-2",
+            "virtual-b",
+            &root_b,
+            &watcher,
+            false,
+        )
+        .await;
+
+        let ancestor_key = temp.path().to_string_lossy().into_owned();
+        let root_a_key = root_a.to_string_lossy().into_owned();
+        let root_b_key = root_b.to_string_lossy().into_owned();
+        let pending = watcher.pending_root_ancestors.read().await;
+        assert_eq!(
+            pending.get(&ancestor_key).cloned(),
+            Some(HashSet::from([root_a_key.clone(), root_b_key.clone()]))
+        );
+        drop(pending);
+
+        // Removing one pending root keeps the shared ancestor watch and the
+        // remaining instance's state for the other.
+        unwatch_instance_folder("virtual-a", &root_a, &watcher).await;
+        let pending = watcher.pending_root_ancestors.read().await;
+        assert_eq!(
+            pending.get(&ancestor_key).cloned(),
+            Some(HashSet::from([root_b_key.clone()]))
+        );
+        drop(pending);
+        assert!(
+            watcher
+                .content_changes
+                .read()
+                .await
+                .contains_key("instance-2")
+        );
+        assert!(
+            !watcher
+                .content_changes
+                .read()
+                .await
+                .contains_key("instance-1")
+        );
+
+        // The last pending root releases the ancestor watch and all state.
+        unwatch_instance_folder("virtual-b", &root_b, &watcher).await;
+        assert!(watcher.pending_root_ancestors.read().await.is_empty());
+        assert!(watcher.external_root_instances.read().await.is_empty());
+        assert!(watcher.instance_ids.read().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn direct_link_root_watch_delivers_content_in_late_created_subfolders()
+     {
+        let temp = tempfile::tempdir().unwrap();
+        let watcher = init_watcher().await.unwrap();
+        let minecraft = temp.path().join("minecraft");
+        std::fs::create_dir_all(&minecraft).unwrap();
+
+        watch_instance_folder(
+            "instance-1",
+            "virtual-profile-path",
+            &minecraft,
+            &watcher,
+            false,
+        )
+        .await;
+
+        // `mods/` does not exist at watch time and appears later (the external
+        // launcher installs the first mod). The recursive linked-root watch
+        // must deliver the jar events — the same mechanism that keeps a PCL
+        // instance from losing events when content appears under
+        // `versions/<id>` after the watch was set up. The creation steps are
+        // spaced out so `notify` registers the new directory watch before the
+        // file write (see the sibling missing-root test).
+        std::fs::create_dir_all(minecraft.join("mods")).unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        std::fs::write(minecraft.join("mods/late.jar"), b"late").unwrap();
+        let mut snapshot = None;
+        for _ in 0..80 {
+            if let Some(snapshot_value) =
+                watcher.content_watch_snapshot("instance-1").await
+                && snapshot_value.dirty_paths.contains("mods/late.jar")
+            {
+                snapshot = Some(snapshot_value);
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert!(
+            snapshot.is_some(),
+            "content created in a subfolder added after the watch must still \
+             be attributed and recorded"
+        );
+    }
+
+    #[tokio::test]
+    async fn nearest_existing_ancestor_walks_up_to_the_closest_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let deep = temp.path().join("a").join("b").join("minecraft");
+
+        // Nothing below the temp dir exists: the temp dir itself is the
+        // closest watchable ancestor.
+        assert_eq!(
+            nearest_existing_ancestor(&deep).await.as_deref(),
+            Some(temp.path())
+        );
+
+        // a/b exists: the walk stops there and never reaches the temp dir.
+        std::fs::create_dir_all(temp.path().join("a").join("b")).unwrap();
+        assert_eq!(
+            nearest_existing_ancestor(&deep).await,
+            Some(temp.path().join("a").join("b"))
+        );
+
+        // The filesystem root is never a watch target.
+        assert!(nearest_existing_ancestor(Path::new("/")).await.is_none());
     }
 }
