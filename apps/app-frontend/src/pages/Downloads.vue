@@ -296,6 +296,7 @@
 					</Admonition>
 					<Table
 						v-if="job.items.length"
+						:key="`${job.job_id}-details`"
 						:columns="itemColumns"
 						:data="reorderJobItems(job)"
 						row-key="id"
@@ -818,6 +819,14 @@ function isLocalRecoveryValidation(job: InstallJobSnapshot) {
 
 function jobPhaseLabel(job: InstallJobSnapshot) {
 	if (job.rollback_error) return formatMessage(messages.cleanupIncomplete)
+	// Older queued content jobs were initialized with the generic instance phase.
+	// Keep their label meaningful while they are resumed or waiting for the worker.
+	if (
+		job.kind === 'install_content' &&
+		job.phase === 'preparing_instance'
+	) {
+		return formatMessage(phaseMessages.downloading_content)
+	}
 	return isLocalRecoveryValidation(job)
 		? formatMessage(messages.verifyingDownloadedFiles)
 		: phaseLabel(job.phase)

@@ -2231,6 +2231,18 @@
   "label.no-items": {
     "defaultMessage": "空"
   },
+  "notification.panel.copy": {
+    "defaultMessage": "复制到剪贴板"
+  },
+  "notification.panel.copy-support": {
+    "defaultMessage": "复制错误详情以便支持"
+  },
+  "notification.panel.dismiss": {
+    "defaultMessage": "忽略"
+  },
+  "notification.panel.export-error-logs": {
+    "defaultMessage": "导出错误日志"
+  },
   "label.notifications": {
     "defaultMessage": "消息提醒"
   },

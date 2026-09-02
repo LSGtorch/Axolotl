@@ -243,10 +243,15 @@ impl DirectoryInfo {
         &self,
         instance: &crate::state::instances::Instance,
     ) -> PathBuf {
-        self.resolve_game_dir(
-            &instance.path,
-            instance.game_dir_override.as_deref(),
-        )
+        // Symlink imports persist the exact external target independently of
+        // the optional game-dir override. Use it as a fallback so content
+        // management keeps operating on the real directory even for older
+        // imports that predate the override field.
+        let game_dir = instance
+            .game_dir_override
+            .as_deref()
+            .or(instance.symlink_target.as_deref());
+        self.resolve_game_dir(&instance.path, game_dir)
     }
 
     /// `Path::is_absolute` treats a Windows drive-letter path (e.g.

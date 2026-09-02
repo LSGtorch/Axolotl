@@ -1,6 +1,100 @@
 {
-  "updated_at": "2026-08-30T14:07:57.262Z",
+  "updated_at": "2026-09-02T20:34:50.000Z",
   "announcements": [
+    {
+      "id": "launcher-99.99.9",
+      "version": "99.99.9",
+      "publishedAt": "2026-09-03",
+      "title": {
+        "en-US": "Axolotl Launcher 99.99.9 (test)",
+        "zh-CN": "Axolotl Launcher 99.99.9（测试版）"
+      },
+      "changes": {
+        "fixed": [
+          {
+            "en-US": "Fixed Discover content installs and content management for directly associated HMCL/PCL instances using the same game directory as the linked launcher, including PCL version-isolated directories.",
+            "zh-CN": "修复直接关联实例在发现内容中安装模组及管理内容时仍使用旧目录的问题，现在会与关联启动器使用同一个游戏目录，并支持 PCL 版本隔离目录。"
+          },
+          {
+            "en-US": "Fixed linked-content refresh, upgrades, recovery, worlds, crash analysis, memory detection, and storage reporting to resolve the actual game content directory.",
+            "zh-CN": "修复关联内容刷新、升级、恢复、世界、崩溃分析、内存检测和存储统计仍读取旧实例目录的问题。"
+          },
+          {
+            "en-US": "Prevented in-place Minecraft and loader upgrades or reinstalls from modifying installations managed by an external launcher; Copy and Upgrade remains available.",
+            "zh-CN": "禁止原地升级或重装由其他启动器管理的 Minecraft 和加载器文件，避免修改外部启动器安装；复制并升级仍可用。"
+          }
+        ]
+      }
+    },
+    {
+      "id": "launcher-1.9.5-beta.5",
+      "version": "1.9.5-beta.5",
+      "publishedAt": "2026-09-02",
+      "title": {
+        "en-US": "Axolotl Launcher 1.9.5-beta.5",
+        "zh-CN": "Axolotl Launcher 1.9.5-beta.5"
+      },
+      "changes": {
+        "added": [
+          {
+            "en-US": "Add a \"Back to Top\" button on the content page.",
+            "zh-CN": "在内容页添加“回到顶部”按钮。"
+          },
+          {
+            "en-US": "Add a notification center to show hidden download progress and warnings.",
+            "zh-CN": "添加通知中心，展示隐藏的下载进度和警告。"
+          }
+        ],
+        "changed": [
+          {
+            "en-US": "Include the Mod downloads in the download center display.",
+            "zh-CN": "在下载中心显示 Mod 下载。"
+          },
+          {
+            "en-US": "Skin preview now uses a 3D-rendered outer layer.",
+            "zh-CN": "皮肤预览现在使用 3D 渲染外层。"
+          },
+          {
+            "en-US": "Skin preview now has anti-aliased rendering.",
+            "zh-CN": "皮肤预览现在具有抗锯齿渲染。"
+          }
+        ],
+        "fixed": [
+          {
+            "en-US": "Fixed the issue where versions 1.13 ~ 1.18 could not start due to incorrectly obtaining LWJGL information.",
+            "zh-CN": "修复因错误获取 LWJGL 信息导致 1.13 ~ 1.18 版本无法启动的问题。"
+          },
+          {
+            "en-US": "Fixed the issue where translation preference settings could not be saved.",
+            "zh-CN": "修复无法保存翻译偏好设置的问题。"
+          },
+          {
+            "en-US": "Fix the issue where the settings page title loads out of sync with the main content.",
+            "zh-CN": "修复设置页标题与主内容不同步加载的问题。"
+          },
+          {
+            "en-US": "Fix a performance issue where extra validation caused slower download speeds.",
+            "zh-CN": "修复因额外校验导致下载速度变慢的性能问题。"
+          },
+          {
+            "en-US": "Fixed the issue of slow download speeds for additional files during import.",
+            "zh-CN": "修复导入时下载额外文件速度慢的问题。"
+          },
+          {
+            "en-US": "Fixed the invalid path issue when importing instances using symbolic links.",
+            "zh-CN": "修复使用符号链接导入实例时的路径非法问题。"
+          },
+          {
+            "en-US": "Fixed the issue where the same data packages from different worlds were accidentally marked as duplicates.",
+            "zh-CN": "修复将不同世界中的相同数据包被意外标记为重复的问题。"
+          },
+          {
+            "en-US": "Fixed the issue where the top and legs conflicted in rendering during skin preview.",
+            "zh-CN": "修复皮肤预览上衣与腿部渲染冲突的问题。"
+          }
+        ]
+      }
+    },
     {
       "id": "launcher-99.99.8",
       "version": "99.99.8",
@@ -39,6 +133,138 @@
           {
             "en-US": "Directly associated instances created before Cleanroom loader detection are now normalized correctly at launch.",
             "zh-CN": "修复在 Cleanroom 检测完善前创建的直接关联实例，启动时现在会正确归一化。"
+          }
+        ]
+      }
+    },
+    {
+      "id": "launcher-1.9.5-beta.4",
+      "version": "1.9.5-beta.4",
+      "publishedAt": "2026-09-01",
+      "title": {
+        "en-US": "Axolotl Launcher 1.9.5-beta.4",
+        "zh-CN": "Axolotl Launcher 1.9.5-beta.4"
+      },
+      "changes": {
+        "added": [
+          {
+            "en-US": "Added an option to select the main world biome height in the seed map.",
+            "zh-CN": "新增种子地图中选择主世界群系高度的选项。"
+          }
+        ],
+        "changed": [
+          {
+            "en-US": "Disable the corresponding buttons when database operations are unavailable.",
+            "zh-CN": "当数据库操作不可用时禁用相应按钮。"
+          }
+        ],
+        "fixed": [
+          {
+            "en-US": "Fix the distance issue on the seed map caused by floating point precision.",
+            "zh-CN": "修复种子地图因浮点数精度导致的距离问题。"
+          },
+          {
+            "en-US": "Fix the issue where map tiles rendered by the seed map are inconsistent at different zoom levels.",
+            "zh-CN": "修复种子地图在不同缩放下渲染的地图图块不一致的问题。"
+          },
+          {
+            "en-US": "Fix the issue where the spawn point marker on the seed map lacks focused highlighting.",
+            "zh-CN": "修复种子地图出生点标记无焦点突出显示的问题。"
+          },
+          {
+            "en-US": "Fixed the issue where the seed map could not open the biome selector in fullscreen mode.",
+            "zh-CN": "修复种子地图在全屏状态下无法打开群系选择器的问题。"
+          }
+        ]
+      }
+    },
+    {
+      "id": "launcher-1.9.5-beta.3",
+      "version": "1.9.5-beta.3",
+      "publishedAt": "2026-09-01",
+      "title": {
+        "en-US": "Axolotl Launcher 1.9.5-beta.3",
+        "zh-CN": "Axolotl Launcher 1.9.5-beta.3"
+      },
+      "changes": {
+        "added": [
+          {
+            "en-US": "Add relevant instructions and tips about database isolation.",
+            "zh-CN": "添加数据库隔离的相关说明与提示。"
+          },
+          {
+            "en-US": "Add a Beta badge to the beta software.",
+            "zh-CN": "为测试版软件添加 Beta 角标。"
+          }
+        ],
+        "fixed": [
+          {
+            "en-US": "Fix the issue where update packages on the Windows platform might not send UAC requests when requiring privilege elevation.",
+            "zh-CN": "修复 Windows 平台上更新包可能不会在需要权限提升时发出 UAC 请求的问题。"
+          },
+          {
+            "en-US": "Fix a potential issue where forward slashes (/) may be incorrectly used on the Windows platform.",
+            "zh-CN": "修复 Windows 平台上可能错误地使用正斜杠（/）的问题。"
+          },
+          {
+            "en-US": "Fixed the issue where not reusing the HTTP client caused slow download speeds.",
+            "zh-CN": "修复不会复用 HTTP 客户端导致下载速度过慢的问题。"
+          },
+          {
+            "en-US": "Fix the issue where the global Mutex in RangeOutput causes slow download speeds.",
+            "zh-CN": "修复 RangeOutput 全局 Mutex 导致下载速度过慢的问题。"
+          },
+          {
+            "en-US": "Fixed an issue where incorrectly using the official source could lead to slow download speeds.",
+            "zh-CN": "修复可能错误使用官方源导致下载速度过慢的问题。"
+          },
+          {
+            "en-US": "Fix the issue where the settings page loads too slowly.",
+            "zh-CN": "修复设置页面载入速度过慢的问题。"
+          },
+          {
+            "en-US": "Fixed the issue where the 1.16.5 Forge version failed to start due to a missing LWJGL library.",
+            "zh-CN": "修复 1.16.5 Forge 版本因缺少 LWJGL 库导致启动失败的问题。"
+          }
+        ]
+      }
+    },
+    {
+      "id": "launcher-1.9.5-beta.2",
+      "version": "1.9.5-beta.2",
+      "publishedAt": "2026-08-31",
+      "title": {
+        "en-US": "Axolotl Launcher 1.9.5-beta.2",
+        "zh-CN": "Axolotl Launcher 1.9.5-beta.2"
+      },
+      "changes": {
+        "changed": [
+          {
+            "en-US": "Improved the software update mechanism and logic.",
+            "zh-CN": "优化软件更新机制与逻辑。"
+          }
+        ],
+        "fixed": [
+          {
+            "en-US": "Fixed the issue where updating within the software would not update the version number, causing a loop of automatic updates.",
+            "zh-CN": "修复了在软件内更新不会更新版本号导致循环自动更新的问题。"
+          }
+        ]
+      }
+    },
+    {
+      "id": "launcher-1.9.5-beta.1",
+      "version": "1.9.5-beta.1",
+      "publishedAt": "2026-08-30",
+      "title": {
+        "en-US": "Axolotl Launcher 1.9.5-beta.1",
+        "zh-CN": "Axolotl Launcher 1.9.5-beta.1"
+      },
+      "changes": {
+        "added": [
+          {
+            "en-US": "Added multi-update channel option.",
+            "zh-CN": "添加多更新渠道选项。"
           }
         ]
       }

@@ -11,6 +11,18 @@
   "app.action-bar.downloads": {
     "message": "下载"
   },
+  "app.action-bar.notifications": {
+    "message": "通知"
+  },
+  "app.action-bar.notifications.clear": {
+    "message": "清除全部"
+  },
+  "app.action-bar.notifications.dismiss": {
+    "message": "忽略通知"
+  },
+  "app.action-bar.notifications.empty": {
+    "message": "暂无通知"
+  },
   "app.action-bar.exporting-modpack": {
     "message": "正在导出整合包"
   },
@@ -31,6 +43,9 @@
   },
   "app.action-bar.install.cache-repair.title": {
     "message": "项目元数据缓存异常"
+  },
+  "app.action-bar.install.cancel": {
+    "message": "取消"
   },
   "app.action-bar.install.copied-details": {
     "message": "已复制"
@@ -721,6 +736,9 @@
   },
   "app.browse.source.planet-minecraft": {
     "message": "Planet Minecraft 来源"
+  },
+  "app.build.beta": {
+    "message": "Beta"
   },
   "app.community-announcement.feedback-middle": {
     "message": "，或在 "
@@ -4475,6 +4493,9 @@
   "app.lab.seed-map.copyright.visit-minecraft-search": {
     "message": "访问 MinecraftSearch"
   },
+  "app.lab.seed-map.depth": {
+    "message": "深度"
+  },
   "app.lab.seed-map.description": {
     "message": "在本地查看 Minecraft 种子的群系、结构和保存的标记。"
   },
@@ -4502,11 +4523,14 @@
   "app.lab.seed-map.edition.java-large-biomes": {
     "message": "Java 版：大型生物群系"
   },
-  "app.lab.seed-map.elevation": {
-    "message": "群系高度"
+  "app.lab.seed-map.elevation.deep-underground": {
+    "message": "深层地下"
   },
-  "app.lab.seed-map.elevation-locked": {
-    "message": "开启地形估算时自动采用估算的地表高度"
+  "app.lab.seed-map.elevation.shallow-underground": {
+    "message": "浅层地下"
+  },
+  "app.lab.seed-map.elevation.surface": {
+    "message": "地表"
   },
   "app.lab.seed-map.exit-fullscreen": {
     "message": "退出全屏"
@@ -7295,7 +7319,106 @@
   "app.settings.updates.available": {
     "message": "发现可用更新。"
   },
+  "app.settings.updates.channel.beta": {
+    "message": "Beta"
+  },
+  "app.settings.updates.channel.beta-description": {
+    "message": "包含最新功能的新更新，但稳定性较低，更新频率更快。"
+  },
+  "app.settings.updates.channel.copy-database": {
+    "message": "复制数据库"
+  },
+  "app.settings.updates.channel.copy-database-description": {
+    "message": "为防止出现问题，Beta 版将使用独立的数据存储，以免影响正式版的正确运行。这貌似是你第一次使用 Beta 版，是否要将稳定版的数据复制到 Beta 版？此操作无法自动还原。"
+  },
+  "app.settings.updates.channel.copy-database-title": {
+    "message": "将 Release 数据复制到 Beta？"
+  },
+  "app.settings.updates.channel.description": {
+    "message": "选择 Axolotl 接收的启动器版本。"
+  },
+  "app.settings.updates.channel.label": {
+    "message": "通道"
+  },
+  "app.settings.updates.channel.release": {
+    "message": "Release"
+  },
+  "app.settings.updates.channel.release-description": {
+    "message": "稳定且经过测试的新功能与修复，更新频率较慢。"
+  },
+  "app.settings.updates.channel.restart-description": {
+    "message": "立即重启 Axolotl 以开始使用新的更新通道，或稍后手动重启。"
+  },
+  "app.settings.updates.channel.restart-development-description": {
+    "message": "手动重启开发会话后，新的更新通道才会生效。"
+  },
+  "app.settings.updates.channel.restart-later": {
+    "message": "稍后手动重启"
+  },
+  "app.settings.updates.channel.restart-now": {
+    "message": "立即重启"
+  },
+  "app.settings.updates.channel.restart-title": {
+    "message": "需要重启"
+  },
+  "app.settings.updates.channel.start-empty": {
+    "message": "从空白数据库开始"
+  },
+  "app.settings.updates.channel.title": {
+    "message": "更新通道"
+  },
+  "app.settings.updates.database-isolation.active": {
+    "message": "正在使用"
+  },
+  "app.settings.updates.database-isolation.beta": {
+    "message": "Beta 数据库"
+  },
+  "app.settings.updates.database-isolation.current-database": {
+    "message": "当前正在使用的数据库"
+  },
+  "app.settings.updates.database-isolation.description": {
+    "message": "Release 和 Beta 使用相互独立的数据库，因此测试 Beta 不会改变 Release 数据。"
+  },
+  "app.settings.updates.database-isolation.release": {
+    "message": "Release 数据库"
+  },
+  "app.settings.updates.database-isolation.title": {
+    "message": "数据库隔离"
+  },
+  "app.settings.updates.database-operation.active-target": {
+    "message": "无法覆盖当前正在使用的数据库。请先重启 Axolotl 并切换更新通道。"
+  },
+  "app.settings.updates.database-operation.beta-to-release": {
+    "message": "从 Beta 复制到 Release"
+  },
+  "app.settings.updates.database-operation.cancel": {
+    "message": "取消"
+  },
+  "app.settings.updates.database-operation.confirm": {
+    "message": "覆盖数据库"
+  },
+  "app.settings.updates.database-operation.confirm-description": {
+    "message": "这会用 {source} 数据库的内容完全替换未使用的 {target} 数据库。此操作无法撤销。"
+  },
+  "app.settings.updates.database-operation.confirm-title": {
+    "message": "覆盖数据库？"
+  },
+  "app.settings.updates.database-operation.failed": {
+    "message": "无法复制数据库。请确认 Axolotl 未在使用目标数据库。"
+  },
+  "app.settings.updates.database-operation.label": {
+    "message": "数据库操作"
+  },
+  "app.settings.updates.database-operation.release-to-beta": {
+    "message": "从 Release 复制到 Beta"
+  },
+  "app.settings.updates.database-operation.success": {
+    "message": "已成功将 {source} 复制到 {target}。"
+  },
   "app.settings.updates.check": {
+    "message": "检查更新"
+  },
+  "app.settings.updates.check.title": {
     "message": "检查更新"
   },
   "app.settings.updates.checking": {
@@ -7303,6 +7426,18 @@
   },
   "app.settings.updates.cnb": {
     "message": "CNB 渠道"
+  },
+  "app.settings.updates.current-version": {
+    "message": "当前版本 {version}"
+  },
+  "app.settings.updates.latest-version": {
+    "message": "最新 {channel} 版本：{version}"
+  },
+  "app.settings.updates.latest-version-unavailable": {
+    "message": "最新版本暂不可用"
+  },
+  "app.settings.updates.latest-version-loading": {
+    "message": "正在获取"
   },
   "app.settings.updates.description": {
     "message": "选择 Axolotl 检查启动器更新的渠道。"
@@ -7313,6 +7448,15 @@
   "app.settings.updates.failed": {
     "message": "无法检查更新。"
   },
+  "app.settings.updates.immediate-fetch": {
+    "message": "最新更新可用后立即获取"
+  },
+  "app.settings.updates.immediate-fetch-description": {
+    "message": "在推出最新的稳定更改、修复后，成为第一批获得这些更新的用户。"
+  },
+  "app.settings.updates.immediate-fetch.beta-description": {
+    "message": "Beta 更新始终立即可用。"
+  },
   "app.settings.updates.github": {
     "message": "GitHub 渠道"
   },
@@ -7322,8 +7466,20 @@
   "app.settings.updates.offline": {
     "message": "请连接到互联网后检查更新。"
   },
+  "app.settings.updates.pause": {
+    "message": "暂停更新"
+  },
+  "app.settings.updates.pause-description": {
+    "message": "暂停自动检查、下载和更新通知，直到恢复更新。"
+  },
+  "app.settings.updates.paused": {
+    "message": "更新已暂停。"
+  },
   "app.settings.updates.portable": {
-    "message": "便携模式暂时无法更新，请去GitHub手动更新。"
+    "message": "便携模式无法自动更新，请手动下载最新版本。"
+  },
+  "app.settings.updates.preferences.title": {
+    "message": "更新行为"
   },
   "app.settings.updates.preview-announcement": {
     "message": "预览更新公告弹窗"
@@ -9985,6 +10141,15 @@
   },
   "unknown-pack-warning-modal.warning.title": {
     "message": "未知文件警告"
+  },
+  "app.settings.about.easteregg.click-hint": {
+    "message": "点击以打开彩蛋小游戏"
+  },
+  "app.settings.about.easteregg.contributors-title": {
+    "message": "贡献者彩蛋"
+  },
+  "app.settings.about.easteregg.game-title": {
+    "message": "彩蛋小游戏"
   },
   "app.settings.about.game.best": {
     "message": "最高分：{score}"

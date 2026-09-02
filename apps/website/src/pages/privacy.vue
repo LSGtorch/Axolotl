@@ -50,7 +50,7 @@ useHead({
 		<ul>
 			<li>语言偏好 Cookie（<code>locale</code>）；</li>
 			<li>主题、高级渲染、减少动态效果和外部链接打开方式；</li>
-			<li>下载源选择（自动、CNB 或 GitHub）。</li>
+			<li>下载源选择（自动、Update Server 或 GitHub）。</li>
 		</ul>
 		<p>
 			这些偏好主要保存在 Cookie 或浏览器 localStorage 中，你可通过浏览器设置清除。网站不使用广告
@@ -92,7 +92,7 @@ useHead({
 			<li>Microsoft 和 Minecraft 的登录、资料及游戏服务；</li>
 			<li>你选择的第三方 Yggdrasil 认证服务；</li>
 			<li>Modrinth、CurseForge 及内容作者提供的 API 和下载地址；</li>
-			<li>GitHub、CNB 及其他用于版本检查、更新或文件分发的服务；</li>
+			<li>Update Server、GitHub 及其他用于版本检查、更新或文件分发的服务；</li>
 			<li>用于官网用户体验分析和反馈收集的浩客（Howxm）；</li>
 			<li>用于接收和保存选择加入的匿名遥测数据的 Cloudflare Workers、D1 和 R2；</li>
 			<li>你主动连接的 Minecraft 服务器或其他外部链接。</li>
@@ -163,7 +163,7 @@ useHead({
 		<ul>
 			<li>A language preference cookie (<code>locale</code>);</li>
 			<li>Theme, advanced rendering, reduced motion, and external-link behavior;</li>
-			<li>Your download-source selection (automatic, CNB, or GitHub).</li>
+			<li>Your download-source selection (automatic, Update Server, or GitHub).</li>
 		</ul>
 		<p>
 			These preferences are mainly stored in cookies or browser localStorage and can be cleared
@@ -227,7 +227,8 @@ useHead({
 			<li>Third-party Yggdrasil authentication services you choose;</li>
 			<li>APIs and download addresses provided by Modrinth, CurseForge, and content authors;</li>
 			<li>
-				GitHub, CNB, and other services used for version checks, updates, or file distribution;
+				Update Server, GitHub, and other services used for version checks, updates, or file
+				distribution;
 			</li>
 			<li>Howxm for official-website user-experience analytics and feedback collection;</li>
 			<li>

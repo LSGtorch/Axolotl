@@ -13,6 +13,33 @@
 
 static float axolotl_clamp(float value, float low, float high);
 
+/* Sample coarse Overworld pixels at the centre of their block cell while
+ * retaining the same 3D Voronoi surface lookup used by scale=1. Without
+ * this, scale=16+ reads the raw noise point directly and can select a
+ * different vertical biome layer at tile boundaries. */
+static void axolotl_gen_surface_biomes(
+	int *out,
+	const Generator *generator,
+	int32_t x,
+	int32_t z,
+	int32_t scale,
+	int32_t width,
+	int32_t height,
+	int32_t elevation
+) {
+	const int32_t y = elevation;
+	for (int row = 0; row < height; row++) {
+		for (int column = 0; column < width; column++) {
+			const int block_x = x * scale + column * scale + scale / 2;
+			const int block_z = z * scale + row * scale + scale / 2;
+			int x4, y4, z4;
+			voronoiAccess3D(generator->sha, block_x, y, block_z, &x4, &y4, &z4);
+			out[(size_t)row * width + column] =
+				sampleBiomeNoise(&generator->bn, NULL, x4, y4, z4, NULL, 0);
+		}
+	}
+}
+
 static int axolotl_map_approx_height(
 	float *heights,
 	const Generator *generator,
@@ -389,6 +416,7 @@ int axolotl_seed_map_render(
 ) {
 	if (!rgb || width <= 0 || height <= 0 || scale <= 0) return -1;
 	if (rgb_len < (size_t)width * (size_t)height * 3) return -2;
+	const int32_t render_elevation = elevation;
 
 	Generator generator;
 	setupGenerator(&generator, minecraft_version, generator_flags);
@@ -400,12 +428,20 @@ int axolotl_seed_map_render(
 		.z = z,
 		.sx = width,
 		.sz = height,
-		.y = elevation / 4,
+		.y = render_elevation / 4,
 		.sy = 1,
 	};
 	int *biomes = allocCache(&generator, range);
 	if (!biomes) return -3;
-	int result = genBiomes(&generator, biomes, range);
+	int result;
+	if (dimension == DIM_OVERWORLD && minecraft_version >= MC_1_18) {
+		/* Use the same surface/Voronoi path at every coarse scale. */
+		axolotl_gen_surface_biomes(
+			biomes, &generator, x, z, scale, width, height, render_elevation);
+		result = 0;
+	} else {
+		result = genBiomes(&generator, biomes, range);
+	}
 	if (result != 0) {
 		free(biomes);
 		return result;
@@ -413,6 +449,11 @@ int axolotl_seed_map_render(
 
 	unsigned char colors[256][3];
 	initBiomeColors(colors);
+	/* cubiomes' palette predates sulfur caves; keep this id consistent with
+	 * the client picker instead of rendering it as black. */
+	colors[187][0] = 0xc8;
+	colors[187][1] = 0xc8;
+	colors[187][2] = 0x28;
 	biomesToImage(rgb, colors, biomes, width, height, 1, 2);
 
 	if (highlight_mask) {

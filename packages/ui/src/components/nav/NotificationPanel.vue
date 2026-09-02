@@ -51,7 +51,9 @@
 							<ButtonStyled circular size="small">
 								<button
 									v-tooltip="
-										item.supportData ? 'Copy error details for support' : 'Copy to clipboard'
+										item.supportData
+											? formatMessage(messages.copySupport)
+											: formatMessage(messages.copy)
 									"
 									@click="copyToClipboard(item)"
 								>
@@ -61,7 +63,7 @@
 							</ButtonStyled>
 							<ButtonStyled v-if="item.type === 'error' && onErrorAction" circular size="small">
 								<button
-									v-tooltip="errorActionLabel"
+									v-tooltip="errorActionLabel || formatMessage(messages.exportErrorLogs)"
 									:disabled="exporting[item.id]"
 									@click="handleErrorAction(item)"
 								>
@@ -69,7 +71,11 @@
 								</button>
 							</ButtonStyled>
 							<ButtonStyled circular size="small">
-								<button v-tooltip="`Dismiss`" @click="dismissNotification(index)">
+								<button
+									:aria-label="formatMessage(messages.dismiss)"
+									v-tooltip="formatMessage(messages.dismiss)"
+									@click="dismissNotification(index)"
+								>
 									<XIcon />
 								</button>
 							</ButtonStyled>
@@ -108,11 +114,29 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import { useModalStack } from '#ui/composables/modal-stack.ts'
 
+import { defineMessages, useVIntl } from '../../composables/i18n'
 import { injectNotificationManager, type WebNotification } from '../../providers'
 import ButtonStyled from '../base/ButtonStyled.vue'
 
 const notificationManager = injectNotificationManager()
-const notifications = computed<WebNotification[]>(() => notificationManager.getNotifications())
+const { formatMessage } = useVIntl()
+const messages = defineMessages({
+	copySupport: {
+		id: 'notification.panel.copy-support',
+		defaultMessage: 'Copy error details for support',
+	},
+	copy: { id: 'notification.panel.copy', defaultMessage: 'Copy to clipboard' },
+	dismiss: { id: 'notification.panel.dismiss', defaultMessage: 'Dismiss' },
+	exportErrorLogs: {
+		id: 'notification.panel.export-error-logs',
+		defaultMessage: 'Export error logs',
+	},
+})
+const notifications = computed<WebNotification[]>(() =>
+	[...notificationManager.getNotifications()]
+		.filter((notification) => !notification.collapsed)
+		.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0)),
+)
 const notificationLocation = computed(() => notificationManager.getNotificationLocation())
 
 const isIntercomPresent = ref<boolean>(false)
@@ -121,7 +145,10 @@ const exporting = ref<Record<string | number, boolean>>({})
 
 const stopTimer = (n: WebNotification) => notificationManager.stopNotificationTimer(n)
 const setNotificationTimer = (n: WebNotification) => notificationManager.setNotificationTimer(n)
-const dismissNotification = (n: number) => notificationManager.removeNotificationByIndex(n)
+const dismissNotification = (n: number) => {
+	const notification = notifications.value[n]
+	if (notification) notificationManager.collapseNotification(notification.id)
+}
 
 function createNotifText(notif: WebNotification): string {
 	return [notif.title, notif.text, notif.errorCode].filter(Boolean).join('\n')

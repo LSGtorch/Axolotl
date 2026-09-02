@@ -4,6 +4,7 @@
 		no-auto-focus
 		:aria-id="dropdownId || null"
 		:placement="placement"
+		:container="container"
 		:class="dropdownClass"
 		@apply-hide="focusTrigger"
 	>
@@ -47,6 +48,11 @@ defineProps({
 	placement: {
 		type: String,
 		default: 'bottom-end',
+		required: false,
+	},
+	container: {
+		type: [String, Object, Boolean],
+		default: 'body',
 		required: false,
 	},
 })

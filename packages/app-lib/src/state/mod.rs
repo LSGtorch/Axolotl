@@ -1,6 +1,7 @@
 //! Theseus state management system
 use crate::util::fetch::{FetchSemaphore, IoSemaphore};
 use dashmap::DashMap;
+use parking_lot::RwLock;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{
@@ -146,6 +147,10 @@ pub struct State {
     pub(crate) instance_locks: Arc<InstanceLockManager>,
 
     pub(crate) pool: SqlitePool,
+
+    // Cloning reqwest::Client retains its underlying connection pool.
+    configured_http_client: RwLock<reqwest::Client>,
+    configured_http_client_update: AsyncMutex<()>,
 
     pub(crate) file_watcher: FileWatcher,
 }
@@ -610,7 +615,15 @@ impl State {
         &self,
         config: &crate::util::proxy::ProxyConfig,
     ) -> crate::Result<()> {
-        crate::state::proxy_settings::set(&self.pool, config).await
+        let _update = self.configured_http_client_update.lock().await;
+        let client = crate::util::fetch::build_configured_client(config)?;
+        crate::state::proxy_settings::set(&self.pool, config).await?;
+        *self.configured_http_client.write() = client;
+        Ok(())
+    }
+
+    pub(crate) fn configured_http_client(&self) -> reqwest::Client {
+        self.configured_http_client.read().clone()
     }
 
     pub(crate) fn auto_prefers_mirror(&self) -> bool {
@@ -832,6 +845,9 @@ impl State {
         let api_semaphore =
             FetchSemaphore(Semaphore::new(download_concurrency));
         let auto_prefers_mirror = settings.auto_prefers_mirror();
+        let proxy_config = proxy_settings::get(&pool).await?;
+        let configured_http_client =
+            crate::util::fetch::build_configured_client(&proxy_config)?;
 
         tracing::info!("Initializing directories");
         DirectoryInfo::move_launcher_directory(
@@ -905,6 +921,8 @@ impl State {
             restart_after_pending_update: AtomicBool::new(false),
             instance_locks: Arc::new(InstanceLockManager::default()),
             pool,
+            configured_http_client: RwLock::new(configured_http_client),
+            configured_http_client_update: AsyncMutex::new(()),
             file_watcher,
             // app_identifier,
         }))
@@ -933,6 +951,9 @@ pub(crate) async fn test_state(
     pool: SqlitePool,
 ) -> crate::Result<Arc<State>> {
     let file_watcher = instances::watcher::init_watcher().await?;
+    let proxy_config = proxy_settings::get(&pool).await?;
+    let configured_http_client =
+        crate::util::fetch::build_configured_client(&proxy_config)?;
 
     Ok(Arc::new(State {
         directories,
@@ -968,6 +989,8 @@ pub(crate) async fn test_state(
         restart_after_pending_update: AtomicBool::new(false),
         instance_locks: Arc::new(InstanceLockManager::default()),
         pool,
+        configured_http_client: RwLock::new(configured_http_client),
+        configured_http_client_update: AsyncMutex::new(()),
         file_watcher,
     }))
 }

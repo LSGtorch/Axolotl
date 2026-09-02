@@ -89,7 +89,7 @@ jobs:
       - run: cargo check --package theseus_gui --features updater
       - name: Build modern Windows installer
         if: runner.os == 'Windows'
-        run: pnpm --filter @modrinth/app tauri build --config tauri-modern.conf.json
+        run: pnpm --filter @modrinth/app tauri build --config tauri-release.conf.json --config tauri-modern.conf.json
       - name: Verify modern Windows installer
         if: runner.os == 'Windows'
         shell: pwsh

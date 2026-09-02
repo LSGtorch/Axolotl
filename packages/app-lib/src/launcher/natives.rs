@@ -52,7 +52,7 @@ pub(crate) fn resolve_native_archives(
         {
             continue;
         }
-        if !library.downloadable || library.natives.is_none() {
+        if !library.downloadable || !download::is_native_library(library) {
             continue;
         }
         let Some(classifier) =
@@ -65,11 +65,14 @@ pub(crate) fn resolve_native_archives(
             .as_ref()
             .and_then(|downloads| downloads.classifiers.as_ref())
             .and_then(|classifiers| classifiers.get(&classifier));
-        let classified_path =
-            libraries_dir.join(download::classified_library_artifact_path(
-                &library.name,
-                &classifier,
-            )?);
+        let classified_path = libraries_dir.join(
+            if let Some(path) = native.and_then(|native| native.path.as_deref())
+            {
+                path.to_owned()
+            } else {
+                download::native_library_artifact_path(library, &classifier)?
+            },
+        );
         let (archive_path, sha1) = if let Some(native) = native {
             let cached = caches_dir
                 .join("minecraft-natives")
@@ -77,7 +80,21 @@ pub(crate) fn resolve_native_archives(
             // Modern native archives are content-addressed by SHA1. Do not
             // silently substitute the Maven artifact: it can be a different
             // classifier/version and produce an ABI-incompatible DLL set.
-            (cached, Some(native.sha1.clone()))
+            if cached.is_file() {
+                (cached, Some(native.sha1.clone()))
+            } else if classified_path.is_file()
+                && (native.sha1.len() != 40
+                    || sha1_file(&classified_path)? == native.sha1)
+            {
+                // Older instances downloaded classifiers directly into
+                // libraries/. Reuse that artifact when it is verifiably the
+                // requested archive (or when the legacy metadata has no
+                // usable SHA-1 to verify), allowing repair/import to recover
+                // without a redundant network download.
+                (classified_path, None)
+            } else {
+                (cached, Some(native.sha1.clone()))
+            }
         } else {
             (classified_path, None)
         };
@@ -571,6 +588,40 @@ mod tests {
             archives[0].archive_path,
             caches_dir.join(
                 "minecraft-natives/05359f3aa50d36352815fc662ea73e1c00d22170.jar"
+            )
+        );
+    }
+
+    #[test]
+    fn classifier_native_library_is_selected_for_preparation() {
+        let root = tempfile::tempdir().unwrap();
+        let library: Library = serde_json::from_value(serde_json::json!({
+            "name": "org.lwjgl:lwjgl:3.2.2:natives-windows",
+            "downloads": {
+                "artifact": {
+                    "sha1": "abc",
+                    "size": 1,
+                    "url": "https://example.com/native.jar"
+                }
+            }
+        }))
+        .unwrap();
+
+        let archives = resolve_native_archives(
+            &root.path().join("libraries"),
+            &root.path().join("caches"),
+            &[library],
+            "x86_64",
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(archives.len(), 1);
+        assert_eq!(archives[0].classifier, "natives-windows");
+        assert_eq!(
+            archives[0].archive_path,
+            root.path().join(
+                "libraries/org/lwjgl/lwjgl/3.2.2/lwjgl-3.2.2-natives-windows.jar"
             )
         );
     }

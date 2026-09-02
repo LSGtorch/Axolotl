@@ -50,6 +50,7 @@ use winreg::{RegKey, enums::HKEY_CURRENT_USER};
 mod args;
 mod direct_ensure;
 mod direct_link;
+mod local_artifact;
 mod natives;
 
 pub mod download;

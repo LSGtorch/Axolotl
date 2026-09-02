@@ -12,7 +12,7 @@ export function saveBrowseReturnSnapshot<T>(snapshot: BrowseReturnSnapshot<T>): 
 }
 
 export function consumeBrowseReturnSnapshot<T>(url: string): BrowseReturnSnapshot<T> | null {
-	if (pendingReturnUrl !== url || pendingSnapshot?.url !== url) return null
+	if (pendingSnapshot?.url !== url) return null
 
 	const snapshot = pendingSnapshot as BrowseReturnSnapshot<T>
 	pendingSnapshot = null

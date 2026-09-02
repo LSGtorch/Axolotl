@@ -839,8 +839,17 @@ const displayedLinkedModpackContentItems = computed(() => [
 function duplicateModKey(item: ContentItem): string | null {
 	const projectId = item.project?.id
 	if (!projectId) return null
+	// Datapacks under saves/<world>/ are independent installations. Include
+	// the world scope so the same project can be used by multiple worlds
+	// without showing a cross-world duplicate warning.
+	const normalizedPath = item.file_path?.replaceAll('\\', '/')
+	const worldPath =
+		item.project_type === 'datapack'
+			? normalizedPath?.match(/^saves\/([^/]+)\/datapacks\//)?.[1]
+			: undefined
+	const scope = worldPath ? `:world:${worldPath}` : ''
 	if (projectId.startsWith('local:')) {
-		return item.project?.slug ? `local:${item.project.slug}` : null
+		return item.project?.slug ? `local:${item.project.slug}${scope}` : null
 	}
 
 	const provider = item.origin_provider ?? item.provider_refs[0]?.provider
@@ -849,7 +858,7 @@ function duplicateModKey(item: ContentItem): string | null {
 		provider === 'curseforge' && projectId.startsWith('curseforge:')
 			? projectId.slice('curseforge:'.length)
 			: projectId
-	return `${provider}:${normalizedProjectId}`
+	return `${provider}:${normalizedProjectId}${scope}`
 }
 
 const duplicateModCounts = computed(() => {

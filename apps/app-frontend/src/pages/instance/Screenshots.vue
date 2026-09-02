@@ -24,6 +24,7 @@ import {
 	useVIntl,
 } from '@modrinth/ui'
 import { convertFileSrc, invoke } from '@tauri-apps/api/core'
+import { join } from '@tauri-apps/api/path'
 import { exists, mkdir, readDir, readFile, remove, stat } from '@tauri-apps/plugin-fs'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 
@@ -162,7 +163,7 @@ const screenshotContextMenuOptions = [
 	{ name: 'delete_screenshot', color: 'danger' },
 ]
 
-const screenshotsPath = computed(() => `${instanceRoot.value}/screenshots`)
+const screenshotsPath = ref('')
 const filteredScreenshots = computed(() => {
 	const query = searchQuery.value.trim().toLocaleLowerCase()
 	if (!query) return screenshots.value
@@ -264,7 +265,7 @@ async function refresh() {
 			entries
 				.filter((entry) => !entry.isDirectory && IMAGE_EXTENSIONS.has(extensionOf(entry.name)))
 				.map(async (entry): Promise<Screenshot | null> => {
-					const path = `${screenshotsPath.value}/${entry.name}`
+					const path = await join(screenshotsPath.value, entry.name)
 					try {
 						const metadata = await stat(path)
 						return {
@@ -464,6 +465,7 @@ function handleKeydown(event: KeyboardEvent) {
 async function initialize(instanceId: string) {
 	firstPaintPending.value = true
 	instanceRoot.value = await get_full_path(instanceId)
+	screenshotsPath.value = await join(instanceRoot.value, 'screenshots')
 	searchQuery.value = ''
 	selectedScreenshot.value = null
 	await refresh()

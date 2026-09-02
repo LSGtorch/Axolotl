@@ -24,6 +24,8 @@ const props = defineProps<{
 	dimension: SeedMapDimension
 	enabled: boolean
 	highlightedBiomes: number[]
+	/** Container used for the popover while the map is in browser fullscreen. */
+	container?: HTMLElement | string | boolean
 }>()
 
 const emit = defineEmits<{
@@ -196,6 +198,7 @@ function invertBiomes() {
 			<PopoutMenu
 				:aria-label="formatMessage(messages.chooseBiome)"
 				dropdown-class="seed-map-biome-popout"
+				:container="props.container"
 				placement="top-start"
 			>
 				<LayersIcon />
@@ -212,7 +215,9 @@ function invertBiomes() {
 				</span>
 				<ChevronDownIcon />
 				<template #menu>
-					<div class="flex w-[min(30rem,calc(100vw-1.5rem))] max-h-[min(30rem,calc(100dvh-2rem))] min-h-0 flex-col gap-[0.65rem] overflow-hidden">
+					<div
+						class="flex w-[min(30rem,calc(100vw-1.5rem))] max-h-[min(30rem,calc(100dvh-2rem))] min-h-0 flex-col gap-[0.65rem] overflow-hidden"
+					>
 						<div
 							class="biome-picker-heading flex items-center justify-between gap-3 p-[0.1rem_0.2rem] text-contrast max-sm:flex-col max-sm:items-start"
 						>
@@ -498,5 +503,4 @@ function invertBiomes() {
 	max-height: calc(100dvh - 0.75rem);
 	overflow: hidden;
 }
-
 </style>

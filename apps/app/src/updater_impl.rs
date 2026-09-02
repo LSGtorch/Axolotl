@@ -1,7 +1,5 @@
 use crate::api::Result;
-use semver::Version;
-use serde::{Deserialize, Serialize};
-use std::path::Path;
+use serde::Serialize;
 use std::sync::{Arc, Mutex};
 use tauri::http::HeaderValue;
 use tauri::http::header::ACCEPT;
@@ -15,10 +13,10 @@ use theseus::{
 use tokio::time::Instant;
 use url::Url;
 
-const MIAWA_API_BASE: &str = "https://miawa.cn/api/v2";
-const MIAWA_HOST: &str = "https://miawa.cn";
-const MIAWA_API_TIMEOUT: std::time::Duration =
-    std::time::Duration::from_secs(15);
+// The fork publishes its signed manifest on the fork's GitHub release. Keep
+// this endpoint aligned with tauri-release.conf.json and the fork signing key.
+const UPDATE_SERVER_LATEST_URL: &str =
+    "https://github.com/LSGtorch/Axolotl/releases/latest/download/latest.json";
 
 // Debian and derivatives update via the apt package manager. The whole
 // operation (repo setup script plus package install) runs as a single
@@ -27,28 +25,9 @@ const AXOLOTL_APT_SETUP_URL: &str = "https://ppa.axlmc.org/setup.sh";
 const AXOLOTL_APT_PACKAGE: &str = "axolotl-launcher";
 
 // The updater plugin builds `Update` with no request timeout, so a stalled
-// connection would hang the download forever. Bound the whole download
-// (installers can exceed 100 MB) so failures always surface and can fall
-// back to another source.
+// connection would hang the download forever. Bound the whole download.
 const UPDATE_DOWNLOAD_TIMEOUT: std::time::Duration =
     std::time::Duration::from_secs(15 * 60);
-
-// ── Miawa API types ──────────────────────────────────────────────
-
-#[derive(Deserialize)]
-struct MiawaEnvelope<T> {
-    data: T,
-}
-
-#[derive(Deserialize)]
-struct MiawaLatest {
-    version: String,
-}
-
-#[derive(Deserialize)]
-struct MiawaPrepare {
-    download_url: String,
-}
 
 // ── Shared types ─────────────────────────────────────────────────
 
@@ -60,124 +39,65 @@ pub struct UpdateMetadata {
     version: String,
     date: Option<String>,
     body: Option<String>,
+    published_at: Option<String>,
+    force_update: bool,
     raw_json: serde_json::Value,
 }
 
 #[derive(Default)]
 pub struct PendingUpdateData(pub Mutex<Option<(Arc<Update>, Vec<u8>)>>);
 
-// ── Miawa API helpers ────────────────────────────────────────────
-
-fn miawa_client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .user_agent(launcher_user_agent())
-        .timeout(MIAWA_API_TIMEOUT)
-        .build()
-        .expect("Failed to build Miawa HTTP client")
-}
-
-async fn miawa_latest_version() -> Result<String> {
-    let client = miawa_client();
-    let latest: MiawaEnvelope<MiawaLatest> = client
-        .get(format!("{MIAWA_API_BASE}/latest/axolotl"))
-        .send()
-        .await
-        .map_err(|e| {
-            theseus::Error::from(theseus::ErrorKind::OtherError(format!(
-                "Miawa latest version request failed: {e}"
-            )))
-        })?
-        .json()
-        .await
-        .map_err(|e| {
-            theseus::Error::from(theseus::ErrorKind::OtherError(format!(
-                "Failed to parse Miawa latest version response: {e}"
-            )))
-        })?;
-
-    Ok(latest.data.version)
-}
-
-fn miawa_update_available(current: &Version, remote_tag: &str) -> Result<bool> {
-    let remote =
-        Version::parse(remote_tag.trim_start_matches('v')).map_err(|e| {
-            theseus::Error::from(theseus::ErrorKind::OtherError(format!(
-                "Failed to parse Miawa latest version {remote_tag:?}: {e}"
-            )))
-        })?;
-
-    Ok(remote > *current)
-}
-
-/// Resolve a download URL for a Miawa file path via the prepare API.
-async fn miawa_prepare_url(file_path: &str) -> Result<Url> {
-    let client = miawa_client();
-    let prepare: MiawaEnvelope<MiawaPrepare> = client
-        .post(format!("{MIAWA_API_BASE}/downloads/prepare"))
-        .json(&serde_json::json!({ "file_path": file_path }))
-        .send()
-        .await
-        .map_err(|e| {
-            theseus::Error::from(theseus::ErrorKind::OtherError(format!(
-                "Miawa prepare request failed: {e}"
-            )))
-        })?
-        .json()
-        .await
-        .map_err(|e| {
-            theseus::Error::from(theseus::ErrorKind::OtherError(format!(
-                "Failed to parse Miawa prepare response: {e}"
-            )))
-        })?;
-
-    Url::parse(&format!("{MIAWA_HOST}{}", prepare.data.download_url)).map_err(
-        |e| {
-            theseus::Error::from(theseus::ErrorKind::OtherError(format!(
-                "Failed to parse Miawa download URL: {e}"
-            )))
-            .into()
-        },
-    )
-}
-
 // ── Updater plugin helpers ───────────────────────────────────────
 
-fn update_endpoints(source: &str) -> Result<Vec<Url>> {
-    let endpoints = match source {
-        "github" | "official" => vec![
-            "https://github.com/Mystic-Stars/Axolotl/releases/latest/download/latest.json",
-        ],
-        "cnb" => vec![
-            "https://cnb.cool/axlmc/Axolotl/-/git/raw/update/latest.json",
-            "https://github.com/Mystic-Stars/Axolotl/releases/latest/download/latest.json",
-        ],
-        _ => {
-            return Err(theseus::Error::from(theseus::ErrorKind::OtherError(
-                format!("Unknown update source: {source}"),
-            ))
-            .into());
-        }
-    };
+fn update_channel(channel: &str) -> Result<&str> {
+    match channel {
+        "release" | "beta" => Ok(channel),
+        _ => Err(theseus::Error::from(theseus::ErrorKind::OtherError(
+            format!("Unknown update channel: {channel}"),
+        ))
+        .into()),
+    }
+}
 
-    endpoints
-        .into_iter()
-        .map(|endpoint| {
-            Url::parse(endpoint).map_err(|error| {
-                theseus::Error::from(theseus::ErrorKind::OtherError(
-                    error.to_string(),
-                ))
-                .into()
-            })
-        })
-        .collect()
+fn update_platform() -> Result<&'static str> {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("windows", "x86_64") => Ok("windows-x86_64"),
+        ("linux", "x86_64") => Ok("linux-x86_64"),
+        ("linux", "aarch64") => Ok("linux-aarch64"),
+        ("macos", "x86_64") => Ok("darwin-x86_64"),
+        ("macos", "aarch64") => Ok("darwin-aarch64"),
+        (os, arch) => {
+            Err(theseus::Error::from(theseus::ErrorKind::OtherError(format!(
+                "Unsupported updater platform: {os}-{arch}"
+            )))
+            .into())
+        }
+    }
+}
+
+fn update_endpoint() -> Result<Url> {
+    Url::parse(UPDATE_SERVER_LATEST_URL).map_err(|error| {
+        theseus::Error::from(theseus::ErrorKind::OtherError(error.to_string()))
+            .into()
+    })
 }
 
 /// Build the platform-updater with the given endpoints and run a check.
 async fn check_with_endpoints<R: Runtime>(
     webview: &Webview<R>,
-    endpoints: Vec<Url>,
+    channel: &str,
 ) -> Result<Option<Update>> {
-    let mut updater = webview.updater_builder().endpoints(endpoints)?;
+    let channel = update_channel(channel)?;
+    let platform = update_platform()?;
+    let current_version =
+        webview.app_handle().package_info().version.to_string();
+    let mut updater = webview
+        .updater_builder()
+        .endpoints(vec![update_endpoint()?])?
+        .header("Accept", "application/json")?
+        .header("X-Axolotl-Channel", channel)?
+        .header("X-Axolotl-Platform", platform)?
+        .header("X-Axolotl-Version", current_version)?;
 
     #[cfg(target_os = "windows")]
     {
@@ -209,79 +129,34 @@ async fn check_with_endpoints<R: Runtime>(
     updater.check().await.map_err(Into::into)
 }
 
-/// Plain updater-plugin check against the static endpoints of `source`.
+/// Check the updater manifest through the configured Update Server endpoint.
 async fn check_with_updater<R: Runtime>(
     webview: &Webview<R>,
-    source: &str,
+    channel: &str,
 ) -> Result<Option<UpdateMetadata>> {
-    let endpoints = update_endpoints(source)?;
-    let Some(mut update) = check_with_endpoints(webview, endpoints).await?
-    else {
+    let Some(mut update) = check_with_endpoints(webview, channel).await? else {
         return Ok(None);
     };
     update.timeout = Some(UPDATE_DOWNLOAD_TIMEOUT);
 
+    let published_at = update
+        .raw_json
+        .get("published_at")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned);
+    let force_update = update
+        .raw_json
+        .get("force_update")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
     let metadata = UpdateMetadata {
         rid: webview.resources_table().add(update.clone()),
         current_version: update.current_version.clone(),
         version: update.version.clone(),
         date: None,
         body: update.body.clone(),
-        raw_json: update.raw_json,
-    };
-
-    Ok(Some(metadata))
-}
-
-async fn check_miawa<R: Runtime>(
-    webview: &Webview<R>,
-) -> Result<Option<UpdateMetadata>> {
-    let tag_name = miawa_latest_version().await?;
-    let current_version = webview.app_handle().package_info().version.clone();
-
-    if !miawa_update_available(&current_version, &tag_name)? {
-        tracing::info!(
-            current = %current_version,
-            latest = %tag_name,
-            "Miawa has no newer version; skipping latest.json check"
-        );
-        return Ok(None);
-    }
-
-    let latest_url =
-        miawa_prepare_url(&format!("axolotl/{tag_name}/latest.json")).await?;
-    tracing::info!("Miawa latest.json resolved (tag {tag_name}): {latest_url}");
-
-    let Some(mut update) =
-        check_with_endpoints(webview, vec![latest_url]).await?
-    else {
-        return Ok(None);
-    };
-    update.timeout = Some(UPDATE_DOWNLOAD_TIMEOUT);
-
-    // Redirect the actual download to the Miawa mirror.
-    let filename = update
-        .download_url
-        .path_segments()
-        .and_then(|s| s.last().filter(|s| !s.is_empty()))
-        .ok_or_else(|| {
-            theseus::Error::from(theseus::ErrorKind::OtherError(
-                "Could not extract filename from download URL".to_string(),
-            ))
-        })?
-        .to_string();
-
-    let mirror_url =
-        miawa_prepare_url(&format!("axolotl/{tag_name}/{filename}")).await?;
-    tracing::info!("Miawa mirror download URL (file {filename}): {mirror_url}");
-    update.download_url = mirror_url;
-
-    let metadata = UpdateMetadata {
-        rid: webview.resources_table().add(update.clone()),
-        current_version: update.current_version.clone(),
-        version: update.version.clone(),
-        date: None,
-        body: update.body.clone(),
+        published_at,
+        force_update,
         raw_json: update.raw_json,
     };
 
@@ -293,63 +168,9 @@ async fn check_miawa<R: Runtime>(
 #[tauri::command]
 pub async fn check_app_update<R: Runtime>(
     webview: Webview<R>,
-    source: String,
+    channel: String,
 ) -> Result<Option<UpdateMetadata>> {
-    match source.as_str() {
-        "miawa" => {
-            // 1. Try Miawa mirror
-            match check_miawa(&webview).await {
-                Ok(Some(metadata)) => {
-                    tracing::info!(
-                        "Update {} available via Miawa mirror",
-                        metadata.version
-                    );
-                    return Ok(Some(metadata));
-                }
-                Ok(None) => {
-                    tracing::info!("No update available via Miawa mirror");
-                    return Ok(None);
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "Miawa check failed, falling back to CNB: {e}"
-                    );
-                }
-            }
-
-            // 2. Fallback: CNB
-            match check_with_updater(&webview, "cnb").await {
-                Ok(result) => return Ok(result),
-                Err(e) => {
-                    tracing::warn!(
-                        "CNB check failed, falling back to GitHub: {e}"
-                    );
-                }
-            }
-
-            // 3. Fallback: GitHub
-            check_with_updater(&webview, "github").await
-        }
-        "cnb" => {
-            // 1. Try CNB
-            match check_with_updater(&webview, "cnb").await {
-                Ok(result) => return Ok(result),
-                Err(e) => {
-                    tracing::warn!(
-                        "CNB check failed, falling back to GitHub: {e}"
-                    );
-                }
-            }
-
-            // 2. Fallback: GitHub
-            check_with_updater(&webview, "github").await
-        }
-        "github" | "official" => check_with_updater(&webview, "github").await,
-        _ => Err(theseus::Error::from(theseus::ErrorKind::OtherError(
-            format!("Unknown update source: {source}"),
-        ))
-        .into()),
-    }
+    check_with_updater(&webview, &channel).await
 }
 
 // Reimplementation of Update::download mostly, minus the actual download part
@@ -465,12 +286,12 @@ pub fn remove_enqueued_update<R: Runtime>(webview: Webview<R>) {
 pub fn is_apt_linux() -> bool {
     #[cfg(target_os = "linux")]
     {
-        let debian_like = Path::new("/etc/debian_version").exists()
-            || Path::new("/etc/apt").is_dir()
-            || Path::new("/usr/bin/apt-get").exists();
+        let debian_like = std::path::Path::new("/etc/debian_version").exists()
+            || std::path::Path::new("/etc/apt").is_dir()
+            || std::path::Path::new("/usr/bin/apt-get").exists();
         let has_pkexec = ["/usr/bin/pkexec", "/bin/pkexec"]
             .iter()
-            .any(|path| Path::new(path).exists());
+            .any(|path| std::path::Path::new(path).exists());
         debian_like && has_pkexec
     }
     #[cfg(not(target_os = "linux"))]

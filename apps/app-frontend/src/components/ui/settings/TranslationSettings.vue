@@ -388,50 +388,25 @@ function reportOperationError(error?: unknown, context?: string) {
 
 watch(
 	settings,
-	(newSettings, oldSettings) => {
+	(newSettings) => {
 		if (loading.value) {
 			debugLog('Watch', 'Skipping save - still loading')
 			return
 		}
 
-		// Log what changed
-		if (oldSettings) {
-			const changes: string[] = []
-			if (newSettings.provider !== oldSettings.provider)
-				changes.push(`provider: ${oldSettings.provider} -> ${newSettings.provider}`)
-			if (newSettings.target_language !== oldSettings.target_language)
-				changes.push(
-					`target_language: ${oldSettings.target_language} -> ${newSettings.target_language}`,
-				)
-			if (newSettings.deepl_api_endpoint !== oldSettings.deepl_api_endpoint)
-				changes.push(`deepl_api_endpoint changed`)
-			if (newSettings.deepl_api_key !== oldSettings.deepl_api_key)
-				changes.push(`deepl_api_key changed (set: ${!!newSettings.deepl_api_key?.trim()})`)
-			if (newSettings.ai_provider_id !== oldSettings.ai_provider_id)
-				changes.push(
-					`ai_provider_id: ${oldSettings.ai_provider_id} -> ${newSettings.ai_provider_id}`,
-				)
-			if (newSettings.ai_model_id !== oldSettings.ai_model_id)
-				changes.push(`ai_model_id: ${oldSettings.ai_model_id} -> ${newSettings.ai_model_id}`)
-			if (newSettings.mode !== oldSettings.mode)
-				changes.push(`mode: ${oldSettings.mode} -> ${newSettings.mode}`)
-			if (newSettings.style !== oldSettings.style)
-				changes.push(`style: ${oldSettings.style} -> ${newSettings.style}`)
-			if (newSettings.auto_translate !== oldSettings.auto_translate)
-				changes.push(
-					`auto_translate: ${oldSettings.auto_translate} -> ${newSettings.auto_translate}`,
-				)
-
-			if (changes.length > 0) {
-				debugLog('Watch', 'Settings changed:', changes)
-			} else {
-				debugLog('Watch', 'Settings object reference changed but values are same')
-				return
-			}
-		}
+		// Deep watchers receive the same object for old and new values when a
+		// nested field is mutated in place. Always schedule a save for a loaded
+		// settings change instead of comparing those references.
+		debugLog('Watch', 'Settings changed', {
+			provider: newSettings.provider,
+			mode: newSettings.mode,
+			style: newSettings.style,
+			autoTranslate: newSettings.auto_translate,
+		})
 
 		clearTimeout(saveTimer)
 		saveTimer = setTimeout(() => {
+			saveTimer = undefined
 			debugLog('Save', 'Saving settings to backend', {
 				provider: newSettings.provider,
 				deeplApiKeySet: !!newSettings.deepl_api_key?.trim(),
@@ -442,7 +417,7 @@ watch(
 
 			// Only save settings, don't show error notifications
 			// Errors during save should be silent - only test button shows errors
-			void updateTranslationSettings(settings.value)
+			void updateTranslationSettings({ ...settings.value })
 				.then(() => {
 					debugLog('Save', 'Settings saved successfully')
 				})
@@ -483,7 +458,8 @@ onUnmounted(() => {
 	clearInterval(poolTimer)
 	if (loading.value || !saveTimer) return
 	clearTimeout(saveTimer)
-	void updateTranslationSettings(settings.value).catch(reportOperationError)
+	saveTimer = undefined
+	void updateTranslationSettings({ ...settings.value }).catch(reportOperationError)
 })
 
 onMounted(async () => {
@@ -546,7 +522,7 @@ async function testProvider() {
 
 	try {
 		debugLog('Test', 'Saving settings before test...')
-		await updateTranslationSettings(settings.value)
+		await updateTranslationSettings({ ...settings.value })
 		debugLog('Test', 'Settings saved, now testing provider...')
 
 		const result = await testTranslationProvider(settings.value.provider)

@@ -1906,11 +1906,7 @@ fn list_instance_schematics(
             let metadata =
                 entry.metadata().map_err(|error| error.to_string())?;
             result.push(InstanceSchematicFile {
-                relative_path: path
-                    .strip_prefix(&root)
-                    .map_err(|error| error.to_string())?
-                    .to_string_lossy()
-                    .to_string(),
+                relative_path: instance_relative_path(&root, &path)?,
                 file_name: entry.file_name().to_string_lossy().to_string(),
                 format: extension,
                 size: metadata.len(),
@@ -1924,6 +1920,18 @@ fn list_instance_schematics(
     }
     result.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
     Ok(result)
+}
+
+// IPC file paths use `/` regardless of the host separator. Local filesystem
+// paths remain `Path` values until this serialization boundary.
+fn instance_relative_path(root: &Path, path: &Path) -> Result<String, String> {
+    Ok(path
+        .strip_prefix(root)
+        .map_err(|error| error.to_string())?
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/"))
 }
 
 #[cfg(test)]
@@ -1948,6 +1956,17 @@ mod tests {
         };
         assert_eq!(instance_id, "demo");
         assert_eq!(relative_path, "config/worldedit/schematics/house.schem");
+    }
+
+    #[test]
+    fn instance_relative_paths_use_ipc_separators() {
+        let root = PathBuf::from("instance").join("schematics");
+        let path = root.join("nested").join("house.schem");
+
+        assert_eq!(
+            instance_relative_path(&root, &path).unwrap(),
+            "nested/house.schem"
+        );
     }
 
     fn vec3(x: i32, y: i32, z: i32) -> NbtCompound {

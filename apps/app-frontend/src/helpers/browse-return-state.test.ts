@@ -36,6 +36,13 @@ test('does not consume a snapshot for a different browse URL', () => {
 	clearBrowseReturnSnapshot()
 })
 
+test('consumes a matching snapshot without a route guard marker', () => {
+	const url = '/browse/mod?source=modrinth'
+	saveBrowseReturnSnapshot({ url, scrollTop: 480, state: {} })
+
+	assert.deepEqual(consumeBrowseReturnSnapshot(url), { url, scrollTop: 480, state: {} })
+})
+
 test('clears snapshots for ordinary Browse navigation', () => {
 	const url = '/browse/mod?page=2'
 	saveBrowseReturnSnapshot({ url, scrollTop: 480, state: {} })

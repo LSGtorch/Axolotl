@@ -11,6 +11,18 @@
   "app.action-bar.downloads": {
     "message": "Downloads"
   },
+  "app.action-bar.notifications": {
+    "message": "Notifications"
+  },
+  "app.action-bar.notifications.clear": {
+    "message": "Clear all"
+  },
+  "app.action-bar.notifications.dismiss": {
+    "message": "Dismiss notification"
+  },
+  "app.action-bar.notifications.empty": {
+    "message": "No notifications"
+  },
   "app.action-bar.exporting-modpack": {
     "message": "Exporting modpack"
   },
@@ -31,6 +43,9 @@
   },
   "app.action-bar.install.cache-repair.title": {
     "message": "Project metadata cache error"
+  },
+  "app.action-bar.install.cancel": {
+    "message": "Cancel"
   },
   "app.action-bar.install.copied-details": {
     "message": "Copied"
@@ -721,6 +736,9 @@
   },
   "app.browse.source.planet-minecraft": {
     "message": "Planet Minecraft"
+  },
+  "app.build.beta": {
+    "message": "Beta"
   },
   "app.community-announcement.feedback-middle": {
     "message": ", or share them with us through "
@@ -4427,6 +4445,9 @@
   "app.lab.seed-map.copyright.visit-minecraft-search": {
     "message": "Visit MinecraftSearch"
   },
+  "app.lab.seed-map.depth": {
+    "message": "Map depth"
+  },
   "app.lab.seed-map.description": {
     "message": "Explore a Minecraft seed locally with biomes, structures, and saved markers."
   },
@@ -4454,11 +4475,14 @@
   "app.lab.seed-map.edition.java-large-biomes": {
     "message": "Java: Large Biomes"
   },
-  "app.lab.seed-map.elevation": {
-    "message": "Surface"
+  "app.lab.seed-map.elevation.deep-underground": {
+    "message": "Deep underground"
   },
-  "app.lab.seed-map.elevation-locked": {
-    "message": "Follows the estimated surface while terrain estimation is on"
+  "app.lab.seed-map.elevation.shallow-underground": {
+    "message": "Underground"
+  },
+  "app.lab.seed-map.elevation.surface": {
+    "message": "Surface"
   },
   "app.lab.seed-map.exit-fullscreen": {
     "message": "Exit fullscreen"
@@ -6005,9 +6029,6 @@
   "app.servers.card.type": {
     "message": "{type} · {version}"
   },
-  "app.servers.console.command-echo": {
-    "message": "> {command}"
-  },
   "app.servers.console.not-running": {
     "message": "The server is not running"
   },
@@ -6552,7 +6573,7 @@
     "message": "Show snapshots"
   },
   "app.servers.wizard.type-heading": {
-    "message": "Choose a server type"
+    "message": "Choose a server core"
   },
   "app.servers.wizard.type-title": {
     "message": "Server type"
@@ -6589,6 +6610,15 @@
   },
   "app.settings.about.development-team": {
     "message": "Development team"
+  },
+  "app.settings.about.easteregg.click-hint": {
+    "message": "Click to open a hidden Mini Game"
+  },
+  "app.settings.about.easteregg.contributors-title": {
+    "message": "Contributors' mini game"
+  },
+  "app.settings.about.easteregg.game-title": {
+    "message": "Mini Game"
   },
   "app.settings.about.game.best": {
     "message": "Best: {score}"
@@ -7292,17 +7322,110 @@
   "app.settings.updates.available": {
     "message": "An update is available."
   },
+  "app.settings.updates.channel.beta": {
+    "message": "Beta"
+  },
+  "app.settings.updates.channel.beta-description": {
+    "message": "New, less stable updates with the latest features. Updates arrive more often."
+  },
+  "app.settings.updates.channel.copy-database": {
+    "message": "Copy database"
+  },
+  "app.settings.updates.channel.copy-database-description": {
+    "message": "To prevent potential issues, the Beta version will use separate data storage so as not to affect the proper functioning of the official version. It seems this is your first time using the Beta version. Would you like to copy the data from the stable version to the Beta version? This action cannot be automatically undone."
+  },
+  "app.settings.updates.channel.copy-database-title": {
+    "message": "Copy Release data to Beta?"
+  },
+  "app.settings.updates.channel.description": {
+    "message": "Choose which launcher versions Axolotl receives."
+  },
+  "app.settings.updates.channel.label": {
+    "message": "Channel"
+  },
+  "app.settings.updates.channel.release": {
+    "message": "Release"
+  },
+  "app.settings.updates.channel.release-description": {
+    "message": "Stable, tested features and fixes. Updates arrive less often."
+  },
+  "app.settings.updates.channel.restart-description": {
+    "message": "Restart Axolotl now to start using the new update channel, or restart manually later."
+  },
+  "app.settings.updates.channel.restart-development-description": {
+    "message": "The new update channel will be used after you manually restart the development session."
+  },
+  "app.settings.updates.channel.restart-later": {
+    "message": "Restart manually later"
+  },
+  "app.settings.updates.channel.restart-now": {
+    "message": "Restart now"
+  },
+  "app.settings.updates.channel.restart-title": {
+    "message": "Restart required"
+  },
+  "app.settings.updates.channel.start-empty": {
+    "message": "Start with empty database"
+  },
+  "app.settings.updates.channel.title": {
+    "message": "Update channel"
+  },
   "app.settings.updates.check": {
+    "message": "Check for updates"
+  },
+  "app.settings.updates.check.title": {
     "message": "Check for updates"
   },
   "app.settings.updates.checking": {
     "message": "Checking for updates…"
   },
-  "app.settings.updates.cnb": {
-    "message": "CNB"
+  "app.settings.updates.current-version": {
+    "message": "Current version {version}"
   },
-  "app.settings.updates.description": {
-    "message": "Choose where Axolotl checks for launcher updates."
+  "app.settings.updates.database-isolation.active": {
+    "message": "Active"
+  },
+  "app.settings.updates.database-isolation.beta": {
+    "message": "Beta database"
+  },
+  "app.settings.updates.database-isolation.current-database": {
+    "message": "Database currently in use"
+  },
+  "app.settings.updates.database-isolation.description": {
+    "message": "Release and Beta use separate databases, so testing Beta does not change your Release data."
+  },
+  "app.settings.updates.database-isolation.release": {
+    "message": "Release database"
+  },
+  "app.settings.updates.database-isolation.title": {
+    "message": "Database isolation"
+  },
+  "app.settings.updates.database-operation.active-target": {
+    "message": "Cannot overwrite the database currently in use. Restart Axolotl and switch channels first."
+  },
+  "app.settings.updates.database-operation.beta-to-release": {
+    "message": "Copy Beta to Release"
+  },
+  "app.settings.updates.database-operation.cancel": {
+    "message": "Cancel"
+  },
+  "app.settings.updates.database-operation.confirm": {
+    "message": "Overwrite database"
+  },
+  "app.settings.updates.database-operation.confirm-description": {
+    "message": "This will completely replace the inactive {target} database with the contents of the {source} database. This cannot be undone."
+  },
+  "app.settings.updates.database-operation.confirm-title": {
+    "message": "Overwrite database?"
+  },
+  "app.settings.updates.database-operation.failed": {
+    "message": "The database could not be copied. Please make sure Axolotl is not using the target database."
+  },
+  "app.settings.updates.database-operation.label": {
+    "message": "Database operation"
+  },
+  "app.settings.updates.database-operation.release-to-beta": {
+    "message": "Copy Release to Beta"
   },
   "app.settings.updates.disabled": {
     "message": "Updates are disabled in this build."
@@ -7310,26 +7433,47 @@
   "app.settings.updates.failed": {
     "message": "Could not check for updates."
   },
-  "app.settings.updates.github": {
-    "message": "GitHub"
+  "app.settings.updates.immediate-fetch": {
+    "message": "Get updates as soon as they are available"
   },
-  "app.settings.updates.miawa": {
-    "message": "LemwoodMirror"
+  "app.settings.updates.immediate-fetch-description": {
+    "message": "After the latest stable changes and fixes are released, be among the first to receive them."
+  },
+  "app.settings.updates.immediate-fetch.beta-description": {
+    "message": "Beta updates are always available immediately."
+  },
+  "app.settings.updates.latest-version": {
+    "message": "Latest {channel} version: {version}"
+  },
+  "app.settings.updates.latest-version-loading": {
+    "message": "Fetching latest version…"
+  },
+  "app.settings.updates.latest-version-unavailable": {
+    "message": "Latest version unavailable"
   },
   "app.settings.updates.offline": {
     "message": "Connect to the internet to check for updates."
   },
+  "app.settings.updates.pause": {
+    "message": "Pause updates"
+  },
+  "app.settings.updates.pause-description": {
+    "message": "Stop automatic update checks, downloads, and update notifications until you resume updates."
+  },
+  "app.settings.updates.paused": {
+    "message": "Updates are paused."
+  },
   "app.settings.updates.portable": {
-    "message": "Portable mode cannot update automatically. Please update manually from GitHub."
+    "message": "Portable mode cannot update automatically. Please download the latest version manually."
+  },
+  "app.settings.updates.preferences.title": {
+    "message": "Update behavior"
   },
   "app.settings.updates.preview-announcement": {
     "message": "Preview update announcement"
   },
   "app.settings.updates.security": {
     "message": "Updates are installed only when their cryptographic signature is valid."
-  },
-  "app.settings.updates.title": {
-    "message": "Update source"
   },
   "app.settings.updates.up-to-date": {
     "message": "Axolotl is up to date."
@@ -7727,6 +7871,9 @@
   "app.update-announcement.version": {
     "message": "Version {version}"
   },
+  "app.update-popup.apt-update": {
+    "message": "Update"
+  },
   "app.update-popup.body.download-complete": {
     "message": "Axolotl Launcher v{version} has finished downloading. Reload to update now, or automatically when you close Axolotl Launcher."
   },
@@ -7741,9 +7888,6 @@
   },
   "app.update-popup.download": {
     "message": "Download ({size})"
-  },
-  "app.update-popup.apt-update": {
-    "message": "Update"
   },
   "app.update-popup.download-complete": {
     "message": "Download complete"

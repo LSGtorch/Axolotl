@@ -26,8 +26,8 @@ type AnnouncementCatalog = {
 
 // 每次用户访问时从客户端实时拉取。数据来自 app 前端的公告 catalog
 // （apps/app-frontend/src/announcements/catalog.ts），由发布 CI 导出并经
-// CNB 镜像同步，由本站 Netlify Function（/api/releases/catalog）实时转发
-// ——客户端直连 CNB 会被 CORS 拦截，整个链路不依赖 GitHub API。
+// Release metadata is served by the website endpoint and does not require a
+// direct browser request to the GitHub API.
 const CATALOG_URL = '/api/releases/catalog'
 const CHANGE_TYPES: readonly AnnouncementChangeType[] = [
 	'added',
@@ -146,14 +146,18 @@ useHead({
 			<p>{{ formatMessage(messages.description) }}</p>
 		</header>
 
-		<div v-if="isLoading" class="status-panel flex items-center justify-center gap-3 m-0 p-8 border border-surface-5 rounded-lg bg-surface-4 text-[var(--color-secondary)] text-center" role="status">
+		<div
+			v-if="isLoading"
+			class="status-panel m-0 flex items-center justify-center gap-3 rounded-lg border border-surface-5 bg-surface-4 p-8 text-center text-[var(--color-secondary)]"
+			role="status"
+		>
 			<div class="loading-indicator" aria-hidden="true" />
 			{{ formatMessage(messages.loading) }}
 		</div>
 
 		<div
 			v-else-if="error"
-			class="status-panel flex items-center justify-center gap-3 m-0 p-8 border border-surface-5 rounded-lg bg-surface-4 text-[var(--color-secondary)] text-center error-panel justify-between text-left"
+			class="status-panel error-panel m-0 flex items-center justify-center justify-between gap-3 rounded-lg border border-surface-5 bg-surface-4 p-8 text-left text-center text-[var(--color-secondary)]"
 			role="alert"
 		>
 			<div>
@@ -165,7 +169,10 @@ useHead({
 			</ButtonStyled>
 		</div>
 
-		<p v-else-if="!announcements?.length" class="status-panel flex items-center justify-center gap-3 m-0 p-8 border border-surface-5 rounded-lg bg-surface-4 text-[var(--color-secondary)] text-center">
+		<p
+			v-else-if="!announcements?.length"
+			class="status-panel m-0 flex items-center justify-center gap-3 rounded-lg border border-surface-5 bg-surface-4 p-8 text-center text-[var(--color-secondary)]"
+		>
 			{{ formatMessage(messages.empty) }}
 		</p>
 
@@ -174,16 +181,18 @@ useHead({
 				v-for="(announcement, index) in announcements"
 				:key="announcement.id"
 				:open-by-default="index === 0"
-				class="overflow-hidden border border-surface-5 rounded-lg bg-surface-4"
+				class="overflow-hidden rounded-lg border border-surface-5 bg-surface-4"
 				button-class="group flex w-full cursor-pointer items-center gap-4 border-0 bg-transparent px-5 py-4 text-left"
 			>
 				<template #title>
 					<div class="announcement-heading flex min-w-0 flex-1 items-center justify-between gap-4">
-						<div class="flex items-center min-w-0 gap-3">
+						<div class="flex min-w-0 items-center gap-3">
 							<h2>{{ getLocalizedText(announcement.title) }}</h2>
 							<TagItem>{{ announcement.version }}</TagItem>
 						</div>
-						<div class="flex items-center shrink-0 gap-[0.35rem] text-[var(--color-secondary)] text-[0.8125rem]">
+						<div
+							class="flex shrink-0 items-center gap-[0.35rem] text-[0.8125rem] text-[var(--color-secondary)]"
+						>
 							<CalendarIcon aria-hidden="true" />
 							<time :datetime="announcement.publishedAt">
 								{{ announcement.publishedAt }}
@@ -192,13 +201,13 @@ useHead({
 					</div>
 				</template>
 
-				<div class="px-[1.25rem] pb-2 border-t border-surface-5 bg-surface-3">
+				<div class="border-t border-surface-5 bg-surface-3 px-[1.25rem] pb-2">
 					<p
 						v-if="
 							!announcement.changes ||
 							CHANGE_TYPES.every((type) => !announcement.changes?.[type]?.length)
 						"
-						class="m-0 pt-4 pb-2 text-[var(--color-secondary)] leading-[1.6]"
+						class="m-0 pb-2 pt-4 leading-[1.6] text-[var(--color-secondary)]"
 					>
 						{{ formatMessage(messages.noReleaseNotes) }}
 					</p>
@@ -222,7 +231,7 @@ useHead({
 			</Accordion>
 		</div>
 
-		<div class="flex items-center justify-center gap-2 mt-8 text-[var(--color-secondary)] text-sm">
+		<div class="mt-8 flex items-center justify-center gap-2 text-sm text-[var(--color-secondary)]">
 			<HistoryIcon aria-hidden="true" />
 			<a href="https://github.com/Mystic-Stars/Axolotl/releases" target="_blank" rel="noopener">
 				GitHub Releases

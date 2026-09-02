@@ -91,7 +91,7 @@ pub fn get_class_paths(
             get_lib_path(
                 libraries_path,
                 &library.name,
-                library.natives.is_some(),
+                crate::launcher::download::is_native_library(library),
             )
         }))
         .process_results(|iter| {

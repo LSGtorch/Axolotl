@@ -165,7 +165,7 @@ export async function renderSeedMapTile(request: SeedMapTileRequest): Promise<Se
 			scale: request.scale,
 			width: request.width,
 			height: request.height,
-			elevation: request.elevation ?? 62,
+			elevation: request.elevation ?? 128,
 			terrain: request.terrain,
 			contours: request.contours,
 			highlightBiomes: request.highlightBiomes ?? null,

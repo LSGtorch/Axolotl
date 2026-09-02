@@ -106,7 +106,10 @@ impl InstallJobState {
         let target = request.target();
         let cleanup = request.cleanup();
         let kind = request.kind();
-        let phase = InstallPhaseId::PreparingInstance;
+        // Content installs do not create or prepare an instance. Start them in
+        // the content phase so the download center never presents them as an
+        // instance setup task while the worker is being scheduled.
+        let phase = initial_phase_for_request(&request);
 
         Self {
             schema_version: 1,
@@ -211,6 +214,19 @@ impl InstallJobState {
         self.progress.phase = phase;
         self.progress.progress = progress;
         self.progress.details = details;
+    }
+}
+
+pub(crate) fn initial_phase_for_request(
+    request: &InstallRequest,
+) -> InstallPhaseId {
+    match request {
+        InstallRequest::InstallContent { .. }
+        | InstallRequest::InstallCurseForgeContent { .. }
+        | InstallRequest::InstallCurseForgeWorld { .. } => {
+            InstallPhaseId::DownloadingContent
+        }
+        _ => InstallPhaseId::PreparingInstance,
     }
 }
 

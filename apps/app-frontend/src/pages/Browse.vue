@@ -23,7 +23,6 @@ import type {
 	BrowseDisplayMode,
 	BrowseDisplayModeOption,
 	BrowseInstallContentType,
-	BrowseSearchResponse,
 	CardAction,
 	ProjectType,
 	Tags,
@@ -194,13 +193,6 @@ function rememberBrowseContentProjectType(type: ProjectType) {
 
 watch(projectType, rememberBrowseContentProjectType, { immediate: true })
 
-type BrowseReturnState = {
-	searchResponse: BrowseSearchResponse
-	originalProjectHits: BrowseSearchResponse['projectHits']
-	originalServerHits: BrowseSearchResponse['serverHits']
-	translationActive: boolean
-}
-
 const curseForgeClassIds: Partial<Record<ProjectType, number>> = {
 	mod: 6,
 	plugin: 5,
@@ -261,7 +253,7 @@ function resolveInitialContentSource(): BrowseContentSource {
 
 const contentSource = ref<BrowseContentSource>(resolveInitialContentSource())
 const sourceBeforeWorldMapBrowse = ref<BrowseContentSource>(
-	isWorldMapBrowse.value ? getLastBrowseContentSource() ?? 'all' : contentSource.value,
+	isWorldMapBrowse.value ? (getLastBrowseContentSource() ?? 'all') : contentSource.value,
 )
 if (isWorldMapBrowse.value) {
 	contentSource.value = 'curseforge'
@@ -1006,20 +998,10 @@ if (instance.value) {
 onBeforeRouteLeave((to) => {
 	if (isBrowseReturnSourcePath(to.path)) {
 		const viewport = document.querySelector<HTMLElement>('.app-viewport')
-		saveBrowseReturnSnapshot<BrowseReturnState>({
+		saveBrowseReturnSnapshot({
 			url: route.fullPath,
 			scrollTop: viewport?.scrollTop ?? 0,
-			state: {
-				searchResponse: {
-					projectHits: searchState.projectHits.value,
-					serverHits: searchState.serverHits.value,
-					total_hits: searchState.totalHits.value,
-					per_page: searchState.maxResults.value,
-				},
-				originalProjectHits: originalProjectHits.value,
-				originalServerHits: originalServerHits.value,
-				translationActive: translationActive.value,
-			},
+			state: {},
 		})
 	}
 
@@ -1190,12 +1172,21 @@ const installContext = computed(() => {
 const installingProjectIds = ref<Set<string>>(new Set())
 const CART_CONTENT_TYPES = new Set(['mod', 'resourcepack', 'datapack', 'shader', 'world'])
 
-function setProjectInstalling(projectId: string, installing: boolean) {
+function projectInstallingKey(projectId: string, instanceId?: string | null) {
+	return `${instanceId ?? activeInstance.value?.id ?? ''}\0${projectId}`
+}
+
+function setProjectInstalling(
+	projectId: string,
+	installing: boolean,
+	instanceId?: string | null,
+) {
+	const key = projectInstallingKey(projectId, instanceId)
 	const next = new Set(installingProjectIds.value)
 	if (installing) {
-		next.add(projectId)
+		next.add(key)
 	} else {
-		next.delete(projectId)
+		next.delete(key)
 	}
 	installingProjectIds.value = next
 }
@@ -1253,7 +1244,7 @@ async function toggleContentSelection(
 		return
 	}
 
-	setProjectInstalling(project.project_id, true)
+	setProjectInstalling(project.project_id, true, target.id)
 	try {
 		const preferences = getInstanceInstallTargetPreferences(contentType)
 		let versionId = project.latest_version || null
@@ -1290,7 +1281,7 @@ async function toggleContentSelection(
 			preferences,
 		})
 	} finally {
-		setProjectInstalling(project.project_id, false)
+		setProjectInstalling(project.project_id, false, target.id)
 	}
 }
 
@@ -1399,7 +1390,7 @@ function getCardActions(
 			: projectResult.project_id
 	const selectionKey = makeContentSelectionKey(projectResult.provider, providerProjectId)
 	const isInstalling =
-		installingProjectIds.value.has(projectResult.project_id) ||
+		installingProjectIds.value.has(projectInstallingKey(projectResult.project_id)) ||
 		contentSelection.isInstalling(selectionKey)
 	const isSelected = contentSelection.isSelected(selectionKey)
 	const isInstalled =
@@ -1457,6 +1448,7 @@ function getCardActions(
 				color: isQueued && !isInstalling && !isInstallingSelection ? 'green' : 'brand',
 				type: 'outlined',
 				onClick: async () => {
+					const installInstanceId = activeInstance.value?.id ?? null
 					if (isQueued) {
 						removeQueuedServerInstall(projectResult.project_id)
 						return
@@ -1466,7 +1458,7 @@ function getCardActions(
 					const isModpack = contentType === 'modpack'
 					const shouldShowInstalling = isModpack || !isQueued
 					if (shouldShowInstalling) {
-						setProjectInstalling(projectResult.project_id, true)
+						setProjectInstalling(projectResult.project_id, true, installInstanceId)
 					}
 					try {
 						await requestInstall({
@@ -1497,7 +1489,7 @@ function getCardActions(
 						handleError(err as Error)
 					} finally {
 						if (shouldShowInstalling) {
-							setProjectInstalling(projectResult.project_id, false)
+							setProjectInstalling(projectResult.project_id, false, installInstanceId)
 						}
 					}
 				},
@@ -1570,14 +1562,14 @@ function getCardActions(
 			type: 'outlined',
 			onClick: async () => {
 				const installInstanceId = instance.value?.id ?? null
-				setProjectInstalling(projectResult.project_id, true)
+				setProjectInstalling(projectResult.project_id, true, installInstanceId)
 				try {
 					const selectedInstall =
 						instance.value && projectResult.provider === 'modrinth'
 							? await chooseInstanceInstallVersion(projectResult, currentProjectType)
 							: { versionId: null as string | null }
 					if (selectedInstall === null) {
-						setProjectInstalling(projectResult.project_id, false)
+						setProjectInstalling(projectResult.project_id, false, installInstanceId)
 						return
 					}
 					const selectedPreferences = getCurrentSelectedInstallPreferences(currentProjectType)
@@ -1594,7 +1586,7 @@ function getCardActions(
 						instance.value ? instance.value.id : null,
 						'SearchCard',
 						(versionId, installedProjectIds) => {
-							setProjectInstalling(projectResult.project_id, false)
+							setProjectInstalling(projectResult.project_id, false, installInstanceId)
 							if (versionId && activeInstance.value?.id === installInstanceId) {
 								onSearchResultsInstalled(installedProjectIds ?? [projectResult.project_id])
 							}
@@ -1609,7 +1601,7 @@ function getCardActions(
 						},
 					)
 				} catch (err) {
-					setProjectInstalling(projectResult.project_id, false)
+					setProjectInstalling(projectResult.project_id, false, installInstanceId)
 					handleError(err)
 				}
 			},
@@ -2592,7 +2584,7 @@ const lockedFilterMessages = computed(() => ({
 	),
 }))
 
-const browseReturnSnapshot = consumeBrowseReturnSnapshot<BrowseReturnState>(route.fullPath)
+const browseReturnSnapshot = consumeBrowseReturnSnapshot(route.fullPath)
 
 const displayMode = ref<BrowseDisplayMode>(getLastBrowseContentDisplayMode())
 
@@ -2629,7 +2621,6 @@ const searchState = useBrowseSearch({
 		source:
 			isWorldMapBrowse.value || contentSource.value === 'all' ? undefined : contentSource.value,
 	}),
-	initialSearchResponse: browseReturnSnapshot?.state.searchResponse,
 	displayMode,
 })
 
@@ -2730,12 +2721,6 @@ const {
 	toggle,
 	cancel: cancelTranslation,
 } = useTranslationToggle()
-
-if (browseReturnSnapshot) {
-	originalProjectHits.value = browseReturnSnapshot.state.originalProjectHits
-	originalServerHits.value = browseReturnSnapshot.state.originalServerHits
-	translationActive.value = browseReturnSnapshot.state.translationActive
-}
 
 // Keep a pristine copy when genuine search results arrive (project hits).
 watch(
@@ -2918,34 +2903,41 @@ watch(queuedServerInstallCount, (count) => {
 	}
 })
 
-if (!browseReturnSnapshot || contentSource.value === 'mcarchive') {
-	void searchState.refreshSearch()
-}
-
 type UnlistenFn = () => void
 
 let isUnmounted = false
 let unlistenInstances: UnlistenFn | null = null
+let pendingBrowseReturnScroll = browseReturnSnapshot !== null
+
+async function restoreBrowseReturnScroll() {
+	if (!browseReturnSnapshot) return
+
+	await nextTick()
+	await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+	if (isUnmounted) return
+	document.querySelector<HTMLElement>('.app-viewport')?.scrollTo({
+		top: browseReturnSnapshot.scrollTop,
+	})
+	completeBrowseReturnNavigation(route.fullPath)
+}
+
+watch(
+	searchState.loading,
+	(isLoading) => {
+		if (isLoading || !pendingBrowseReturnScroll) return
+
+		pendingBrowseReturnScroll = false
+		void restoreBrowseReturnScroll()
+	},
+	{ flush: 'post' },
+)
 
 onMounted(() => {
 	if (pendingRouteInstanceSwitch.value) {
 		instanceSelector.value?.requestSwitch(pendingRouteInstanceSwitch.value)
 		pendingRouteInstanceSwitch.value = null
 	}
-	if (browseReturnSnapshot) {
-		void nextTick().then(
-			() =>
-				new Promise<void>((resolve) => {
-					requestAnimationFrame(() => {
-						document.querySelector<HTMLElement>('.app-viewport')?.scrollTo({
-							top: browseReturnSnapshot.scrollTop,
-						})
-						completeBrowseReturnNavigation(route.fullPath)
-						resolve()
-					})
-				}),
-		)
-	}
+	void searchState.refreshSearch()
 
 	instance_listener(async (event: { event: string; instance_id: string }) => {
 		if (
@@ -2974,7 +2966,6 @@ onUnmounted(() => {
 })
 
 function getProjectBrowseQuery() {
-	if (!installContext.value) return undefined
 	return {
 		...route.query,
 		b: route.fullPath,

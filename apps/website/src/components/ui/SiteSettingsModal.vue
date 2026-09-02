@@ -55,7 +55,7 @@ const messages = defineMessages({
 	downloadSourceDescription: {
 		id: 'axolotl-settings.download-source.description',
 		defaultMessage:
-			'Automatic selection uses Lemwood Mirror in mainland China and GitHub elsewhere.',
+			'Automatic selection uses the Update Server, with GitHub available as a backup.',
 	},
 	downloadSourceAuto: {
 		id: 'axolotl-settings.download-source.auto',
@@ -65,21 +65,13 @@ const messages = defineMessages({
 		id: 'axolotl-settings.download-source.auto.description',
 		defaultMessage: 'Choose a source from your browser language and timezone.',
 	},
-	downloadSourceMiawa: {
-		id: 'axolotl-settings.download-source.miawa',
-		defaultMessage: 'Lemwood Mirror',
+	downloadSourceUpdateServer: {
+		id: 'axolotl-settings.download-source.update-server',
+		defaultMessage: 'Update Server',
 	},
-	downloadSourceMiawaDescription: {
-		id: 'axolotl-settings.download-source.miawa.description',
-		defaultMessage: 'Recommended for visitors in mainland China.',
-	},
-	downloadSourceCnb: {
-		id: 'axolotl-settings.download-source.cnb',
-		defaultMessage: 'CNB',
-	},
-	downloadSourceCnbDescription: {
-		id: 'axolotl-settings.download-source.cnb.description',
-		defaultMessage: 'Alternative source for mainland China.',
+	downloadSourceUpdateServerDescription: {
+		id: 'axolotl-settings.download-source.update-server.description',
+		defaultMessage: 'Download through the official Axolotl update service.',
 	},
 	downloadSourceGithub: {
 		id: 'axolotl-settings.download-source.github',
@@ -139,14 +131,9 @@ const downloadSourceOptions = computed<
 		subLabel: formatMessage(messages.downloadSourceAutoDescription),
 	},
 	{
-		value: 'miawa',
-		label: formatMessage(messages.downloadSourceMiawa),
-		subLabel: formatMessage(messages.downloadSourceMiawaDescription),
-	},
-	{
-		value: 'cnb',
-		label: formatMessage(messages.downloadSourceCnb),
-		subLabel: formatMessage(messages.downloadSourceCnbDescription),
+		value: 'update-server',
+		label: formatMessage(messages.downloadSourceUpdateServer),
+		subLabel: formatMessage(messages.downloadSourceUpdateServerDescription),
 	},
 	{
 		value: 'github',
@@ -156,8 +143,8 @@ const downloadSourceOptions = computed<
 ])
 
 const resolvedDownloadSourceLabel = computed(() => {
-	if (resolvedSource.value === 'miawa') return formatMessage(messages.downloadSourceMiawa)
-	if (resolvedSource.value === 'cnb') return formatMessage(messages.downloadSourceCnb)
+	if (resolvedSource.value === 'update-server')
+		return formatMessage(messages.downloadSourceUpdateServer)
 	return formatMessage(messages.downloadSourceGithub)
 })
 
@@ -345,7 +332,9 @@ onBeforeUnmount(() => {
 								</button>
 							</nav>
 
-							<div class="settings-brand flex items-center gap-3 mt-auto px-1 pt-4 text-[var(--color-secondary)] text-[0.8rem]">
+							<div
+								class="settings-brand mt-auto flex items-center gap-3 px-1 pt-4 text-[0.8rem] text-[var(--color-secondary)]"
+							>
 								<img src="/axolotl.png" alt="" />
 								<div>
 									<strong>Axolotl Launcher</strong>
@@ -355,7 +344,7 @@ onBeforeUnmount(() => {
 						</aside>
 
 						<div class="settings-main">
-							<section v-if="activeTab === 'appearance'" class="settings-pane px-8 pl-6 pb-12">
+							<section v-if="activeTab === 'appearance'" class="settings-pane px-8 pb-12 pl-6">
 								<div class="settings-section">
 									<h3>{{ formatMessage(messages.themeTitle) }}</h3>
 									<p>{{ formatMessage(messages.themeDescription) }}</p>
@@ -367,10 +356,10 @@ onBeforeUnmount(() => {
 									/>
 								</div>
 
-								<div class="settings-section mt-7 pt-6 border-t border-divider">
+								<div class="settings-section mt-7 border-t border-divider pt-6">
 									<h3>{{ formatMessage(messages.interfaceTitle) }}</h3>
 									<p>{{ formatMessage(messages.interfaceDescription) }}</p>
-									<div class="flex flex-col mt-3">
+									<div class="mt-3 flex flex-col">
 										<div class="setting-row">
 											<label for="advanced-rendering">
 												<strong>{{ formatMessage(messages.advancedRenderingTitle) }}</strong>
@@ -396,7 +385,7 @@ onBeforeUnmount(() => {
 								</div>
 							</section>
 
-							<section v-else-if="activeTab === 'downloads'" class="settings-pane px-8 pl-6 pb-12">
+							<section v-else-if="activeTab === 'downloads'" class="settings-pane px-8 pb-12 pl-6">
 								<div class="settings-section">
 									<h3>{{ formatMessage(messages.downloadsTitle) }}</h3>
 									<p>{{ formatMessage(messages.downloadsDescription) }}</p>
@@ -426,7 +415,10 @@ onBeforeUnmount(() => {
 								</div>
 							</section>
 
-							<section v-else-if="activeTab === 'language'" class="settings-pane px-8 pl-6 pb-12 language-pane">
+							<section
+								v-else-if="activeTab === 'language'"
+								class="settings-pane language-pane px-8 pb-12 pl-6"
+							>
 								<div class="settings-section">
 									<h3>{{ formatMessage(messages.languageTitle) }}</h3>
 									<p>{{ formatMessage(messages.languageDescription) }}</p>
@@ -463,7 +455,9 @@ onBeforeUnmount(() => {
 	display: flex;
 	flex-direction: column;
 	width: min(60rem, 100%);
+	// 手机 Firefox/Chrome 的动态工具栏不计入 vh，用 dvh 避免面板底部被遮挡
 	height: min(40rem, calc(100vh - 2rem));
+	height: min(40rem, calc(100dvh - 2rem));
 	overflow: hidden;
 	border: 1px solid var(--color-divider);
 	border-radius: 1.25rem;
@@ -676,6 +670,7 @@ onBeforeUnmount(() => {
 
 	.settings-panel {
 		height: 94vh;
+		height: 94dvh;
 		border-radius: 1.25rem 1.25rem 0 0;
 	}
 

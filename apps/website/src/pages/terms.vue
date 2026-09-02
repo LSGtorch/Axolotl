@@ -123,8 +123,8 @@ useHead({
 			GPL 或 AGPL 授予你对软件副本的权利。
 		</p>
 		<p>
-			启动器会按你的操作连接 Microsoft、Minecraft、Modrinth、CurseForge、GitHub、CNB、自定义
-			Yggdrasil
+			启动器会按你的操作连接 Microsoft、Minecraft、Modrinth、CurseForge、GitHub、Update
+			Server、自定义 Yggdrasil
 			服务及内容作者提供的下载地址。第三方服务、游戏内容和文件受其各自条款、隐私政策、许可证、可用性及地区限制约束；项目维护者不替第三方提供担保。
 		</p>
 
@@ -274,11 +274,11 @@ useHead({
 			AGPL.
 		</p>
 		<p>
-			The launcher connects to Microsoft, Minecraft, Modrinth, CurseForge, GitHub, CNB, custom
-			Yggdrasil services, and download addresses provided by content authors based on your actions.
-			Third-party services, game content, and files are subject to their own terms, privacy
-			policies, licenses, availability, and regional restrictions; the project maintainers do not
-			warrant third parties.
+			The launcher connects to Microsoft, Minecraft, Modrinth, CurseForge, GitHub, the Update
+			Server, custom Yggdrasil services, and download addresses provided by content authors based on
+			your actions. Third-party services, game content, and files are subject to their own terms,
+			privacy policies, licenses, availability, and regional restrictions; the project maintainers
+			do not warrant third parties.
 		</p>
 
 		<h2>7. No Warranty</h2>

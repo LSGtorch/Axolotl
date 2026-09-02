@@ -2552,6 +2552,18 @@
   "label.no-items": {
     "defaultMessage": "No items"
   },
+  "notification.panel.copy": {
+    "defaultMessage": "Copy to clipboard"
+  },
+  "notification.panel.copy-support": {
+    "defaultMessage": "Copy error details for support"
+  },
+  "notification.panel.dismiss": {
+    "defaultMessage": "Dismiss"
+  },
+  "notification.panel.export-error-logs": {
+    "defaultMessage": "Export error logs"
+  },
   "label.notifications": {
     "defaultMessage": "Notifications"
   },

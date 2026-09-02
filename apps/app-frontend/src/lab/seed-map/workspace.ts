@@ -43,6 +43,8 @@ export const SEED_MAP_STORAGE_KEY = 'axolotl.lab.seed-map.v1'
 
 export const SEED_MAP_SCALES = [1, 4, 16, 64, 256] as const
 export const SEED_MAP_MIN_ZOOM = -2
+/** Fixed vertical slices exposed by the seed-map elevation selector. */
+export const SEED_MAP_ELEVATIONS = [128, 16, -32] as const
 
 export function createDefaultSeedMapWorkspace(): SeedMapWorkspace {
 	return {
@@ -54,7 +56,7 @@ export function createDefaultSeedMapWorkspace(): SeedMapWorkspace {
 		displayMode: 'structures',
 		center: { x: 0, z: 0 },
 		zoom: 1,
-		elevation: 62,
+		elevation: SEED_MAP_ELEVATIONS[0],
 		showGrid: false,
 		showChunkCoordinates: false,
 		showSpawn: true,
@@ -142,7 +144,7 @@ export function sanitizeSeedMapWorkspace(
 		zoom:
 			Math.round(Math.min(Math.max(zoom, SEED_MAP_MIN_ZOOM), SEED_MAP_SCALES.length - 1) * 1_000) /
 			1_000,
-		elevation: Math.min(Math.max(Math.round(finiteNumber(source.elevation, 62)), -64), 320),
+		elevation: sanitizeElevation(source.elevation, fallback.elevation),
 		showGrid: source.showGrid === true,
 		showChunkCoordinates: source.showChunkCoordinates === true,
 		showSpawn: source.showSpawn !== false,
@@ -215,6 +217,15 @@ export function applyShareQuery(
 
 function finiteNumber(value: unknown, fallback: number): number {
 	return typeof value === 'number' && Number.isFinite(value) ? value : fallback
+}
+
+function sanitizeElevation(value: unknown, fallback: number): number {
+	const parsed = Math.round(finiteNumber(value, Number.NaN))
+	if (SEED_MAP_ELEVATIONS.some((elevation) => elevation === parsed)) return parsed
+	const normalizedFallback = Math.round(finiteNumber(fallback, SEED_MAP_ELEVATIONS[0]))
+	return SEED_MAP_ELEVATIONS.some((elevation) => elevation === normalizedFallback)
+		? normalizedFallback
+		: SEED_MAP_ELEVATIONS[0]
 }
 
 function parseQueryNumber(value: unknown, fallback: number): number {

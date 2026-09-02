@@ -95,7 +95,6 @@ pub(crate) async fn download(
             request,
             route,
             Arc::clone(&output),
-            part_path,
             range,
             total_size,
             Arc::clone(&downloaded),
@@ -128,14 +127,6 @@ pub(crate) async fn download(
                 preserve_partial: false,
             };
         }
-    }
-    if output.flush(part_path).await.is_err() {
-        drop(output);
-        let _ = tokio::fs::remove_file(part_path).await;
-        return H2DownloadOutcome::Fallback {
-            failure: H2DownloadFailure::Io,
-            preserve_partial: false,
-        };
     }
     drop(output);
     let verification = if let Some(cancellation) = request.cancellation.as_ref()
@@ -192,7 +183,6 @@ async fn download_range(
     request: &DownloadRequest,
     route: &DownloadRoute,
     output: Arc<super::range_output::RangeOutput>,
-    part_path: &Path,
     range: H2Range,
     total_size: u64,
     downloaded: Arc<AtomicU64>,
@@ -202,6 +192,10 @@ async fn download_range(
     let _permit = super::h2_stream_budget::acquire(route)
         .await
         .map_err(|_| H2DownloadFailure::Connect)?;
+    let mut writer = output
+        .open_range(range.start, range.end + 1)
+        .await
+        .map_err(|_| H2DownloadFailure::Io)?;
     let mut headers = super::h2_download::request_headers(request, route);
     headers.insert(ACCEPT_ENCODING, HeaderValue::from_static("identity"));
     headers.insert(
@@ -230,8 +224,8 @@ async fn download_range(
             return Err(H2DownloadFailure::Protocol);
         }
         let accepted = chunk.len();
-        output
-            .write_at(offset, &chunk[..accepted], part_path)
+        writer
+            .write_next(&chunk[..accepted])
             .await
             .map_err(|_| H2DownloadFailure::Io)?;
         activity.record_bytes(accepted);
@@ -253,7 +247,8 @@ async fn download_range(
     }
     (offset == range.end + 1)
         .then_some(())
-        .ok_or(H2DownloadFailure::Protocol)
+        .ok_or(H2DownloadFailure::Protocol)?;
+    writer.flush().await.map_err(|_| H2DownloadFailure::Io)
 }
 
 fn split_ranges(size: u64, count: usize) -> Vec<H2Range> {

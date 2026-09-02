@@ -4,7 +4,7 @@ use std::{
 };
 
 use daedalus::minecraft::{
-    AssetsIndex, DownloadType, LoggingConfiguration, LoggingSide,
+    AssetsIndex, DownloadType, Library, LoggingConfiguration, LoggingSide,
     VersionInfo as GameVersionInfo,
 };
 use dashmap::DashMap;
@@ -15,9 +15,10 @@ use tokio_util::sync::CancellationToken;
 use crate::instance::QuickPlayType;
 use crate::launcher::download::{
     ArtifactAvailability, LocalRuntimeSource, classify_local_artifact,
-    legacy_library_sha1, local_asset_index_path, local_asset_object_path,
-    local_client_path, local_library_path, local_log_config_path,
-    local_native_library_path,
+    is_native_library, legacy_library_sha1, library_native_classifier,
+    local_asset_index_path, local_asset_object_path, local_client_path,
+    local_library_path, local_log_config_path, local_native_library_path,
+    native_library_artifact_path,
 };
 use crate::launcher::parse_rules;
 use crate::state::{ModLoader, State};
@@ -336,6 +337,15 @@ struct RequiredArtifact {
     destination: PathBuf,
     expected_sha1: Option<String>,
     expected_size: Option<u64>,
+}
+
+fn library_classifier_coordinate_is_native(library: &Library) -> bool {
+    library
+        .name
+        .split(':')
+        .nth(3)
+        .and_then(|classifier| classifier.split('@').next())
+        .is_some_and(|classifier| classifier.starts_with("natives-"))
 }
 
 fn snapshot_for(
@@ -709,17 +719,23 @@ fn library_artifacts(
             continue;
         }
 
-        if let Some((os_key, classifiers)) =
-            library.natives_os_key_and_classifiers(java_arch)
-        {
-            let parsed_key =
-                os_key.replace("${arch}", crate::util::platform::ARCH_WIDTH);
-            if let Some(native) = classifiers.get(&parsed_key) {
+        if is_native_library(library) {
+            let Some(classifier) =
+                library_native_classifier(library, java_arch)
+            else {
+                continue;
+            };
+            let native = library
+                .downloads
+                .as_ref()
+                .and_then(|downloads| downloads.classifiers.as_ref())
+                .and_then(|classifiers| classifiers.get(&classifier));
+            if let Some(native) = native {
                 natives.push(RequiredArtifact {
                     relative_path: local_native_library_path(
                         library,
                         native,
-                        &parsed_key,
+                        &classifier,
                     )?,
                     destination: state
                         .directories
@@ -728,6 +744,31 @@ fn library_artifacts(
                         .join(format!("{}.jar", native.sha1)),
                     expected_sha1: Some(native.sha1.clone()),
                     expected_size: Some(native.size as u64),
+                });
+            } else if library_classifier_coordinate_is_native(library) {
+                // Forge and newer manifests may represent a native as a
+                // four-part coordinate (group:artifact:version:natives-*),
+                // with its metadata in downloads.artifact rather than the
+                // legacy downloads.classifiers map. Keep that artifact in
+                // libraries/ so native preparation can consume it directly.
+                let Some(artifact) = library
+                    .downloads
+                    .as_ref()
+                    .and_then(|downloads| downloads.artifact.as_ref())
+                    .filter(|artifact| !artifact.url.is_empty())
+                else {
+                    continue;
+                };
+                let artifact_path =
+                    native_library_artifact_path(library, &classifier)?;
+                natives.push(RequiredArtifact {
+                    relative_path: Path::new("libraries").join(&artifact_path),
+                    destination: state
+                        .directories
+                        .libraries_dir()
+                        .join(&artifact_path),
+                    expected_sha1: Some(artifact.sha1.clone()),
+                    expected_size: Some(artifact.size as u64),
                 });
             }
             continue;

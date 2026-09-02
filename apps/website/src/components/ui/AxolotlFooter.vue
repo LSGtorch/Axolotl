@@ -28,19 +28,34 @@ const messages = defineMessages({
 </script>
 
 <template>
-	<footer class="site-footer relative border-t border-divider bg-surface-1 text-[var(--color-base)]">
+	<footer
+		class="site-footer relative border-t border-divider bg-surface-1 text-[var(--color-base)]"
+	>
 		<div class="footer-inner">
-			<div class="footer-legal flex flex-wrap gap-x-[1.4rem] gap-y-[0.4rem] text-[var(--color-secondary)] text-[0.78rem]">
+			<div
+				class="footer-legal flex flex-wrap gap-x-[1.4rem] gap-y-[0.4rem] text-[0.78rem] text-[var(--color-secondary)]"
+			>
 				<p>© {{ new Date().getFullYear() }} {{ formatMessage(messages.developer) }}</p>
 				<p class="open-source">
-					{{ formatMessage(messages.openSourcePrefix) }}
-					<a href="https://github.com/Mystic-Stars/Axolotl" target="_blank" rel="noopener">
-						{{ formatMessage(messages.openSourceLink) }} </a
-					>.
+					<span>
+						{{ formatMessage(messages.openSourcePrefix) }}
+						<a href="https://github.com/Mystic-Stars/Axolotl" target="_blank" rel="noopener">
+							{{ formatMessage(messages.openSourceLink) }} </a
+						>.
+					</span>
+					<a href="https://www.netlify.com" target="_blank" rel="noopener" class="netlify-badge">
+						<img
+							src="https://www.netlify.com/assets/badges/netlify-badge-color-accent.svg"
+							alt="Deploys by Netlify"
+						/>
+					</a>
 				</p>
 			</div>
 
-			<nav class="footer-links flex flex-wrap justify-end gap-x-[1.3rem] gap-y-[0.35rem]" aria-label="Footer">
+			<nav
+				class="footer-links flex flex-wrap justify-end gap-x-[1.3rem] gap-y-[0.35rem]"
+				aria-label="Footer"
+			>
 				<NuxtLink to="/#features">{{ formatMessage(messages.features) }}</NuxtLink>
 				<NuxtLink to="/#faq">{{ formatMessage(messages.faq) }}</NuxtLink>
 				<a href="#download">{{ formatMessage(messages.downloads) }}</a>
@@ -49,7 +64,11 @@ const messages = defineMessages({
 				<NuxtLink to="/privacy">{{ formatMessage(messages.privacy) }}</NuxtLink>
 			</nav>
 
-			<p class="col-span-full m-0 text-center text-[0.64rem] text-[var(--color-secondary)] tracking-[0.015em] opacity-45">{{ formatMessage(messages.disclaimer) }}</p>
+			<p
+				class="col-span-full m-0 text-center text-[0.64rem] tracking-[0.015em] text-[var(--color-secondary)] opacity-45"
+			>
+				{{ formatMessage(messages.disclaimer) }}
+			</p>
 		</div>
 	</footer>
 </template>
@@ -80,6 +99,16 @@ const messages = defineMessages({
 }
 
 .footer-legal {
+	flex-direction: column;
+	align-items: flex-start;
+
+	.open-source {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+	}
+
 	p {
 		margin: 0;
 	}
@@ -87,6 +116,17 @@ const messages = defineMessages({
 	a {
 		color: var(--color-base);
 		text-underline-offset: 0.15rem;
+	}
+
+	.netlify-badge {
+		display: inline-flex;
+		align-items: center;
+
+		img {
+			display: block;
+			height: 1.5rem;
+			width: auto;
+		}
 	}
 }
 

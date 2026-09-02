@@ -30,7 +30,12 @@ pub use event::{
     emit::init_loading,
 };
 pub use logger::start_logger;
-pub use state::State;
+pub use state::db::{
+    backup_current_app_db_for_update, beta_database_exists,
+    copy_database_between_channels, copy_release_database_to_beta,
+    current_app_database_path,
+};
+pub use state::{DirectoryInfo, State};
 pub use storage::*;
 pub use util::fetch::{DownloadReason, build_proxied_client};
 pub use util::file_lock::{LockingProcess, get_locking_processes};

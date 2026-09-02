@@ -231,7 +231,7 @@ impl Integrity {
         self
     }
 
-    fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.size.is_none()
             && self.sha1.is_none()
             && self.sha512.is_none()
@@ -1135,9 +1135,9 @@ fn is_official_version_manifest_url(url: &str) -> bool {
 fn order_auto_routes(
     routes: &mut [DownloadRoute],
     resource: ResourceClass,
-    mirror_first_loader: bool,
+    force_mirror_first: bool,
 ) {
-    let cold_prefers_mirror = mirror_first_loader
+    let cold_prefers_mirror = force_mirror_first
         || crate::State::get_if_initialized()
             .is_some_and(|state| state.auto_prefers_mirror());
     let health = ROUTE_HEALTH.lock().clone();
@@ -1164,6 +1164,15 @@ fn order_auto_routes(
                 left_health
                     .consecutive_failures
                     .cmp(&right_health.consecutive_failures)
+            })
+            .then_with(|| {
+                force_mirror_first
+                    .then(|| {
+                        let left_mirror_rank = !left.is_mirror;
+                        let right_mirror_rank = !right.is_mirror;
+                        left_mirror_rank.cmp(&right_mirror_rank)
+                    })
+                    .unwrap_or(std::cmp::Ordering::Equal)
             })
             .then_with(|| {
                 (right_health.success_samples > 0)
@@ -1218,6 +1227,13 @@ fn uses_mirror_first_loader_routes(url: &str, resource: ResourceClass) -> bool {
         .any(|loader| path.contains(loader))
 }
 
+/// Content CDNs have no authentication requirement, so Automatic mode can
+/// safely try their mirror before historical official-CDN measurements. A
+/// failed or cooling mirror still remains behind a healthy official route.
+fn uses_mirror_first_cdn_routes(url: &str) -> bool {
+    is_modrinth_cdn_url(url) || is_forge_cdn_mirror_url(url)
+}
+
 pub fn resolve_download_routes_for(
     url: &str,
     resource: ResourceClass,
@@ -1231,7 +1247,7 @@ pub fn resolve_download_routes_for(
     // Modrinth API stays official-only. Modrinth CDN and CurseForge CDN content
     // use the existing mirror selector; in Automatic mode Tianpao is preferred
     // over official.
-    let mode = if is_modrinth_cdn_url(&url) || is_forge_cdn_mirror_url(&url) {
+    let mode = if uses_mirror_first_cdn_routes(&url) {
         if mode == crate::state::DownloadSourceMode::Auto {
             crate::state::DownloadSourceMode::MirrorPreferred
         } else {
@@ -1462,12 +1478,17 @@ pub fn build_proxied_client(
         .expect("proxied client configuration should be valid")
 }
 
-pub async fn configured_client() -> crate::Result<reqwest::Client> {
-    let proxy = crate::State::get().await?.proxy_config().await?;
+pub(crate) fn build_configured_client(
+    proxy: &crate::util::proxy::ProxyConfig,
+) -> crate::Result<reqwest::Client> {
     proxy
         .apply(reqwest_client_builder())?
         .build()
         .map_err(Into::into)
+}
+
+pub async fn configured_client() -> crate::Result<reqwest::Client> {
+    Ok(crate::State::get().await?.configured_http_client())
 }
 
 fn http1_file_reqwest_client_builder() -> reqwest::ClientBuilder {
@@ -4349,7 +4370,11 @@ async fn ensure_task_routes_probed(
     }
     let mirror_first_loader =
         uses_mirror_first_loader_routes(&request.url, request.resource);
-    order_auto_routes(routes, request.resource, mirror_first_loader);
+    order_auto_routes(
+        routes,
+        request.resource,
+        mirror_first_loader || uses_mirror_first_cdn_routes(&request.url),
+    );
 }
 
 pub(crate) async fn prepare_native_download_routes(
@@ -4372,7 +4397,8 @@ pub(crate) async fn prepare_native_download_routes(
         order_auto_routes(
             routes,
             request.resource,
-            uses_mirror_first_loader_routes(&request.url, request.resource),
+            uses_mirror_first_loader_routes(&request.url, request.resource)
+                || uses_mirror_first_cdn_routes(&request.url),
         );
     }
 }
@@ -4654,6 +4680,15 @@ async fn download_segment(
         };
         let downloaded_before_attempt = requested_start - range.start;
         let requested_end = range.end();
+        let mut writer = output
+            .open_range(
+                requested_start,
+                requested_end.checked_add(1).ok_or_else(|| {
+                    SegmentDownloadError::Protocol("range end overflow")
+                })?,
+            )
+            .await
+            .map_err(|error| SegmentDownloadError::Fatal(error.into()))?;
         let response = tokio::time::timeout(
             FILE_TRANSFER_FIRST_BYTE_TIMEOUT,
             send_path_request_with_clients(
@@ -4828,16 +4863,10 @@ async fn download_segment(
                                         if read == 0 {
                                             break;
                                         }
-                                        let write_offset = range.start
-                                            + range.state.lock().downloaded;
                                         let (accepted, _) =
                                             range.accept_chunk(read);
-                                        output
-                                            .write_at(
-                                                write_offset,
-                                                &buffer[..accepted],
-                                                part_path,
-                                            )
+                                        writer
+                                            .write_next(&buffer[..accepted])
                                             .await
                                             .map_err(|error| {
                                                 SegmentDownloadError::Fatal(
@@ -4919,26 +4948,29 @@ async fn download_segment(
                     break;
                 }
             };
-            let write_offset = range.start + range.state.lock().downloaded;
             let (accepted, completed) = range.accept_chunk(chunk.len());
-            output
-                .write_at(write_offset, &chunk[..accepted], part_path)
+            writer
+                .write_next(&chunk[..accepted])
                 .await
                 .map_err(|error| SegmentDownloadError::Fatal(error.into()))?;
             pending_progress += accepted as u64;
             speed.record_bytes(accepted as u64);
-            if pending_progress >= MIN_SEGMENT_SIZE {
-                let _ = progress.send(pending_progress);
-                pending_progress = 0;
-            }
             if completed {
                 break;
             }
         }
         if range.remaining() == 0 {
+            writer
+                .flush()
+                .await
+                .map_err(|error| SegmentDownloadError::Fatal(error.into()))?;
             break;
         }
         if attempt < SEGMENT_RETRY_ATTEMPTS {
+            writer
+                .flush()
+                .await
+                .map_err(|error| SegmentDownloadError::Fatal(error.into()))?;
             let downloaded_after_attempt = {
                 let state = range.state.lock();
                 state.downloaded
@@ -5327,9 +5359,6 @@ async fn try_segmented_download(
     }
 
     record_install_download_stage(request, DownloadItemStatus::Writing).await;
-    if let Err(error) = output.flush(part_path).await {
-        return SegmentedDownloadOutcome::Fatal(error.into());
-    }
     if downloaded != size {
         let _ = remove_if_exists(part_path).await;
         return SegmentedDownloadOutcome::FallbackSingle {
@@ -5492,17 +5521,22 @@ pub async fn download_to_path(
 ) -> crate::Result<DownloadResult> {
     let tracking = request.install_tracking.clone();
     let request_url = request.url.clone();
-    let result = download_to_path_inner(
-        request,
-        destination.as_ref(),
-        semaphore,
-        progress,
-    )
-    .await;
+    let destination_path = destination.as_ref();
+    let integrity = request.integrity.clone();
+    let result =
+        crate::util::single_flight::run(destination_path, &integrity, || {
+            download_to_path_inner(
+                request,
+                destination_path,
+                semaphore,
+                progress,
+            )
+        })
+        .await;
     if let Err(error) = &result {
         tracing::debug!(
             url = %request_url,
-            destination = %destination.as_ref().display(),
+            destination = %destination_path.display(),
             error = %error,
             error_chain = %error_chain(error),
             "Download failed"
@@ -7991,6 +8025,37 @@ mod tests {
         );
         assert_eq!(modrinth_routes[0].source, DownloadRouteSource::Official);
 
+        *ROUTE_HEALTH.lock() = previous_health;
+    }
+
+    #[test]
+    fn auto_modrinth_cdn_keeps_tianpao_ahead_of_a_sampled_official_route() {
+        let _guard = AUTO_SOURCE_TEST_LOCK.lock().unwrap();
+        let previous_health = std::mem::take(&mut *ROUTE_HEALTH.lock());
+        let url = "https://cdn-alt.modrinth.com/data/project/versions/version/file.jar";
+        let mut routes = explicit_mirror_routes(url, ResourceClass::Modrinth);
+        routes.push(official_route(url, ResourceClass::Modrinth));
+        let official = routes
+            .iter()
+            .find(|route| is_official_route(route))
+            .unwrap();
+        let key = route_health_key(official, ResourceClass::Modrinth).unwrap();
+        ROUTE_HEALTH.lock().insert(
+            key,
+            RouteHealth {
+                success_samples: 3,
+                throughput_bps: Some(100_000_000.0),
+                ..RouteHealth::default()
+            },
+        );
+
+        order_auto_routes(
+            &mut routes,
+            ResourceClass::Modrinth,
+            uses_mirror_first_cdn_routes(url),
+        );
+
+        assert_eq!(routes[0].source, DownloadRouteSource::Tianpao);
         *ROUTE_HEALTH.lock() = previous_health;
     }
 

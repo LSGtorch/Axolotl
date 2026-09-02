@@ -6,6 +6,7 @@ import type {
 	SymlinkMethodChoice,
 } from '@modrinth/ui'
 import { defineMessages, useVIntl } from '@modrinth/ui'
+import { join } from '@tauri-apps/api/path'
 import { inject, provide, ref, useTemplateRef } from 'vue'
 import type { ComponentExposed } from 'vue-component-type-helpers'
 import { useRouter } from 'vue-router'
@@ -261,7 +262,7 @@ export function setupCreationModal(
 					? null
 					: gameRoot
 						? mode === 'isolated'
-							? `${gameRoot}/versions/${name}`
+							? await join(gameRoot, 'versions', name)
 							: gameRoot
 						: null
 

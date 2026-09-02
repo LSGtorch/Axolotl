@@ -21,6 +21,7 @@ test('seed map starts near spawn with a lightweight layer set', () => {
 	assert.equal(workspace.zoom, 1)
 	assert.equal(workspace.terrainEstimation, true)
 	assert.equal(workspace.gameVersion, SEED_MAP_DEFAULT_VERSION)
+	assert.equal(workspace.elevation, 128)
 	assert.deepEqual(workspace.visibleFeatures, [
 		'village',
 		'ruined-portal',
@@ -47,6 +48,13 @@ test('seed map workspace recovers from invalid persisted values', () => {
 	assert.deepEqual(state.visibleFeatures, ['village'])
 	assert.equal(state.showSpawn, true)
 	assert.deepEqual(state.highlightedBiomes, [])
+})
+
+test('seed map uses fixed surface and underground elevation slices', () => {
+	assert.equal(sanitizeSeedMapWorkspace({ elevation: 62 }).elevation, 128)
+	assert.equal(sanitizeSeedMapWorkspace({ elevation: 128 }).elevation, 128)
+	assert.equal(sanitizeSeedMapWorkspace({ elevation: 16 }).elevation, 16)
+	assert.equal(sanitizeSeedMapWorkspace({ elevation: -32 }).elevation, -32)
 })
 
 test('seed map keeps every offered ore kind and drops unknown ones', () => {

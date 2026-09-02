@@ -15,6 +15,7 @@ max_line_length = off
 
 [*.{toml,json}]
 indent_size = 2
+indent_style = space
 
 # YAML requires space indentation by spec
 [*.{yml,yaml}]

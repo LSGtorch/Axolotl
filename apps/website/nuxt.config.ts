@@ -29,6 +29,12 @@ export default defineNuxtConfig({
 			siteUrl: SITE_URL,
 		},
 	},
+	experimental: {
+		// Keep the app manifest disabled for the static website. Nuxt's runtime
+		// composable still contains a server-side `#app-manifest` import, which
+		// Vite tries to resolve during dev even when the feature is disabled.
+		appManifest: false,
+	},
 	vite: {
 		css: {
 			preprocessorOptions: {

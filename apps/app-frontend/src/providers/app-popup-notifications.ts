@@ -14,7 +14,7 @@ export class AppPopupNotificationManager extends AbstractPopupNotificationManage
 	}
 
 	protected addNotificationToStorage(notification: PopupNotification): void {
-		this.state.value.push(notification)
+		this.state.value.unshift(notification)
 	}
 
 	protected removeNotificationFromStorage(id: string | number): void {

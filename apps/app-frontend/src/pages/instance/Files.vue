@@ -13,6 +13,7 @@ import {
 	useVIntl,
 } from '@modrinth/ui'
 import { invoke } from '@tauri-apps/api/core'
+import { join } from '@tauri-apps/api/path'
 import {
 	mkdir,
 	readDir,
@@ -80,19 +81,19 @@ debug('setup: instanceRoot =', instanceRoot.value)
 await refresh()
 debug('setup: refresh complete, items =', items.value.length, 'error =', error.value)
 
-function resolvePath(relativePath: string): string {
-	return relativePath ? `${instanceRoot.value}/${relativePath}` : instanceRoot.value
+async function resolvePath(relativePath: string): Promise<string> {
+	return relativePath ? join(instanceRoot.value, ...relativePath.split('/')) : instanceRoot.value
 }
 
 async function listDirectory(dirPath: string): Promise<FileItem[]> {
-	const absPath = resolvePath(dirPath)
+	const absPath = await resolvePath(dirPath)
 	debug('listDirectory: dirPath =', dirPath, 'absPath =', absPath)
 	const entries = await readDir(absPath)
 	debug('listDirectory: got', entries.length, 'entries')
 
 	const results = await Promise.all(
 		entries.map(async (entry) => {
-			const entryAbsPath = `${absPath}/${entry.name}`
+			const entryAbsPath = await join(absPath, entry.name)
 			let metadata
 			try {
 				metadata = await stat(entryAbsPath)
@@ -157,7 +158,7 @@ function stopEditing() {
 
 async function handleCreateItem(name: string, type: 'file' | 'directory') {
 	const targetPath = currentPath.value ? `${currentPath.value}/${name}` : name
-	const absPath = resolvePath(targetPath)
+	const absPath = await resolvePath(targetPath)
 	try {
 		if (type === 'directory') {
 			await mkdir(absPath)
@@ -175,10 +176,10 @@ async function handleCreateItem(name: string, type: 'file' | 'directory') {
 }
 
 async function handleRenameItem(path: string, newName: string) {
-	const oldAbs = resolvePath(path)
+	const oldAbs = await resolvePath(path)
 	const parentDir = path.includes('/') ? path.substring(0, path.lastIndexOf('/')) : ''
 	const newPath = parentDir ? `${parentDir}/${newName}` : newName
-	const newAbs = resolvePath(newPath)
+	const newAbs = await resolvePath(newPath)
 	try {
 		await rename(oldAbs, newAbs)
 		await refresh()
@@ -193,7 +194,7 @@ async function handleRenameItem(path: string, newName: string) {
 
 async function handleMoveItem(source: string, destination: string) {
 	try {
-		await rename(resolvePath(source), resolvePath(destination))
+		await rename(await resolvePath(source), await resolvePath(destination))
 		await refresh()
 	} catch (e) {
 		addNotification({
@@ -206,7 +207,7 @@ async function handleMoveItem(source: string, destination: string) {
 
 async function handleDeleteItem(path: string, recursive: boolean) {
 	try {
-		await remove(resolvePath(path), { recursive })
+		await remove(await resolvePath(path), { recursive })
 		await refresh()
 	} catch (e) {
 		addNotification({
@@ -218,16 +219,16 @@ async function handleDeleteItem(path: string, recursive: boolean) {
 }
 
 async function handleReadFile(path: string): Promise<string> {
-	return await readTextFile(resolvePath(path))
+	return await readTextFile(await resolvePath(path))
 }
 
 async function handleReadFileAsBlob(path: string): Promise<Blob> {
-	const bytes = await readFileBytes(resolvePath(path))
+	const bytes = await readFileBytes(await resolvePath(path))
 	return new Blob([bytes])
 }
 
 async function handleWriteFile(path: string, content: string) {
-	await writeTextFile(resolvePath(path), content)
+	await writeTextFile(await resolvePath(path), content)
 }
 
 async function handleDownloadFile(path: string, _fileName: string) {

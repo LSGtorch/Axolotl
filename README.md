@@ -19,9 +19,10 @@
   </p>
 
   <p>
-    <a href="https://www.axlmc.org">官方网站</a> ｜ 
-    <a href="https://github.com/Mystic-Stars/Axolotl/releases/latest">下载最新版</a> ｜ 
+    <a href="https://www.axlmc.org">官方网站</a> ｜
+    <a href="https://github.com/Mystic-Stars/Axolotl/releases/latest">下载最新版</a> ｜
     <a href="CONTRIBUTING.md">参与贡献</a>
+    ｜ <a href="CODE_OF_CONDUCT.md">行为准则</a>
   </p>
 </div>
 
@@ -30,9 +31,17 @@
 
 感谢以下赞助商与合作伙伴对 Axolotl Launcher 的支持。
 
-|   |   |   |
-| - | - | - |
-| <img src="./.github/assets/codeflow-logo.png" width="72" alt="Codeflow Logo" /> | **Codeflow**<br>更稳、更省地调用顶级 AI 模型<br>原生协议转发 · 无需海外网络 · 支付宝即充即用 | [访问 Codeflow](https://codeflow.asia/register?invite=4UHP2KYH) |
+<table>
+  <tr>
+    <td><img src="./.github/assets/codeflow-logo.png" width="72" alt="Codeflow Logo" /></td>
+    <td><strong>Codeflow</strong><br>更稳、更省地调用顶级 AI 模型<br>原生协议转发 · 无需海外网络 · 支付宝即充即用</td>
+    <td><a href="https://codeflow.asia/register?invite=4UHP2KYH">访问 Codeflow</a></td>
+  </tr>
+</table>
+
+<a href="https://www.netlify.com">
+  <img src="https://www.netlify.com/assets/badges/netlify-badge-color-accent.svg" alt="Deploys by Netlify" />
+</a>
 
 - [在爱发电支持 Axolotl Launcher](https://ifdian.net/a/Mystic-Stars) — 你的支持将帮助项目持续维护与改进
 
@@ -93,5 +102,6 @@ sudo apt install axolotl-launcher
 
 Axolotl Launcher 的进步离不开社区的反馈与贡献。
 如果遇到 Bug 或有新的功能点子，欢迎提交 Issue。如需搭建本地开发环境或查阅打包发布规范，请阅读详细的 [贡献指南 (CONTRIBUTING.md)](CONTRIBUTING.md)。
+参与社区和贡献代码前，也请先阅读[行为准则 (CODE_OF_CONDUCT.md)](CODE_OF_CONDUCT.md)。
 
 ---

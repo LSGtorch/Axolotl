@@ -33,8 +33,29 @@
 Var /GLOBAL OldInstallDir
 
 !macro NSIS_HOOK_PREINSTALL
-    SetShellVarContext all
-    ${If} ${FileExists} "$SMPROGRAMS\${PRODUCTNAME}.lnk"
+    ; The updater is normally launched silently by the Tauri updater plugin.
+    ; A current-user install can still target a protected directory, so elevate
+    ; only the in-place update process instead of requiring UAC for first-time
+    ; current-user installs.
+    ${If} $UpdateMode == 1
+      ${GetOptions} $CMDLINE "/ELEVATED" $0
+      ${If} ${Errors}
+        UserInfo::GetAccountType
+        Pop $0
+        ${If} $0 != "Admin"
+          ExecShell "runas" "$EXEPATH" '$CMDLINE /ELEVATED'
+          Abort
+        ${EndIf}
+      ${EndIf}
+    ${EndIf}
+
+    ; The updater already stops the running process and passes /UPDATE. Do not
+    ; run the legacy uninstall/migration path during an in-place update, since
+    ; it can resolve a different installation from the registry and relaunch
+    ; the old executable after the new files are installed.
+    ${If} $UpdateMode <> 1
+      SetShellVarContext all
+      ${If} ${FileExists} "$SMPROGRAMS\${PRODUCTNAME}.lnk"
         UserInfo::GetAccountType
         Pop $0
         ${If} $0 != "Admin"
@@ -55,8 +76,9 @@ Var /GLOBAL OldInstallDir
             MessageBox MB_ICONEXCLAMATION|MB_OK "Failed to uninstall old global installation"
             Abort
         ${EndIf}
+      ${EndIf}
+      SetShellVarContext current
     ${EndIf}
-    SetShellVarContext current
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL

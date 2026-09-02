@@ -37,6 +37,7 @@ import {
 	Slider,
 	StyledInput,
 	Toggle,
+	type MessageDescriptor,
 	useRelativeTime,
 	useVIntl,
 } from '@modrinth/ui'
@@ -78,6 +79,7 @@ import {
 	saveSeedMapWorkspace,
 	SEED_MAP_BIOME_NAMES,
 	SEED_MAP_BIOMES,
+	SEED_MAP_ELEVATIONS,
 	SEED_MAP_END_CITY_IMAGE_SOURCES as endCityImageSources,
 	SEED_MAP_FEATURE_COLORS as featureColors,
 	SEED_MAP_FEATURE_ICONS as featureIcons,
@@ -140,12 +142,20 @@ type ActivePointer = {
 	y: number
 }
 
+// Keep one extra source tile around each edge so a fractional zoom/pan does
+// not make an edge tile disappear when a bounds value crosses a tile boundary.
+const TILE_CULL_PADDING = 1
+
+type SeedMapElevation = (typeof SEED_MAP_ELEVATIONS)[number]
+
 const { addNotification, handleError } = injectNotificationManager()
 const { formatMessage } = useVIntl()
 const route = useRoute()
 const canvas = useTemplateRef<HTMLCanvasElement>('mapCanvas')
 const fullscreenContainer = useTemplateRef<HTMLElement>('fullscreenContainer')
 const workspace = reactive(applyShareQuery(route.query, loadSeedMapWorkspace()))
+if (!SEED_MAP_ELEVATIONS.includes(workspace.elevation as SeedMapElevation))
+	workspace.elevation = SEED_MAP_ELEVATIONS[0]
 const profiles = ref<SeedMapVersionProfile[]>(fallbackSeedMapProfiles())
 const features = ref<SeedMapFeature[]>([])
 const spawn = ref<SeedMapSpawnPoint | null>(null)
@@ -166,7 +176,6 @@ const worldImportModal =
 	useTemplateRef<InstanceType<typeof SeedMapWorldImportModal>>('worldImportModal')
 const copyrightModal = useTemplateRef<InstanceType<typeof SeedMapCopyrightModal>>('copyrightModal')
 let activeHistoryId = seedMapHistoryId(workspace.seed.trim().slice(0, 256), workspace.edition)
-const elevationInput = ref(String(workspace.elevation))
 const coordinateX = ref(String(Math.round(workspace.center.x)))
 const coordinateZ = ref(String(Math.round(workspace.center.z)))
 const tileImages = new Map<string, ImageBitmap>()
@@ -274,6 +283,15 @@ const messages = defineMessages({
 	nether: { id: 'app.lab.seed-map.dimension.nether', defaultMessage: 'Nether' },
 	end: { id: 'app.lab.seed-map.dimension.end', defaultMessage: 'The End' },
 	coordinates: { id: 'app.lab.seed-map.coordinates', defaultMessage: 'Coordinates' },
+	surface: { id: 'app.lab.seed-map.elevation.surface', defaultMessage: 'Surface' },
+	shallowUnderground: {
+		id: 'app.lab.seed-map.elevation.shallow-underground',
+		defaultMessage: 'Shallow underground',
+	},
+	deepUnderground: {
+		id: 'app.lab.seed-map.elevation.deep-underground',
+		defaultMessage: 'Deep underground',
+	},
 	go: { id: 'app.lab.seed-map.go', defaultMessage: 'Go' },
 	layers: { id: 'app.lab.seed-map.layers', defaultMessage: 'Map layers' },
 	structures: { id: 'app.lab.seed-map.mode.structures', defaultMessage: 'Structures' },
@@ -329,13 +347,9 @@ const messages = defineMessages({
 		id: 'app.lab.seed-map.chunk-coordinates',
 		defaultMessage: 'Chunk coordinates',
 	},
+	depth: { id: 'app.lab.seed-map.depth', defaultMessage: 'Map depth' },
 	terrain: { id: 'app.lab.seed-map.terrain', defaultMessage: 'Terrain' },
 	contours: { id: 'app.lab.seed-map.contours', defaultMessage: 'Contour lines' },
-	elevation: { id: 'app.lab.seed-map.elevation', defaultMessage: 'Surface' },
-	elevationLockedByTerrain: {
-		id: 'app.lab.seed-map.elevation-locked',
-		defaultMessage: 'Follows the estimated surface while terrain estimation is on',
-	},
 	zoomIn: { id: 'app.lab.seed-map.zoom-in', defaultMessage: 'Zoom in' },
 	zoomOut: { id: 'app.lab.seed-map.zoom-out', defaultMessage: 'Zoom out' },
 	fullscreen: { id: 'app.lab.seed-map.fullscreen', defaultMessage: 'Fullscreen' },
@@ -465,6 +479,22 @@ const oreMessages: Record<SeedMapOreKind, (typeof messages)[keyof typeof message
 }
 
 const editionOptions: SeedMapEdition[] = ['java', 'java-large-biomes']
+const elevationOptions: SeedMapElevation[] = [...SEED_MAP_ELEVATIONS]
+const elevationLabels: Record<SeedMapElevation, MessageDescriptor> = {
+	128: messages.surface,
+	16: messages.shallowUnderground,
+	'-32': messages.deepUnderground,
+}
+
+function elevationLabel(elevation: SeedMapElevation) {
+	return `${formatMessage(elevationLabels[elevation])} (Y=${elevation})`
+}
+
+function setElevation(value: unknown) {
+	const elevation = Number(value) as SeedMapElevation
+	if (elevationOptions.includes(elevation)) workspace.elevation = elevation
+}
+
 const selectedProfile = computed(() =>
 	profiles.value.find(
 		(profile) => profile.edition === workspace.edition && profile.version === workspace.gameVersion,
@@ -479,9 +509,13 @@ const dimensions = computed(
 	() => selectedProfile.value?.dimensions ?? ['overworld', 'nether', 'end'],
 )
 const scale = computed(() => 4 ** workspace.zoom)
+// Native tiles are generated at discrete powers of four. Keep the current
+// tile source for the whole zoom interval and switch only at its boundary;
+// rounding here used to replace the biome sampler halfway through an
+// animated zoom (for example at zoom 0.5), causing abrupt color changes.
 const tileScale = computed(
 	() =>
-		SEED_MAP_SCALES[Math.min(Math.max(Math.round(workspace.zoom), 0), SEED_MAP_SCALES.length - 1)],
+		SEED_MAP_SCALES[Math.min(Math.max(Math.floor(workspace.zoom), 0), SEED_MAP_SCALES.length - 1)],
 )
 const mapScaleLabel = computed(() =>
 	scale.value >= 10 ? String(Math.round(scale.value)) : scale.value.toFixed(2).replace(/\.00$/, ''),
@@ -816,12 +850,6 @@ watch(
 	},
 )
 
-watch(elevationInput, (value) => {
-	const parsed = Number(value)
-	if (Number.isFinite(parsed))
-		workspace.elevation = Math.min(Math.max(Math.round(parsed), -64), 320)
-})
-
 onMounted(async () => {
 	await nextTick()
 	preloadMapIcons()
@@ -991,13 +1019,27 @@ function mapBounds(): MapBounds {
 	}
 }
 
+/**
+ * Floating-point bounds used for canvas transforms. Tile/feature requests
+ * still use the integer bounds above, but rounding those bounds for drawing
+ * makes the map jump by a pixel while a zoom animation is in progress.
+ */
+function viewBounds() {
+	const halfWidth = (viewport.width * scale.value) / 2
+	const halfHeight = (viewport.height * scale.value) / 2
+	return {
+		minX: workspace.center.x - halfWidth,
+		minZ: workspace.center.z - halfHeight,
+	}
+}
+
 function worldToScreen(x: number, z: number) {
-	const bounds = mapBounds()
+	const bounds = viewBounds()
 	return { x: (x - bounds.minX) / scale.value, y: (z - bounds.minZ) / scale.value }
 }
 
 function screenToWorld(x: number, y: number) {
-	const bounds = mapBounds()
+	const bounds = viewBounds()
 	return {
 		x: Math.round(bounds.minX + x * scale.value),
 		z: Math.round(bounds.minZ + y * scale.value),
@@ -1061,10 +1103,10 @@ function drawMap() {
 
 function drawTileLayer(context: CanvasRenderingContext2D, bounds: MapBounds, sourceScale: number) {
 	const tileSpan = 256 * sourceScale
-	const minTileX = Math.floor(bounds.minX / tileSpan)
-	const minTileZ = Math.floor(bounds.minZ / tileSpan)
-	const maxTileX = Math.floor(bounds.maxX / tileSpan)
-	const maxTileZ = Math.floor(bounds.maxZ / tileSpan)
+	const minTileX = Math.floor(bounds.minX / tileSpan) - TILE_CULL_PADDING
+	const minTileZ = Math.floor(bounds.minZ / tileSpan) - TILE_CULL_PADDING
+	const maxTileX = Math.floor(bounds.maxX / tileSpan) + TILE_CULL_PADDING
+	const maxTileZ = Math.floor(bounds.maxZ / tileSpan) + TILE_CULL_PADDING
 	const displaySize = tileSpan / scale.value
 	context.save()
 	context.imageSmoothingEnabled = false
@@ -1081,6 +1123,46 @@ function drawTileLayer(context: CanvasRenderingContext2D, bounds: MapBounds, sou
 		}
 	}
 	context.restore()
+}
+
+function visibleTileKeys(bounds: MapBounds): Set<string> {
+	const keys = new Set<string>()
+	const sourceScales = new Set<number>([tileScale.value])
+	if (fallbackTileScale !== undefined) sourceScales.add(fallbackTileScale)
+	for (const sourceScale of sourceScales) {
+		const tileSpan = 256 * sourceScale
+		const minTileX = Math.floor(bounds.minX / tileSpan) - TILE_CULL_PADDING
+		const minTileZ = Math.floor(bounds.minZ / tileSpan) - TILE_CULL_PADDING
+		const maxTileX = Math.floor(bounds.maxX / tileSpan) + TILE_CULL_PADDING
+		const maxTileZ = Math.floor(bounds.maxZ / tileSpan) + TILE_CULL_PADDING
+		for (let tileX = minTileX; tileX <= maxTileX; tileX++) {
+			for (let tileZ = minTileZ; tileZ <= maxTileZ; tileZ++)
+				keys.add(tileKey(tileX, tileZ, sourceScale))
+		}
+	}
+	return keys
+}
+
+function hasMissingCurrentTiles(bounds: MapBounds): boolean {
+	return countMissingCurrentTiles(bounds).missing > 0
+}
+
+function countMissingCurrentTiles(bounds: MapBounds) {
+	const sourceScale = tileScale.value
+	const tileSpan = 256 * sourceScale
+	const minTileX = Math.floor(bounds.minX / tileSpan) - TILE_CULL_PADDING
+	const minTileZ = Math.floor(bounds.minZ / tileSpan) - TILE_CULL_PADDING
+	const maxTileX = Math.floor(bounds.maxX / tileSpan) + TILE_CULL_PADDING
+	const maxTileZ = Math.floor(bounds.maxZ / tileSpan) + TILE_CULL_PADDING
+	let visible = 0
+	let missing = 0
+	for (let tileX = minTileX; tileX <= maxTileX; tileX++) {
+		for (let tileZ = minTileZ; tileZ <= maxTileZ; tileZ++) {
+			visible++
+			if (!tileImages.has(tileKey(tileX, tileZ, sourceScale))) missing++
+		}
+	}
+	return { visible, missing }
 }
 
 function drawGrid(context: CanvasRenderingContext2D, bounds: MapBounds) {
@@ -1211,12 +1293,17 @@ function drawOres(context: CanvasRenderingContext2D) {
 function drawSpawn(context: CanvasRenderingContext2D) {
 	if (spawn.value && workspace.dimension === 'overworld' && workspace.showSpawn) {
 		const point = worldToScreen(spawn.value.x, spawn.value.z)
+		const selected =
+			selection.value?.spawn === true &&
+			selection.value.x === spawn.value.x &&
+			selection.value.z === spawn.value.z
+		const size = selected ? 36 : 32
 		context.save()
 		if (spawnImage) {
 			context.shadowColor = 'rgba(0, 0, 0, 0.48)'
 			context.shadowBlur = 5
 			context.shadowOffsetY = 2
-			context.drawImage(spawnImage, point.x - 16, point.y - 16, 32, 32)
+			context.drawImage(spawnImage, point.x - size / 2, point.y - size / 2, size, size)
 		} else {
 			context.fillStyle = '#2E3138'
 			context.strokeStyle = '#FFFFFF'
@@ -1224,6 +1311,14 @@ function drawSpawn(context: CanvasRenderingContext2D) {
 			context.beginPath()
 			context.arc(point.x, point.y, 10, 0, Math.PI * 2)
 			context.fill()
+			context.stroke()
+		}
+		if (selected) {
+			context.shadowColor = 'transparent'
+			context.strokeStyle = '#FFFFFF'
+			context.lineWidth = 2
+			context.beginPath()
+			context.arc(point.x, point.y, size / 2 + 2, 0, Math.PI * 2)
 			context.stroke()
 		}
 		context.restore()
@@ -1371,10 +1466,10 @@ function requestVisibleTiles(epoch: number) {
 	const bounds = mapBounds()
 	const requestScale = tileScale.value
 	const tileSpan = 256 * requestScale
-	const minTileX = Math.floor(bounds.minX / tileSpan)
-	const minTileZ = Math.floor(bounds.minZ / tileSpan)
-	const maxTileX = Math.floor(bounds.maxX / tileSpan)
-	const maxTileZ = Math.floor(bounds.maxZ / tileSpan)
+	const minTileX = Math.floor(bounds.minX / tileSpan) - TILE_CULL_PADDING
+	const minTileZ = Math.floor(bounds.minZ / tileSpan) - TILE_CULL_PADDING
+	const maxTileX = Math.floor(bounds.maxX / tileSpan) + TILE_CULL_PADDING
+	const maxTileZ = Math.floor(bounds.maxZ / tileSpan) + TILE_CULL_PADDING
 	const candidates: { tileX: number; tileZ: number }[] = []
 	for (let tileX = minTileX; tileX <= maxTileX; tileX++) {
 		for (let tileZ = minTileZ; tileZ <= maxTileZ; tileZ++) candidates.push({ tileX, tileZ })
@@ -1390,7 +1485,6 @@ function requestVisibleTiles(epoch: number) {
 				b.tileZ * tileSpan + tileSpan / 2 - workspace.center.z,
 			),
 	)
-
 	let hasMissingTiles = false
 	for (const { tileX, tileZ } of candidates) {
 		const key = tileKey(tileX, tileZ, requestScale)
@@ -1421,7 +1515,9 @@ function requestVisibleTiles(epoch: number) {
 			key,
 			run: async () => {
 				try {
-					if (!isCurrentSeedMapEpoch(epoch, requestEpoch)) return
+					if (!isCurrentSeedMapEpoch(epoch, requestEpoch)) {
+						return
+					}
 					const tile = await renderSeedMapTile(request)
 					if (!isCurrentSeedMapEpoch(tile.epoch, requestEpoch)) {
 						tile.bitmap.close()
@@ -1429,9 +1525,12 @@ function requestVisibleTiles(epoch: number) {
 					}
 					tileImages.get(key)?.close()
 					tileImages.set(key, tile.bitmap)
+					const protectedKeys = visibleTileKeys(mapBounds())
 					while (tileImages.size > 96) {
-						const oldest = tileImages.keys().next().value
-						if (typeof oldest !== 'string') break
+						const oldest = [...tileImages.keys()].find((candidate) => !protectedKeys.has(candidate))
+						// Never evict a tile that is currently drawable. The cache may
+						// temporarily exceed its soft limit when the viewport is large.
+						if (oldest === undefined) break
 						tileImages.get(oldest)?.close()
 						tileImages.delete(oldest)
 					}
@@ -1475,7 +1574,12 @@ function pumpTileQueue() {
 			loading.value =
 				(activeTileRequestsByEpoch.get(requestEpoch) ?? 0) > 0 ||
 				tileQueue.some((queuedJob) => queuedJob.epoch === requestEpoch)
-			if (!loading.value && job.epoch === requestEpoch) {
+			if (
+				!loading.value &&
+				job.epoch === requestEpoch &&
+				fallbackTileScale !== undefined &&
+				!hasMissingCurrentTiles(mapBounds())
+			) {
 				fallbackTileScale = undefined
 				redraw()
 			}
@@ -1817,9 +1921,12 @@ async function lookupSelectionBiome(point: { x: number; z: number }) {
 			edition: workspace.edition,
 			version: workspace.gameVersion,
 			dimension: workspace.dimension,
-			x: point.x,
+			// A tile pixel is sampled at the centre of its source-scale cell.
+			// Querying the same cell centre keeps the popup biome in
+			// sync with the color rendered underneath it when zoomed out.
+			x: Math.floor(point.x / tileScale.value) * tileScale.value + Math.floor(tileScale.value / 2),
 			y: workspace.elevation,
-			z: point.z,
+			z: Math.floor(point.z / tileScale.value) * tileScale.value + Math.floor(tileScale.value / 2),
 		})
 		if (token !== biomeLookupToken || biome < 0) return
 		const current = selection.value
@@ -1914,6 +2021,9 @@ function animateZoomTo(x: number, y: number, targetZoom: number, duration: numbe
 			zoomAnimationFrame = window.requestAnimationFrame(step)
 			return
 		}
+		// Store the exact endpoint so repeated wheel gestures at the zoom limits
+		// do not leave a tiny floating-point remainder that restarts the animation.
+		workspace.zoom = targetZoom
 		zoomAnimationFrame = undefined
 		scheduleRefresh(60)
 	}
@@ -2184,7 +2294,7 @@ function onFullscreenChange() {
 }
 
 function clampWorldCoordinate(value: number) {
-	return Math.round(Math.min(Math.max(value, -30_000_000), 30_000_000))
+	return Math.min(Math.max(value, -30_000_000), 30_000_000)
 }
 </script>
 
@@ -2367,6 +2477,21 @@ function clampWorldCoordinate(value: number) {
 								<CompassIcon />{{ formatMessage(messages.go) }}
 							</button></ButtonStyled
 						>
+					</div>
+				</div>
+				<div
+					v-if="workspace.dimension === 'overworld'"
+					class="control-group elevation-group shrink-0"
+				>
+					<span class="control-label">{{ formatMessage(messages.depth) }}</span>
+					<div class="seed-map-dropdown min-w-0">
+						<DropdownSelect
+							:model-value="workspace.elevation as SeedMapElevation"
+							:options="elevationOptions"
+							:display-name="elevationLabel"
+							name="Seed map elevation"
+							@update:model-value="setElevation"
+						/>
 					</div>
 				</div>
 				<div class="share-button">
@@ -2903,29 +3028,14 @@ function clampWorldCoordinate(value: number) {
 						:dimension="workspace.dimension"
 						:enabled="workspace.highlightBiomeEnabled"
 						:highlighted-biomes="workspace.highlightedBiomes"
+						:container="isFullscreen ? fullscreenContainer : undefined"
 						@update:dimension="workspace.dimension = $event"
 						@update:enabled="workspace.highlightBiomeEnabled = $event"
 						@update:highlighted-biomes="workspace.highlightedBiomes = $event"
 					/>
-					<label
-						v-tooltip="
-							terrainEnabled ? formatMessage(messages.elevationLockedByTerrain) : undefined
-						"
-						class="map-pill map-elevation"
-						:class="{ locked: terrainEnabled }"
+					<div
+						class="map-bottom-actions max-sm:w-full max-sm:flex-wrap max-sm:justify-start max-sm:ml-0"
 					>
-						<span>{{ formatMessage(messages.elevation) }}</span>
-						<StyledInput
-							v-model="elevationInput"
-							type="number"
-							size="small"
-							:min="-64"
-							:max="320"
-							:disabled="terrainEnabled"
-							wrapper-class="elevation-input w-20"
-						/>
-					</label>
-					<div class="map-bottom-actions max-sm:w-full max-sm:flex-wrap max-sm:justify-start max-sm:ml-0">
 						<ButtonStyled
 							:type="terrainEnabled ? 'highlight-colored-text' : 'outlined'"
 							color="brand"
@@ -3008,7 +3118,7 @@ function clampWorldCoordinate(value: number) {
  */
 .toolbar-secondary {
 	display: grid;
-	grid-template-columns: auto minmax(0, 1fr) auto;
+	grid-template-columns: auto minmax(0, 1fr) auto auto;
 	align-items: end;
 	gap: 0.75rem;
 	border-top: 1px solid var(--surface-5);
@@ -3257,8 +3367,20 @@ function clampWorldCoordinate(value: number) {
 }
 
 .seed-map-experience:fullscreen {
-	height: 100vh;
+	/* Keep the fullscreen surface inside the viewport, including its padding. */
+	box-sizing: border-box;
+	width: 100vw;
+	height: 100dvh;
+	max-height: 100dvh;
+	min-height: 0;
+	overflow: hidden;
 	padding: 0.75rem;
+}
+
+.seed-map-experience:fullscreen .seed-map-canvas-shell {
+	/* The normal map has a 32rem minimum for usability; fullscreen must be able
+	 * to shrink so the toolbar and canvas do not push the surface past the viewport. */
+	min-height: 0;
 }
 
 .layer-strip {
@@ -3709,10 +3831,6 @@ function clampWorldCoordinate(value: number) {
 	white-space: nowrap;
 }
 
-.map-elevation.locked {
-	color: var(--color-text-secondary);
-}
-
 .map-bottom-actions {
 	display: flex;
 	flex: 0 0 auto;
@@ -3850,6 +3968,21 @@ function clampWorldCoordinate(value: number) {
 	}
 	.ore-range-controls {
 		grid-template-columns: minmax(0, 1fr);
+	}
+}
+</style>
+
+<style>
+/* The seed map is a fixed work surface on desktop. Give the route layers a
+ * definite height so the page's flex-1 map area cannot grow after a fullscreen
+ * enter/exit reflow and create a second page scrollbar. */
+@media (min-width: 901px) {
+	.app-viewport:has(.seed-map-page),
+	.app-viewport:has(.seed-map-page) .page-transition-grid,
+	.app-viewport:has(.seed-map-page) .page-transition-layer {
+		height: 100%;
+		min-height: 0;
+		overflow: hidden;
 	}
 }
 </style>

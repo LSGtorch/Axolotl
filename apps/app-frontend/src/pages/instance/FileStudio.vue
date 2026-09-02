@@ -22,6 +22,7 @@ import {
 	useVIntl,
 } from '@modrinth/ui'
 import { convertFileSrc } from '@tauri-apps/api/core'
+import { join } from '@tauri-apps/api/path'
 import {
 	copyFile,
 	mkdir,
@@ -195,7 +196,7 @@ const {
 	updateActiveContent,
 	reset: resetDocuments,
 } = useStudioDocuments(
-	(document, content) => {
+	async (document, content) => {
 		if (document.kind === 'nbt') {
 			const nbtFile = nbtFiles.get(document.path)
 			if (!nbtFile) throw new Error('NBT document metadata is unavailable')
@@ -204,7 +205,7 @@ const {
 			nbtFile.root = root
 			return writeBinary(document.path, nbtFile.write())
 		}
-		return writeTextFile(resolvePath(document.path), content)
+		return writeTextFile(await resolvePath(document.path), content)
 	},
 	(error) => {
 		addNotification({
@@ -244,32 +245,30 @@ function previewKind(name: string): StudioDocument['kind'] | null {
 	return null
 }
 
-const previewUrl = computed(() =>
-	activeDocument.value ? convertFileSrc(resolvePath(activeDocument.value.path)) : '',
-)
+const previewUrl = ref('')
 
-function resolvePath(relativePath: string): string {
-	return relativePath ? `${instanceRoot.value}/${relativePath}` : instanceRoot.value
+async function resolvePath(relativePath: string): Promise<string> {
+	return relativePath ? join(instanceRoot.value, ...relativePath.split('/')) : instanceRoot.value
 }
 
 async function readText(path: string): Promise<string> {
 	if (props.instance) return readStudioText(props.instance.id, path)
-	return readTextFile(resolvePath(path))
+	return readTextFile(await resolvePath(path))
 }
 
 async function readBinary(path: string): Promise<Uint8Array> {
 	if (props.instance) return readStudioBinary(props.instance.id, path)
-	return readFile(resolvePath(path))
+	return readFile(await resolvePath(path))
 }
 
 async function writeBinary(path: string, bytes: Uint8Array): Promise<void> {
 	if (props.instance) return writeStudioBinary(props.instance.id, path, bytes)
-	return writeFile(resolvePath(path), bytes)
+	return writeFile(await resolvePath(path), bytes)
 }
 
 async function deleteStudioFile(path: string): Promise<void> {
 	if (props.instance) return trashStudioFile(props.instance.id, path)
-	return remove(resolvePath(path), { recursive: true })
+	return remove(await resolvePath(path), { recursive: true })
 }
 
 function workspaceRelativePath(path: string): string | null {
@@ -337,11 +336,11 @@ function copyToClipboard(mode: 'copy' | 'cut') {
 
 async function copyItem(source: StudioTreeNode, destination: string): Promise<void> {
 	if (source.type === 'file') {
-		await copyFile(resolvePath(source.path), resolvePath(destination))
+		await copyFile(await resolvePath(source.path), await resolvePath(destination))
 		return
 	}
 
-	await mkdir(resolvePath(destination), { recursive: true })
+	await mkdir(await resolvePath(destination), { recursive: true })
 	const children = await listDirectory(source.path, source.depth + 1)
 	await Promise.all(children.map((child) => copyItem(child, joinPath(destination, child.name))))
 }
@@ -356,7 +355,7 @@ async function pasteClipboard() {
 	try {
 		if (mode === 'copy') await copyItem(node, destination)
 		else {
-			await rename(resolvePath(node.path), resolvePath(destination))
+			await rename(await resolvePath(node.path), await resolvePath(destination))
 			fileClipboard.value = null
 		}
 		await refreshTree()
@@ -400,8 +399,8 @@ async function createItem() {
 	if (!name || /[\\/]/.test(name)) return
 	const path = joinPath(createParentPath.value, name)
 	try {
-		if (createType.value === 'directory') await mkdir(resolvePath(path))
-		else await writeTextFile(resolvePath(path), '')
+		if (createType.value === 'directory') await mkdir(await resolvePath(path))
+		else await writeTextFile(await resolvePath(path), '')
 		await refreshTree()
 		createModal.value?.hide()
 	} catch (error) {
@@ -435,7 +434,7 @@ function updateVisibleBreadcrumbs() {
 }
 
 async function listDirectory(path: string, depth: number): Promise<StudioTreeNode[]> {
-	const entries = await readDir(resolvePath(path))
+	const entries = await readDir(await resolvePath(path))
 	return entries
 		.map((entry) => ({
 			name: entry.name,
@@ -527,7 +526,7 @@ async function reloadCleanDocument(document: StudioDocument) {
 		const nextContent =
 			document.kind === 'nbt'
 				? readNbtContent(await readBinary(document.path), document.path)
-				: await readTextFile(resolvePath(document.path))
+				: await readTextFile(await resolvePath(document.path))
 		if (document.content !== document.savedContent || document.saving) return
 		document.content = nextContent
 		document.savedContent = nextContent
@@ -647,6 +646,16 @@ watch(activePath, async (path) => {
 
 watch(breadcrumbSegments, () => nextTick(updateVisibleBreadcrumbs), { immediate: true })
 
+watch(
+	[activeDocument, instanceRoot],
+	async () => {
+		previewUrl.value = activeDocument.value
+			? convertFileSrc(await resolvePath(activeDocument.value.path))
+			: ''
+	},
+	{ immediate: true },
+)
+
 onMounted(() => {
 	breadcrumbObserver = new ResizeObserver(updateVisibleBreadcrumbs)
 	if (breadcrumbOuter.value) breadcrumbObserver.observe(breadcrumbOuter.value)
@@ -751,11 +760,11 @@ async function formatActiveDocument() {
 }
 
 async function openInSystem(path: string) {
-	await openPath(resolvePath(path))
+	await openPath(await resolvePath(path))
 }
 
 async function revealInSystem(path: string) {
-	await highlightInFolder(resolvePath(path))
+	await highlightInFolder(await resolvePath(path))
 }
 
 async function revealContextMenuItem() {

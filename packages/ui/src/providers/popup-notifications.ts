@@ -58,6 +58,7 @@ export interface PopupNotificationToast {
 
 export interface PopupNotification {
 	id: string | number
+	createdAt?: number
 	title: string
 	titleLogo?: Component
 	bodyComponent?: Component
@@ -73,6 +74,8 @@ export interface PopupNotification {
 	onClick?: () => void | Promise<void>
 	autoCloseMs?: number | null
 	timer?: NodeJS.Timeout
+	/** Hidden from the toast stack but retained in notification history. */
+	collapsed?: boolean
 }
 
 export abstract class AbstractPopupNotificationManager {
@@ -90,6 +93,7 @@ export abstract class AbstractPopupNotificationManager {
 		const newNotification: PopupNotification = {
 			...notification,
 			id: Date.now() + Math.random(),
+			createdAt: Date.now(),
 		}
 		this.setNotificationTimer(newNotification)
 		this.addNotificationToStorage(newNotification)
@@ -118,8 +122,24 @@ export abstract class AbstractPopupNotificationManager {
 
 		const delay = notification.autoCloseMs ?? this.DEFAULT_AUTO_CLOSE_MS
 		notification.timer = setTimeout(() => {
-			this.removeNotification(notification.id)
+			this.collapseNotification(notification.id)
 		}, delay)
+	}
+
+	collapseNotification = (id: string | number): void => {
+		const notification = this.getNotifications().find((n) => n.id === id)
+		if (notification) {
+			this.clearNotificationTimer(notification)
+			notification.collapsed = true
+		}
+	}
+
+	expandNotification = (id: string | number): void => {
+		const notification = this.getNotifications().find((n) => n.id === id)
+		if (notification) {
+			notification.collapsed = false
+			this.setNotificationTimer(notification)
+		}
 	}
 
 	stopNotificationTimer = (notification: PopupNotification): void => {

@@ -15,4 +15,5 @@ pub mod proxy;
 pub mod resolve_shortcut;
 pub mod rpc;
 pub mod server_ping;
+pub(crate) mod single_flight;
 pub mod symlink;

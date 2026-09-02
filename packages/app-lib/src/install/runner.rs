@@ -8,7 +8,7 @@ use super::model::{
     InstanceUpgradeCompatibilityWarning, InstanceUpgradeDisplayNames,
     InstanceUpgradeExecution, InstanceUpgradeExternalChange,
     InstanceUpgradeExternalChangeKind, InstanceUpgradeResult,
-    InstanceUpgradeWatchBaseline, SharedUpgradeMode,
+    InstanceUpgradeWatchBaseline, SharedUpgradeMode, initial_phase_for_request,
 };
 use super::{diagnostics, recovery, store};
 use crate::ErrorKind;
@@ -356,7 +356,7 @@ pub async fn retry_job(job_id: Uuid) -> crate::Result<InstallJobSnapshot> {
     job.state.pause_reason = None;
     job.state.continuation = None;
     job.state.context = None;
-    job.state.progress.phase = InstallPhaseId::PreparingInstance;
+    job.state.progress.phase = initial_phase_for_request(&job.state.request);
     job.state.progress.progress = None;
     job.state.progress.details = InstallPhaseDetails::Empty;
     job.state.progress.parallel = None;

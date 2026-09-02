@@ -46,6 +46,7 @@
 			:antialias="true"
 			:dpr="rendererDpr"
 			:renderer-options="{
+				antialias: true,
 				outputColorSpace: THREE.SRGBColorSpace,
 				toneMapping: THREE.NoToneMapping,
 				toneMappingExposure: 10.0,
@@ -311,7 +312,7 @@ const {
 	isModelLoaded,
 })
 
-const rendererDpr: [number, number] = [1, 1.5]
+const rendererDpr: [number, number] = [1, 2]
 const radialSpotlightShader = createRadialSpotlightShader()
 const isReady = computed(() => isModelLoaded.value && isTextureLoaded.value && hasResolvedFit.value)
 const { isPreviewVisible, showLoading } = useSkinPreviewLoading(isReady)

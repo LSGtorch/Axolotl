@@ -12,6 +12,7 @@ import {
 	useVIntl,
 } from '@modrinth/ui'
 import { useQueryClient } from '@tanstack/vue-query'
+import { join } from '@tauri-apps/api/path'
 import { computed, type Ref, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
@@ -166,7 +167,8 @@ function gameDirModeLabel(mode: GameDirMode) {
 async function setGameDirMode(mode: GameDirMode) {
 	const baseRoot = gameDirInfo.value.baseRoot
 	if (!baseRoot) return
-	const nextPath = mode === 'isolated' ? `${baseRoot}/versions/${instance.value.name}` : baseRoot
+	const nextPath =
+		mode === 'isolated' ? await join(baseRoot, 'versions', instance.value.name) : baseRoot
 	if (nextPath === gameDirOverride.value) return
 
 	// The launcher only records the new override path; the user is responsible

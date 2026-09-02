@@ -12,6 +12,7 @@ import {
 	useVIntl,
 } from '@modrinth/ui'
 import { save } from '@tauri-apps/plugin-dialog'
+import { join } from '@tauri-apps/api/path'
 import { readDir, stat } from '@tauri-apps/plugin-fs'
 import { ref } from 'vue'
 
@@ -164,7 +165,7 @@ async function loadExportDirectory(path) {
 	loadedDirectories.value.add(path)
 
 	try {
-		const entries = await readDir(`${instanceRoot.value}/${path}`)
+		const entries = await readDir(await join(instanceRoot.value, ...path.split('/')))
 		const childItems = await Promise.all(
 			entries.map((entry) => buildExportDirectoryChildItem(instanceRoot.value, path, entry)),
 		)
@@ -178,7 +179,7 @@ async function loadExportDirectory(path) {
 
 async function buildExportCandidateItem(instanceRoot, path) {
 	try {
-		const entries = await readDir(`${instanceRoot}/${path}`)
+		const entries = await readDir(await join(instanceRoot, ...path.split('/')))
 		const metadata = await getExportCandidateMetadata(instanceRoot, path)
 		return {
 			path,
@@ -228,7 +229,7 @@ function appendExportItems(items) {
 
 async function getExportCandidateMetadata(instanceRoot, path) {
 	try {
-		const metadata = await stat(`${instanceRoot}/${path}`)
+		const metadata = await stat(await join(instanceRoot, ...path.split('/')))
 		return {
 			size: metadata.size,
 			modified: metadata.mtime ? Math.floor(metadata.mtime.getTime() / 1000) : undefined,

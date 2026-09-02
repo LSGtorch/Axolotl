@@ -146,7 +146,7 @@
 					>
 						<ButtonStyled v-if="item.type === 'error' && onErrorAction">
 							<button :disabled="exporting[item.id]" @click="handleErrorAction(item)">
-								<DownloadIcon /> {{ errorActionLabel }}
+								<DownloadIcon /> {{ errorActionLabel || formatMessage(messages.exportErrorLogs) }}
 							</button>
 						</ButtonStyled>
 						<ButtonStyled
@@ -178,6 +178,7 @@ import {
 } from '@modrinth/assets'
 import { computed, ref } from 'vue'
 
+import { defineMessages, useVIntl } from '../../composables/i18n'
 import { useModalStack } from '../../composables/modal-stack'
 import {
 	injectPopupNotificationManager,
@@ -190,8 +191,17 @@ import ProgressBar from '../base/ProgressBar.vue'
 import NotificationToast from '../notifications/NotificationToast.vue'
 
 const popupNotificationManager = injectPopupNotificationManager()
+const { formatMessage } = useVIntl()
+const messages = defineMessages({
+	exportErrorLogs: {
+		id: 'notification.panel.export-error-logs',
+		defaultMessage: 'Export error logs',
+	},
+})
 const notifications = computed<PopupNotification[]>(() =>
-	popupNotificationManager.getNotifications(),
+	[...popupNotificationManager.getNotifications()]
+		.filter((notification) => !notification.collapsed)
+		.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0)),
 )
 const { stackCount } = useModalStack()
 const hasModalActive = computed(() => stackCount.value > 0)
@@ -203,7 +213,7 @@ const exporting = ref<Record<string | number, boolean>>({})
 const stopTimer = (n: PopupNotification) => popupNotificationManager.stopNotificationTimer(n)
 const setNotificationTimer = (n: PopupNotification) =>
 	popupNotificationManager.setNotificationTimer(n)
-const dismiss = (id: string | number) => popupNotificationManager.removeNotification(id)
+const dismiss = (id: string | number) => popupNotificationManager.collapseNotification(id)
 
 function isDownloadNotification(item: PopupNotification) {
 	return (
@@ -238,13 +248,9 @@ function handleDownloadClick(item: PopupNotification, event: MouseEvent) {
 
 async function handleProgressItemDismiss(
 	item: PopupNotification,
-	progressItem: PopupNotificationProgressItem,
+	_progressItem: PopupNotificationProgressItem,
 ) {
-	if (progressItem.onDismiss) {
-		await progressItem.onDismiss()
-		return
-	}
-
+	// Dismissal is presentation-only. Download history must remain available for diagnosis.
 	dismiss(item.id)
 }
 
@@ -310,7 +316,7 @@ function progressColorForType(type: PopupNotification['type']) {
 const {
 	hasSidebar = false,
 	onErrorAction,
-	errorActionLabel = 'Export error logs',
+	errorActionLabel,
 } = defineProps<{
 	hasSidebar?: boolean
 	onErrorAction?: (notification: PopupNotification) => void | Promise<void>

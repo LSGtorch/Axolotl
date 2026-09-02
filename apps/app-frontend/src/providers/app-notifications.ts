@@ -28,7 +28,7 @@ export class AppNotificationManager extends AbstractWebNotificationManager {
 	}
 
 	protected addNotificationToStorage(notification: WebNotification): void {
-		this.state.value.push(notification)
+		this.state.value.unshift(notification)
 	}
 
 	protected removeNotificationFromStorage(id: string | number): void {

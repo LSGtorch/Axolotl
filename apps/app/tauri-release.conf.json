@@ -1,6 +1,6 @@
 {
 	"bundle": {
-		"createUpdaterArtifacts": "v1Compatible"
+		"createUpdaterArtifacts": false
 	},
 	"build": {
 		"features": ["updater"]
@@ -12,7 +12,7 @@
 	},
 	"plugins": {
 		"updater": {
-			"pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM0OEVFMDAzQjFBRDkyNUEKUldSYWtxMnhBK0NPeE1POWdEb2FZUHhsSFNwRFBNV25pb0ptK003cmZBYXE4eHkxT21sUUV1dHAK",
+"pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM0OEVFMDAzQjFBRDkyNUEKUldSYWtxMnhBK0NPeE1POWdEb2FZUHhsSFNwRFBNV25pb0ptK003cmZBYXE4eHkxT21sUUV1dHAK",
 			"endpoints": ["https://github.com/LSGtorch/Axolotl/releases/latest/download/latest.json"],
 			"windows": {
 				"installMode": "quiet"

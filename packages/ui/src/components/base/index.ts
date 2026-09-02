@@ -21,6 +21,7 @@ export type {
 	ButtonVisualProps,
 } from './buttons/types'
 export { default as ButtonStyled } from './ButtonStyled.vue'
+export { default as ScrollToTopButton } from './ScrollToTopButton.vue'
 export { default as Card } from './Card.vue'
 export { default as Checkbox } from './Checkbox.vue'
 export { default as Chips } from './Chips.vue'

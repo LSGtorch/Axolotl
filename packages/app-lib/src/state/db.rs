@@ -5,10 +5,13 @@ use sqlx::sqlite::{
     SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions,
 };
 use sqlx::{Pool, Sqlite};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 static MIGRATOR: Migrator = sqlx::migrate!();
+
+const UPDATE_CHANNEL_STATE_FILE: &str = "update-channel.json";
+const LEGACY_APP_DB_FILE: &str = "app.db";
 
 const INITIAL_MIGRATION_VERSION: i64 = 20240711194701;
 const COLLIDING_JAVA_DISCOVERY_MIGRATION_VERSION: i64 = 20260722120000;
@@ -85,9 +88,229 @@ pub(crate) async fn connect(
 
     crate::util::io::create_dir_all(&settings_dir).await?;
 
-    let db_path = settings_dir.join("app.db");
+    migrate_legacy_release_database(&settings_dir).await?;
+    let db_path = app_db_path(&settings_dir).await?;
+    let db_dir = db_path.parent().ok_or_else(|| {
+        crate::ErrorKind::FSError(format!(
+            "App database path {} has no parent directory",
+            db_path.display()
+        ))
+    })?;
+    crate::util::io::create_dir_all(db_dir).await?;
 
     connect_app_db(&db_path).await
+}
+
+pub async fn copy_release_database_to_beta(
+    app_identifier: &str,
+) -> crate::Result<()> {
+    let settings_dir = DirectoryInfo::initial_settings_dir_path(app_identifier)
+        .ok_or(crate::ErrorKind::FSError(
+            "Could not find valid config dir".to_string(),
+        ))?;
+    let release_path = settings_dir.join("release").join(LEGACY_APP_DB_FILE);
+    if !release_path.try_exists()? {
+        return Err(crate::ErrorKind::FSError(
+            "The Release database does not exist".to_string(),
+        )
+        .into());
+    }
+
+    let beta_dir = settings_dir.join("beta");
+    crate::util::io::create_dir_all(&beta_dir).await?;
+    let beta_path = beta_dir.join(LEGACY_APP_DB_FILE);
+    if beta_path.try_exists()? {
+        return Err(crate::ErrorKind::FSError(
+            "The Beta database already exists".to_string(),
+        )
+        .into());
+    }
+
+    let release_pool = open_app_db_pool(&release_path).await?;
+    let escaped_path = beta_path.to_string_lossy().replace('\'', "''");
+    sqlx::query(&format!("VACUUM INTO '{escaped_path}'"))
+        .execute(&release_pool)
+        .await?;
+    release_pool.close().await;
+
+    if let Err(error) = open_app_db_pool(&beta_path).await {
+        let _ = tokio::fs::remove_file(&beta_path).await;
+        return Err(error);
+    }
+
+    tracing::info!(
+        source = %release_path.display(),
+        destination = %beta_path.display(),
+        "Copied the Release database into the Beta update channel"
+    );
+    Ok(())
+}
+
+pub async fn beta_database_exists(app_identifier: &str) -> crate::Result<bool> {
+    let settings_dir = DirectoryInfo::initial_settings_dir_path(app_identifier)
+        .ok_or(crate::ErrorKind::FSError(
+            "Could not find valid config dir".to_string(),
+        ))?;
+    Ok(settings_dir
+        .join("beta")
+        .join(LEGACY_APP_DB_FILE)
+        .try_exists()?)
+}
+
+pub async fn current_app_database_path(
+    app_identifier: &str,
+) -> crate::Result<PathBuf> {
+    let settings_dir = DirectoryInfo::initial_settings_dir_path(app_identifier)
+        .ok_or(crate::ErrorKind::FSError(
+            "Could not find valid config dir".to_string(),
+        ))?;
+    app_db_path(&settings_dir).await
+}
+
+pub async fn copy_database_between_channels(
+    app_identifier: &str,
+    source_channel: &str,
+    target_channel: &str,
+) -> crate::Result<()> {
+    if !matches!(source_channel, "release" | "beta")
+        || !matches!(target_channel, "release" | "beta")
+        || source_channel == target_channel
+    {
+        return Err(crate::ErrorKind::InputError(
+            "Database channels must be different Release or Beta channels"
+                .to_string(),
+        )
+        .into());
+    }
+
+    let settings_dir = DirectoryInfo::initial_settings_dir_path(app_identifier)
+        .ok_or(crate::ErrorKind::FSError(
+            "Could not find valid config dir".to_string(),
+        ))?;
+    let active_channel = read_update_channel(&settings_dir).await?;
+    if target_channel == active_channel {
+        return Err(crate::ErrorKind::InputError(
+            "The active database cannot be overwritten while Axolotl is running".to_string(),
+        )
+        .into());
+    }
+
+    let source_path =
+        settings_dir.join(source_channel).join(LEGACY_APP_DB_FILE);
+    let target_dir = settings_dir.join(target_channel);
+    let target_path = target_dir.join(LEGACY_APP_DB_FILE);
+    if !source_path.try_exists()? {
+        return Err(crate::ErrorKind::FSError(format!(
+            "The {source_channel} database does not exist"
+        ))
+        .into());
+    }
+
+    crate::util::io::create_dir_all(&target_dir).await?;
+    let temporary_path = target_dir.join(format!("{LEGACY_APP_DB_FILE}.tmp"));
+    let source_pool = open_app_db_pool(&source_path).await?;
+    let escaped_path = temporary_path.to_string_lossy().replace('\'', "''");
+    let result = sqlx::query(&format!("VACUUM INTO '{escaped_path}'"))
+        .execute(&source_pool)
+        .await;
+    source_pool.close().await;
+    result?;
+
+    tokio::fs::rename(&temporary_path, &target_path).await?;
+    tracing::info!(
+        source = %source_path.display(),
+        destination = %target_path.display(),
+        "Overwrote the inactive update channel database"
+    );
+    Ok(())
+}
+
+pub async fn backup_current_app_db_for_update(
+    app_identifier: &str,
+    target_version: &str,
+) -> crate::Result<PathBuf> {
+    let settings_dir = DirectoryInfo::initial_settings_dir_path(app_identifier)
+        .ok_or(crate::ErrorKind::FSError(
+            "Could not find valid config dir".to_string(),
+        ))?;
+    let db_path = app_db_path(&settings_dir).await?;
+    super::db_backup::backup_app_db_for_update(&db_path, target_version).await
+}
+
+async fn app_db_path(settings_dir: &Path) -> crate::Result<PathBuf> {
+    let channel = read_update_channel(settings_dir).await?;
+    Ok(settings_dir.join(channel).join(LEGACY_APP_DB_FILE))
+}
+
+async fn read_update_channel(
+    settings_dir: &Path,
+) -> crate::Result<&'static str> {
+    let path = settings_dir.join(UPDATE_CHANNEL_STATE_FILE);
+    let contents = match tokio::fs::read_to_string(&path).await {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok("release");
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let channel = serde_json::from_str::<serde_json::Value>(&contents)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("active_channel")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        });
+
+    match channel.as_deref() {
+        Some("beta") => Ok("beta"),
+        Some("release") | None => Ok("release"),
+        Some(other) => Err(crate::ErrorKind::FSError(format!(
+            "Invalid update channel {other:?} in {}",
+            path.display()
+        ))
+        .into()),
+    }
+}
+
+async fn migrate_legacy_release_database(
+    settings_dir: &Path,
+) -> crate::Result<()> {
+    let legacy_path = settings_dir.join(LEGACY_APP_DB_FILE);
+    if !legacy_path.try_exists()? {
+        return Ok(());
+    }
+
+    let release_dir = settings_dir.join("release");
+    let release_path = release_dir.join(LEGACY_APP_DB_FILE);
+    if release_path.try_exists()? {
+        return Ok(());
+    }
+
+    crate::util::io::create_dir_all(&release_dir).await?;
+    tokio::fs::rename(&legacy_path, &release_path).await?;
+    for suffix in ["-wal", "-shm"] {
+        let legacy_sidecar = sidecar_path(&legacy_path, suffix);
+        if legacy_sidecar.try_exists()? {
+            tokio::fs::rename(
+                &legacy_sidecar,
+                sidecar_path(&release_path, suffix),
+            )
+            .await?;
+        }
+    }
+
+    tracing::info!(
+        database = %release_path.display(),
+        "Migrated the legacy app database into the Release update channel"
+    );
+    Ok(())
+}
+
+fn sidecar_path(path: &Path, suffix: &str) -> PathBuf {
+    let mut path = path.as_os_str().to_owned();
+    path.push(suffix);
+    PathBuf::from(path)
 }
 
 async fn connect_app_db(db_path: &Path) -> crate::Result<Pool<Sqlite>> {

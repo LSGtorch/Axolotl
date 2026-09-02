@@ -2,11 +2,154 @@ import * as THREE from 'three'
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 
+import { createSolidSkinLayerGeometry } from './solid-skin-layer'
+
 export interface SkinRendererConfig {
 	textureColorSpace?: THREE.ColorSpace
 	textureFlipY?: boolean
 	textureMagFilter?: THREE.MagnificationTextureFilter
 	textureMinFilter?: THREE.MinificationTextureFilter
+}
+
+const ENABLE_VOXEL_LAYER_GEOMETRY = true
+const MODEL_PIXEL_SIZE = 1 / 16
+
+/** Lift every non-leg component by exactly one Minecraft pixel. */
+function liftNonLegModelParts(model: THREE.Object3D): void {
+	if (model.userData.nonLegPartsLifted) return
+
+	const liftableRoots = new Set(['Head', 'Right_Arm', 'Left_Arm', 'Body_2', 'Body_Layer', 'Cape'])
+	model.traverse((node) => {
+		if (liftableRoots.has(node.name)) node.position.y += MODEL_PIXEL_SIZE
+	})
+	model.userData.nonLegPartsLifted = true
+}
+
+/**
+ * Rebuilds the outer layer as solid, textured voxels. This follows 3D Skin
+ * Layers' SolidPixelWrapper: every non-transparent outer-layer pixel becomes
+ * a real cube with six faces instead of a zero-thickness quad.
+ */
+function getSkinLayerDefinition(name: string): {
+	width: number
+	height: number
+	depth: number
+	u: number
+	v: number
+} | null {
+	if (name === 'Hat_Layer') return { width: 8, height: 8, depth: 8, u: 32, v: 0 }
+	if (name === 'Body_Layer') return { width: 8, height: 12, depth: 4, u: 16, v: 32 }
+	if (name === 'Right_Leg_Layer') return { width: 4, height: 12, depth: 4, u: 0, v: 32 }
+	if (name === 'Left_Leg_Layer') return { width: 4, height: 12, depth: 4, u: 0, v: 48 }
+	if (name === 'Right_Arm_Layer') return { width: 4, height: 12, depth: 4, u: 40, v: 32 }
+	if (name === 'Left_Arm_Layer') return { width: 4, height: 12, depth: 4, u: 48, v: 48 }
+	return null
+}
+
+function readSkinPixels(texture: THREE.Texture): Uint8ClampedArray | null {
+	const image = texture.image as CanvasImageSource | undefined
+	if (!image) return null
+
+	try {
+		const canvas = document.createElement('canvas')
+		canvas.width = canvas.height = 64
+		const context = canvas.getContext('2d')
+		if (!context) return null
+		context.drawImage(image, 0, 0, 64, 64)
+		return context.getImageData(0, 0, 64, 64).data
+	} catch {
+		// Cross-origin images may not be readable. The regular GLTF layer remains
+		// as a graceful fallback in that case.
+		return null
+	}
+}
+
+function scaleLayerGeometry(geometry: THREE.BufferGeometry, name: string): void {
+	geometry.computeBoundingBox()
+	const bounds = geometry.boundingBox
+	if (!bounds) return
+
+	const isHead = name === 'Hat_Layer'
+	const isBody = name === 'Body_Layer'
+	// The authored GLTF outer shells already include most of the mod's offset.
+	// Apply only the remaining per-pixel correction; multiplying by the full
+	// config values would make the head pixels noticeably oversized.
+	const scaleX = isHead ? 1.05 : isBody ? 1 : 1.02
+	const scaleY = isHead ? 1.05 : 1
+	const scaleZ = isHead ? 1.05 : 1.02
+	const center = bounds.getCenter(new THREE.Vector3())
+	const position = geometry.getAttribute('position')
+	const vertex = new THREE.Vector3()
+
+	for (let i = 0; i < position.count; i++) {
+		vertex.fromBufferAttribute(position, i)
+		vertex.sub(center)
+		vertex.set(vertex.x * scaleX, vertex.y * scaleY, vertex.z * scaleZ)
+		vertex.add(center)
+		position.setXYZ(i, vertex.x, vertex.y, vertex.z)
+	}
+
+	position.needsUpdate = true
+	geometry.computeBoundingBox()
+	geometry.computeBoundingSphere()
+}
+
+export function applyThreeDSkinLayers(model: THREE.Object3D, texture?: THREE.Texture): void {
+	const pixels = texture ? readSkinPixels(texture) : null
+	if (!pixels || !texture) return
+	liftNonLegModelParts(model)
+	model.traverse((child) => {
+		const mesh = child as THREE.Mesh
+		if (
+			!mesh.isMesh ||
+			!mesh.name.endsWith('_Layer') ||
+			!mesh.geometry ||
+			mesh.userData.threeDSkinLayersApplied
+		)
+			return
+
+		// GLTF clones share BufferGeometry objects. Clone before changing vertex data
+		// so one preview (or cached model) cannot affect another.
+		mesh.geometry = mesh.geometry.clone()
+		const definition = getSkinLayerDefinition(mesh.name)
+		if (ENABLE_VOXEL_LAYER_GEOMETRY && pixels && definition) {
+			const meshBounds = new THREE.Box3().setFromBufferAttribute(
+				mesh.geometry.getAttribute('position') as THREE.BufferAttribute,
+			)
+			const isSlimArm =
+				mesh.name.includes('Arm') && meshBounds.getSize(new THREE.Vector3()).x < 0.25
+			const voxelDefinition = isSlimArm ? { ...definition, width: 3 } : definition
+			const voxelGeometry = createSolidSkinLayerGeometry(mesh, texture!, pixels, voxelDefinition)
+			if (voxelGeometry) {
+				scaleLayerGeometry(voxelGeometry, mesh.name)
+				const voxelMaterials = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+				voxelMaterials.forEach((material) => {
+					if (!(material instanceof THREE.MeshStandardMaterial)) return
+					// The mod renders these as alpha-tested cutouts. Keeping depth writes
+					// deterministic avoids transparent-surface sorting cracks between voxels.
+					material.transparent = false
+					material.alphaTest = 0.1
+					material.depthWrite = true
+					material.alphaToCoverage = true
+					material.polygonOffset = false
+					material.polygonOffsetFactor = 0
+					material.polygonOffsetUnits = 0
+					material.needsUpdate = true
+				})
+				mesh.geometry.dispose()
+				mesh.geometry = voxelGeometry
+				mesh.userData.threeDSkinLayersApplied = true
+				return
+			}
+		}
+		const geometry = mesh.geometry
+		geometry.computeBoundingBox()
+		const bounds = geometry.boundingBox
+		if (!bounds) return
+
+		scaleLayerGeometry(geometry, mesh.name)
+		mesh.userData.threeDSkinLayersApplied = true
+	})
 }
 
 const modelCache: Map<string, GLTF> = new Map()
@@ -171,6 +314,10 @@ export function applyTexture(model: THREE.Object3D, texture: THREE.Texture): voi
 							toneMapped: false,
 							transparent: isSkinLayer,
 						})
+						if (mat.alphaToCoverage !== isSkinLayer) {
+							mat.alphaToCoverage = isSkinLayer
+							mat.needsUpdate = true
+						}
 
 						setCommonMaterialProperties(mat)
 
@@ -262,6 +409,7 @@ export async function setupSkinModel(
 
 	const model = gltf.scene.clone()
 	applyTexture(model, texture)
+	applyThreeDSkinLayers(model, texture)
 
 	if (capeTextureUrl) {
 		const capeTexture = await loadTexture(capeTextureUrl, config)

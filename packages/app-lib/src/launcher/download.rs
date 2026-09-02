@@ -135,37 +135,35 @@ pub async fn copy_verified_local_artifact(
     progress: Option<&MinecraftDownloadProgress>,
     context: InstallErrorContext,
 ) -> crate::Result<bool> {
-    if !matches!(
-        classify_local_artifact(
-            Some(local),
-            destination,
-            relative_path,
-            expected_sha1,
-            expected_size,
-        )
-        .await?,
-        ArtifactAvailability::LocalReusable
-    ) {
-        return Ok(false);
-    }
-
+    let source = local.root.join(relative_path);
     if let Some(progress) = progress {
         progress.set_context(context.clone()).await?;
     }
+    let copied = match super::local_artifact::copy_verified(
+        &source,
+        destination,
+        expected_sha1,
+        expected_size,
+        &st.io_semaphore,
+    )
+    .await
+    {
+        Ok(copied) => copied,
+        Err(error) => {
+            if let Some(progress) = progress {
+                progress.persist_failure_context(context).await;
+            }
+            return Err(error);
+        }
+    };
+    if !copied {
+        return Ok(false);
+    }
 
-    let source = local.root.join(relative_path);
     let size = match expected_size {
         Some(size) => size,
         None => io::metadata(&source).await?.len(),
     };
-    if let Err(error) =
-        crate::util::fetch::copy(&source, destination, &st.io_semaphore).await
-    {
-        if let Some(progress) = progress {
-            progress.persist_failure_context(context).await;
-        }
-        return Err(error);
-    }
     if let Some(progress) = progress {
         progress.add_bytes(size).await?;
     }
@@ -620,10 +618,43 @@ pub(crate) fn local_native_library_path(
 ) -> crate::Result<PathBuf> {
     let artifact_path = match native.path.as_deref() {
         Some(path) => path.to_string(),
-        None => classified_library_artifact_path(&library.name, classifier)?,
+        None => native_library_artifact_path(library, classifier)?,
     };
 
     Ok(Path::new("libraries").join(artifact_path))
+}
+
+pub(crate) fn is_native_library(library: &Library) -> bool {
+    library.natives.is_some()
+        || library_classifier(&library.name)
+            .is_some_and(|classifier| classifier.starts_with("natives-"))
+}
+
+fn library_classifier(library_name: &str) -> Option<&str> {
+    let mut coordinates = library_name.split(':');
+    coordinates.next()?;
+    coordinates.next()?;
+    coordinates.next()?;
+    coordinates
+        .next()
+        .and_then(|classifier| classifier.split('@').next())
+}
+
+pub(crate) fn native_library_artifact_path(
+    library: &Library,
+    classifier: &str,
+) -> crate::Result<String> {
+    // A four-part coordinate is only the native artifact path when its
+    // classifier is a native classifier. Other classifiers (sources,
+    // javadoc, etc.) can occur in loader metadata and must retain the
+    // legacy "append classifier" behaviour when this helper is reused.
+    if library_classifier(&library.name)
+        .is_some_and(|value| value.starts_with("natives-"))
+    {
+        Ok(d::get_path_from_artifact(&library.name)?)
+    } else {
+        classified_library_artifact_path(&library.name, classifier)
+    }
 }
 
 pub(crate) fn classified_library_artifact_path(
@@ -653,6 +684,7 @@ pub(crate) fn library_native_classifier(
         .map(|classifier| {
             classifier.replace("${arch}", crate::util::platform::ARCH_WIDTH)
         })
+        .or_else(|| library_classifier(&library.name).map(str::to_owned))
 }
 
 pub(crate) fn local_client_path(game_version: &str) -> PathBuf {
@@ -857,7 +889,7 @@ fn missing_library_bytes(
             continue;
         }
 
-        if library.natives.is_some() {
+        if is_native_library(library) {
             if let Some(classifier) =
                 library_native_classifier(library, java_arch)
                 && let Some(native) = library
@@ -1229,7 +1261,10 @@ async fn write_version_info(path: &Path, data: Vec<u8>) -> crate::Result<()> {
     Ok(())
 }
 
-const DERIVED_VERSION_CACHE_FORMAT: &str = "1";
+// Bumped when profile merge semantics change. This forces existing loader
+// caches to be regenerated so duplicate Forge/vanilla libraries regain native
+// classifier metadata.
+const DERIVED_VERSION_CACHE_FORMAT: &str = "2";
 
 fn derived_version_cache_marker_path(path: &Path) -> PathBuf {
     path.with_extension("json.axolotl-format")
@@ -1619,7 +1654,14 @@ pub async fn download_assets(
             || force;
 
         if should_fetch_object {
-            if local_source.is_some() {
+            let local_candidate = !force
+                && super::local_artifact::candidate_is_usable(
+                    local_source,
+                    &local_asset_object_path(hash),
+                    Some(asset.size as u64),
+                )
+                .await?;
+            if local_candidate {
                 fallback_assets.push(build_fallback_asset(st, name, asset));
             } else {
                 let url = format!(
@@ -1926,7 +1968,7 @@ pub async fn download_libraries(
     }?;
     let mut libraries_for_download: Vec<_> = libraries
         .iter()
-        .filter(|library| library.natives.is_none())
+        .filter(|library| !is_native_library(library))
         .collect();
     libraries_for_download.extend(native_libraries_to_download(
         libraries,
@@ -1964,7 +2006,7 @@ pub async fn download_libraries(
                 return Ok(());
             }
 
-            if library.natives.is_some() {
+            if is_native_library(library) {
                 let Some(classifier) =
                     library_native_classifier(library, java_arch)
                 else {
@@ -2025,8 +2067,8 @@ pub async fn download_libraries(
                     }
                     path
                 } else {
-                    let artifact_path = classified_library_artifact_path(
-                        &library.name,
+                    let artifact_path = native_library_artifact_path(
+                        library,
                         &classifier,
                     )?;
                     let path =
@@ -2247,7 +2289,7 @@ fn native_libraries_to_download<'a>(
     let mut identities = HashSet::new();
     let mut result = Vec::new();
     for library in libraries {
-        if library.natives.is_none() || !library.downloadable {
+        if !is_native_library(library) || !library.downloadable {
             continue;
         }
         if let Some(rules) = &library.rules
@@ -2271,7 +2313,7 @@ fn native_libraries_to_download<'a>(
             .and_then(|classifiers| classifiers.get(&classifier))
             .filter(|download| !download.sha1.is_empty())
             .map_or_else(
-                || classified_library_artifact_path(&library.name, &classifier),
+                || native_library_artifact_path(library, &classifier),
                 |download| Ok(download.sha1.clone()),
             )?;
         if identities.insert(identity.clone()) {
@@ -2405,6 +2447,45 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn local_asset_availability_distinguishes_reusable_and_missing() {
+        let directory = tempfile::tempdir().unwrap();
+        let local_root = directory.path().join(".minecraft");
+        let relative = Path::new("assets/objects/ab/hash");
+        let candidate = local_root.join(relative);
+        io::create_dir_all(candidate.parent().unwrap())
+            .await
+            .unwrap();
+        io::write(&candidate, "asset").await.unwrap();
+        let source = LocalRuntimeSource { root: local_root };
+        let destination = directory.path().join("destination");
+
+        assert_eq!(
+            classify_local_artifact(
+                Some(&source),
+                &destination,
+                relative,
+                Some("0000000000000000000000000000000000000000"),
+                Some(5),
+            )
+            .await
+            .unwrap(),
+            ArtifactAvailability::NetworkRequired
+        );
+        assert_eq!(
+            classify_local_artifact(
+                Some(&source),
+                &destination,
+                relative,
+                Some("05fac94380a70241f23780e7aef62b190894238f"),
+                Some(5),
+            )
+            .await
+            .unwrap(),
+            ArtifactAvailability::LocalReusable
+        );
+    }
+
     #[test]
     fn liteloader_library_detection_is_coordinate_specific() {
         assert!(is_liteloader_library(
@@ -2447,6 +2528,24 @@ mod tests {
             )
             .unwrap()[0],
             format!("https://maven.legacyfabric.net/{artifact_path}")
+        );
+    }
+
+    #[test]
+    fn forge_classifier_native_library_uses_its_declared_artifact_path() {
+        let library: Library = serde_json::from_value(serde_json::json!({
+            "name": "org.lwjgl:lwjgl:3.2.2:natives-windows"
+        }))
+        .unwrap();
+
+        assert!(is_native_library(&library));
+        assert_eq!(
+            library_native_classifier(&library, "x86_64"),
+            Some("natives-windows".to_string())
+        );
+        assert_eq!(
+            native_library_artifact_path(&library, "natives-windows").unwrap(),
+            "org/lwjgl/lwjgl/3.2.2/lwjgl-3.2.2-natives-windows.jar"
         );
     }
 

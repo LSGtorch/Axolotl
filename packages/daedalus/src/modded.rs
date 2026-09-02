@@ -379,8 +379,38 @@ pub fn merge_partial_version(
             library
         })
         .collect::<Vec<_>>();
-    let mut seen_libraries = HashSet::new();
-    libraries.retain(|library| seen_libraries.insert(library.name.clone()));
+    // Loader profiles may repeat a vanilla coordinate with a reduced
+    // description (Forge 1.16.x is a notable example: its duplicate LWJGL
+    // entry omits `natives` and `downloads.classifiers`). Merge metadata from
+    // duplicates before dropping them so native archives remain discoverable.
+    let mut merged_libraries = Vec::with_capacity(libraries.len());
+    for library in libraries {
+        if let Some(existing) = merged_libraries
+            .iter_mut()
+            .find(|existing: &&mut Library| existing.name == library.name)
+        {
+            if existing.natives.is_none() {
+                existing.natives = library.natives.clone();
+            }
+            if let Some(downloads) = &library.downloads {
+                let existing_downloads =
+                    existing.downloads.get_or_insert_with(|| downloads.clone());
+                if existing_downloads.artifact.is_none() {
+                    existing_downloads.artifact = downloads.artifact.clone();
+                }
+                if existing_downloads.classifiers.is_none() {
+                    existing_downloads.classifiers =
+                        downloads.classifiers.clone();
+                }
+            }
+            if existing.extract.is_none() {
+                existing.extract = library.extract.clone();
+            }
+        } else {
+            merged_libraries.push(library);
+        }
+    }
+    libraries = merged_libraries;
 
     VersionInfo {
         arguments,

@@ -169,6 +169,13 @@ function selectedItemKey(provider: ContentSelectionProvider, projectId: string) 
 	return `${provider}:${projectId}`
 }
 
+// Install jobs are scoped to an instance. Keep the project key provider-qualified,
+// but include the target instance when tracking the queued job so installing the
+// same project in another instance does not lock its action.
+function installJobKey(instanceId: string, itemKey: string) {
+	return `${instanceId}\0${itemKey}`
+}
+
 function modrinthProjectUrl(project: Labrinth.Projects.v2.Project): string {
 	return `https://modrinth.com/${project.project_type}/${project.slug}`
 }
@@ -485,7 +492,9 @@ export function createContentSelection({
 	}
 
 	function isInstalling(key: string) {
-		const jobId = jobIdsByKey.value.get(key)
+		const instanceId = targetInstance.value?.id
+		if (!instanceId) return false
+		const jobId = jobIdsByKey.value.get(installJobKey(instanceId, key))
 		if (!jobId) return false
 		const job = downloadManager.jobs.value.find((candidate) => candidate.job_id === jobId)
 		return !job || activeJobStatuses.has(job.status)
@@ -999,7 +1008,7 @@ export function createContentSelection({
 				installedIdentityKeys.value = new Set()
 				installedIdentitySlugs.value = new Set()
 				const nextJobs = new Map(jobIdsByKey.value)
-				nextJobs.set(selection.item.key, job.job_id)
+				nextJobs.set(installJobKey(instance.id, selection.item.key), job.job_id)
 				jobIdsByKey.value = nextJobs
 				remove(selection.item.key)
 			} catch (error) {

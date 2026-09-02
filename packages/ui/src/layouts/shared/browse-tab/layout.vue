@@ -9,6 +9,7 @@ import LoadingIndicator from '#ui/components/base/LoadingIndicator.vue'
 import NavTabs from '#ui/components/base/NavTabs.vue'
 import Pagination from '#ui/components/base/Pagination.vue'
 import PopoutMenu from '#ui/components/base/PopoutMenu.vue'
+import ScrollToTopButton from '#ui/components/base/ScrollToTopButton.vue'
 import StyledInput from '#ui/components/base/StyledInput.vue'
 import ProjectCard from '#ui/components/project/card/ProjectCard.vue'
 import ProjectCardList from '#ui/components/project/ProjectCardList.vue'
@@ -405,4 +406,5 @@ const selectedDisplayMode = computed(() =>
 	</div>
 
 	<slot name="after" />
+	<ScrollToTopButton />
 </template>

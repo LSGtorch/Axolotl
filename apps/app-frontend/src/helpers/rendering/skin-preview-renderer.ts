@@ -50,6 +50,7 @@ class BatchSkinRenderer {
 		})
 
 		this.renderer.outputColorSpace = THREE.SRGBColorSpace
+		this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
 		this.renderer.shadowMap.enabled = false
 		this.renderer.toneMapping = THREE.NoToneMapping
 		this.renderer.toneMappingExposure = 10.0
@@ -154,6 +155,12 @@ class BatchSkinRenderer {
 	private clearScene(): void {
 		if (!this.scene || !this.currentModel) return
 
+		this.currentModel.traverse((object) => {
+			const mesh = object as THREE.Mesh
+			if (mesh.isMesh && mesh.userData.threeDSkinLayersApplied) {
+				mesh.geometry.dispose()
+			}
+		})
 		this.scene.remove(this.currentModel)
 		this.currentModel.clear()
 		this.currentModel = null

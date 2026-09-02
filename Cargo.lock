@@ -6713,7 +6713,7 @@ dependencies = [
 
 [[package]]
 name = "theseus"
-version = "1.8.1"
+version = "1.9.5-beta.5"
 dependencies = [
  "ariadne",
  "async-minecraft-ping",
@@ -6817,7 +6817,7 @@ dependencies = [
 
 [[package]]
 name = "theseus_gui"
-version = "1.8.1"
+version = "1.9.5-beta.5"
 dependencies = [
  "async_zip",
  "bytes",
@@ -6839,7 +6839,6 @@ dependencies = [
  "path-util",
  "quartz_nbt",
  "regex",
- "semver",
  "serde",
  "serde_json",
  "serde_with",

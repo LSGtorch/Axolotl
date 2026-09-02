@@ -346,7 +346,7 @@ pub fn render_tile(request: TileRequest) -> io::Result<Vec<u8>> {
             request.scale,
             request.width,
             request.height,
-            request.elevation.unwrap_or(62),
+            request.elevation.unwrap_or(128).clamp(-64, 320),
             i32::from(request.terrain),
             i32::from(request.contours),
             highlight_mask
@@ -884,6 +884,29 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(first.len(), 32 * 32 * 4);
         assert!(first.chunks_exact(4).all(|pixel| pixel[3] == 255));
+    }
+
+    #[test]
+    fn modern_overworld_scale_sixteen_renders_negative_tile_origins() {
+        let request = TileRequest {
+            seed: "10292992".to_owned(),
+            edition: Edition::Java,
+            version: "26.2".to_owned(),
+            dimension: Dimension::Overworld,
+            x: -12_288,
+            z: 0,
+            scale: 16,
+            width: 8,
+            height: 8,
+            elevation: Some(128),
+            terrain: false,
+            contours: false,
+            highlight_biomes: None,
+        };
+        let rgba =
+            render_tile(request).expect("negative scale-16 tile should render");
+        assert!(rgba.chunks_exact(4).all(|pixel| pixel[3] == 255));
+        assert!(rgba.chunks_exact(4).any(|pixel| pixel[..3] != [0, 0, 0]));
     }
 
     #[test]

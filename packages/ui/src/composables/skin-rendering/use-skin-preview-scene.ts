@@ -16,6 +16,7 @@ import {
 import {
 	applyCapeTexture,
 	applyTexture,
+	applyThreeDSkinLayers,
 	createTransparentTexture,
 	loadTexture as loadSkinTexture,
 } from '#ui/utils/webgl/skin-rendering.ts'
@@ -71,6 +72,9 @@ function disposeSceneMaterials(root: THREE.Object3D | null) {
 
 		const meshMaterials = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
 		meshMaterials.forEach((material) => materials.add(material))
+		if (mesh.userData.threeDSkinLayersApplied) {
+			mesh.geometry.dispose()
+		}
 	})
 
 	materials.forEach((material) => material.dispose())
@@ -147,6 +151,7 @@ export function useSkinPreviewScene({
 		}
 
 		applyTexture(scene.value, texture.value)
+		applyThreeDSkinLayers(scene.value, texture.value)
 	}
 
 	function applyCapeTextureToLoadedModel() {

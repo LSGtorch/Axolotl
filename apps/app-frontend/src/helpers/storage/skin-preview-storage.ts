@@ -6,7 +6,9 @@ interface StoredPreview {
 }
 
 export class SkinPreviewStorage {
-	private dbName = 'skin-previews'
+	// Changing the database name invalidates thumbnails rendered with the old
+	// flat outer-layer geometry after the 3D Skin Layers update.
+	private dbName = 'skin-previews-v2'
 	private version = 1
 	private db: IDBDatabase | null = null
 

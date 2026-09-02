@@ -15,19 +15,7 @@ import {
 	UsersIcon,
 } from '@modrinth/assets'
 import { commonMessages, defineMessages, type MessageDescriptor } from '@modrinth/ui'
-import type { Component } from 'vue'
-
-import AboutSettings from './AboutSettings.vue'
-import AISettings from './AISettings.vue'
-import AppearanceSettings from './AppearanceSettings.vue'
-import ContentDownloadSettings from './ContentDownloadSettings.vue'
-import DefaultInstanceSettings from './DefaultInstanceSettings.vue'
-import FeatureFlagSettings from './FeatureFlagSettings.vue'
-import HomeNavigationSettings from './HomeNavigationSettings.vue'
-import JavaSettings from './JavaSettings.vue'
-import LanguageTranslationSettings from './LanguageTranslationSettings.vue'
-import NetworkMultiplayerSettings from './NetworkMultiplayerSettings.vue'
-import PrivacySettings from './PrivacySettings.vue'
+import { defineAsyncComponent, type Component } from 'vue'
 import {
 	getVisibleSettingsCategoryDefinitions,
 	type SettingsCategoryDefinition,
@@ -36,8 +24,6 @@ import {
 	type SettingsGroupId,
 } from './settings-category-definitions'
 import { settingsSearchEntries, type SettingsSearchEntry } from './settings-search-index'
-import StorageBackupSettings from './StorageBackupSettings.vue'
-import UpdateSettings from './UpdateSettings.vue'
 
 export interface SettingsCategory extends SettingsCategoryDefinition {
 	icon: Component
@@ -53,19 +39,52 @@ export interface SettingsGroup {
 }
 
 const categoryContent: Record<SettingsCategoryId, Pick<SettingsCategory, 'icon' | 'content'>> = {
-	interface: { icon: PaintbrushIcon, content: AppearanceSettings },
-	'home-navigation': { icon: LayoutTemplateIcon, content: HomeNavigationSettings },
-	'language-translation': { icon: LanguagesIcon, content: LanguageTranslationSettings },
-	ai: { icon: BotIcon, content: AISettings },
-	'java-performance': { icon: CoffeeIcon, content: JavaSettings },
-	'launch-defaults': { icon: GameIcon, content: DefaultInstanceSettings },
-	'content-downloads': { icon: GaugeIcon, content: ContentDownloadSettings },
-	'network-multiplayer': { icon: UsersIcon, content: NetworkMultiplayerSettings },
-	'storage-backups': { icon: ArchiveIcon, content: StorageBackupSettings },
-	'privacy-data': { icon: ShieldIcon, content: PrivacySettings },
-	updates: { icon: RefreshCwIcon, content: UpdateSettings },
-	about: { icon: InfoIcon, content: AboutSettings },
-	'feature-flags': { icon: ToggleRightIcon, content: FeatureFlagSettings },
+	interface: {
+		icon: PaintbrushIcon,
+		content: defineAsyncComponent(() => import('./AppearanceSettings.vue')),
+	},
+	'home-navigation': {
+		icon: LayoutTemplateIcon,
+		content: defineAsyncComponent(() => import('./HomeNavigationSettings.vue')),
+	},
+	'language-translation': {
+		icon: LanguagesIcon,
+		content: defineAsyncComponent(() => import('./LanguageTranslationSettings.vue')),
+	},
+	ai: { icon: BotIcon, content: defineAsyncComponent(() => import('./AISettings.vue')) },
+	'java-performance': {
+		icon: CoffeeIcon,
+		content: defineAsyncComponent(() => import('./JavaSettings.vue')),
+	},
+	'launch-defaults': {
+		icon: GameIcon,
+		content: defineAsyncComponent(() => import('./DefaultInstanceSettings.vue')),
+	},
+	'content-downloads': {
+		icon: GaugeIcon,
+		content: defineAsyncComponent(() => import('./ContentDownloadSettings.vue')),
+	},
+	'network-multiplayer': {
+		icon: UsersIcon,
+		content: defineAsyncComponent(() => import('./NetworkMultiplayerSettings.vue')),
+	},
+	'storage-backups': {
+		icon: ArchiveIcon,
+		content: defineAsyncComponent(() => import('./StorageBackupSettings.vue')),
+	},
+	'privacy-data': {
+		icon: ShieldIcon,
+		content: defineAsyncComponent(() => import('./PrivacySettings.vue')),
+	},
+	updates: {
+		icon: RefreshCwIcon,
+		content: defineAsyncComponent(() => import('./UpdateSettings.vue')),
+	},
+	about: { icon: InfoIcon, content: defineAsyncComponent(() => import('./AboutSettings.vue')) },
+	'feature-flags': {
+		icon: ToggleRightIcon,
+		content: defineAsyncComponent(() => import('./FeatureFlagSettings.vue')),
+	},
 }
 
 const messages = defineMessages({
