@@ -33,6 +33,37 @@ export const ANNOUNCEMENT_CHANGE_TYPES: readonly AnnouncementChangeType[] = [
 
 export const launcherAnnouncements: readonly LauncherAnnouncement[] = [
 	{
+		id: 'launcher-99.99.9',
+		version: '99.99.9',
+		publishedAt: '2026-09-03',
+		title: {
+			'en-US': 'Axolotl Launcher 99.99.9 (test)',
+			'zh-CN': 'Axolotl Launcher 99.99.9（测试版）',
+		},
+		changes: {
+			fixed: [
+				{
+					'en-US':
+						'Fixed Discover content installs and content management for directly associated HMCL/PCL instances using the same game directory as the linked launcher, including PCL version-isolated directories.',
+					'zh-CN':
+						'修复直接关联实例在发现内容中安装模组及管理内容时仍使用旧目录的问题，现在会与关联启动器使用同一个游戏目录，并支持 PCL 版本隔离目录。',
+				},
+				{
+					'en-US':
+						'Fixed linked-content refresh, upgrades, recovery, worlds, crash analysis, memory detection, and storage reporting to resolve the actual game content directory.',
+					'zh-CN':
+						'修复关联内容刷新、升级、恢复、世界、崩溃分析、内存检测和存储统计仍读取旧实例目录的问题。',
+				},
+				{
+					'en-US':
+						'Prevented in-place Minecraft and loader upgrades or reinstalls from modifying installations managed by an external launcher; Copy and Upgrade remains available.',
+					'zh-CN':
+						'禁止原地升级或重装由其他启动器管理的 Minecraft 和加载器文件，避免修改外部启动器安装；复制并升级仍可用。',
+				},
+			],
+		},
+	},
+	{
 		id: 'launcher-99.99.8',
 		version: '99.99.8',
 		publishedAt: '2026-08-30',

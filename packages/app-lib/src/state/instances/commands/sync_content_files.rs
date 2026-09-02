@@ -12,6 +12,39 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
+/// Decides where this instance's game content (`mods`, `resourcepacks`,
+/// `saves`, ...) physically lives, without touching the filesystem.
+///
+/// Order:
+/// 1. directly associated instances resolve through the launcher dialect so
+///    PCL version isolation (`versions/<id>` gameDir) is honored and HMCL /
+///    generic installations point at their shared `.minecraft`
+///    (`launcher::linked_game_dir`);
+/// 2. a non-empty recorded linked `.minecraft` root is the fallback when the
+///    dialect resolution cannot be completed;
+/// 3. ordinary instances own their profile directory under Axolotl's
+///    instances folder, honouring a per-instance `game_dir_override`
+///    (`DirectoryInfo::instance_game_dir`).
+///
+/// This is the shared decision behind `instance_content_root` (canonicalized,
+/// read side) and the install-write paths that must be able to create the
+/// target directory, so it never canonicalizes and cannot fail.
+pub(crate) fn content_game_dir(
+    directories: &DirectoryInfo,
+    instance: &Instance,
+) -> PathBuf {
+    crate::launcher::linked_game_dir(instance)
+        .or_else(|| {
+            instance
+                .linked_dot_minecraft
+                .as_deref()
+                .map(str::trim)
+                .filter(|linked| !linked.is_empty())
+                .map(PathBuf::from)
+        })
+        .unwrap_or_else(|| directories.instance_game_dir(instance))
+}
+
 /// Resolves the directory whose game content (`mods`, `resourcepacks`, ...)
 /// belongs to this instance.
 ///
@@ -22,25 +55,36 @@ use uuid::Uuid;
 /// installation, resolved through the launcher dialect so PCL version
 /// isolation (`versions/<id>` gameDir) is honored; the shared linked
 /// `.minecraft` root is the fallback when the dialect resolution cannot be
-/// completed (see `launcher::linked_game_dir`).
+/// completed (see `launcher::linked_game_dir`). See also `content_game_dir`
+/// for the non-canonicalizing decision.
 pub(crate) fn instance_content_root(
     directories: &DirectoryInfo,
     instance: &Instance,
 ) -> crate::Result<PathBuf> {
-    if let Some(game_dir) =
-        crate::launcher::linked_game_dir(instance).or_else(|| {
-            instance
-                .linked_dot_minecraft
-                .as_deref()
-                .map(str::trim)
-                .filter(|linked| !linked.is_empty())
-                .map(PathBuf::from)
-        })
-    {
-        return Ok(io::canonicalize(game_dir)?);
-    }
+    Ok(io::canonicalize(content_game_dir(directories, instance))?)
+}
 
-    Ok(io::canonicalize(directories.instance_game_dir(instance))?)
+/// The path prefix embedded in hash-cache keys (`{size}-{prefix}/{relative}`)
+/// for this instance's scanned content.
+///
+/// The hash-cache layer resolves key paths against Axolotl's own instances
+/// folder (`state/cache.rs`). For directly associated instances the absolute
+/// linked content root is used as the prefix: joining an absolute path
+/// replaces the base, so the cache layer hashes the linked files instead of
+/// failing on the nonexistent profile path. Managed instances keep the
+/// relative profile path so the cache layer can resolve a
+/// `game_dir_override` target from the database.
+pub(crate) fn content_scan_cache_key_path(
+    directories: &DirectoryInfo,
+    instance: &Instance,
+) -> crate::Result<String> {
+    if instance.is_direct_linked() {
+        Ok(instance_content_root(directories, instance)?
+            .to_string_lossy()
+            .into_owned())
+    } else {
+        Ok(instance.path.clone())
+    }
 }
 
 pub(crate) async fn sync_content_files(
@@ -64,24 +108,8 @@ pub(crate) async fn sync_instance_content_files(
     // Keep the filesystem snapshot stable until its database rows commit.
     let _instance_lock = state.lock_instance_content(&instance.id).await;
     let content_root = instance_content_root(&state.directories, instance)?;
-    // The hash-cache layer resolves key paths against Axolotl's own instances
-    // folder (`state/cache.rs`). For directly associated instances the
-    // absolute linked root is passed as the "instance path": joining an
-    // absolute path replaces the base, so the cache layer hashes the linked
-    // files instead of failing on the nonexistent profile path. Managed
-    // instances keep the relative profile path so the cache layer can resolve
-    // a `game_dir_override` target from the database.
-    let is_direct_linked = crate::launcher::linked_game_dir(instance).is_some()
-        || instance
-            .linked_dot_minecraft
-            .as_deref()
-            .map(str::trim)
-            .is_some_and(|linked| !linked.is_empty());
-    let cache_key_path = if is_direct_linked {
-        content_root.to_string_lossy().into_owned()
-    } else {
-        instance.path.clone()
-    };
+    let cache_key_path =
+        content_scan_cache_key_path(&state.directories, instance)?;
     let scanned =
         filesystem::scan_content_files_from(&content_root, &cache_key_path)?;
     let scanned_paths = scanned
@@ -153,11 +181,12 @@ pub(crate) async fn sync_instance_content_files(
         let hash_key = file.hash_cache_key.trim_end_matches(".disabled");
         let existing_file = existing_files_by_path.get(&file.relative_path);
         let (scanned_sha1, scanned_size) = if existing_file.is_some() {
-            let path = state
-                .directories
-                .instances_dir()
-                .join(&instance.path)
-                .join(&file.relative_path);
+            // A tracked row exists but its stored hash may be stale (the file
+            // changed since it was installed), so re-hash the physical file.
+            // It lives under `content_root` — for directly associated
+            // instances that is the linked installation / PCL-isolated
+            // version directory, never Axolotl's managed profile folder.
+            let path = content_root.join(&file.relative_path);
             let (_, sha1) = fetch::sha1_file_async(&path).await?;
             (sha1, file.size)
         } else {
@@ -847,6 +876,219 @@ mod tests {
                 .iter()
                 .map(|file| &file.relative_path)
                 .collect::<Vec<_>>(),
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Discover-install writes land in the real game directory
+    // -----------------------------------------------------------------------
+
+    /// Applies a locally-staged download to the instance, mirroring what the
+    /// Discover page does for Modrinth installs, without any network access.
+    async fn apply_local_project_download(
+        instance_id: &str,
+        relative_path: &str,
+        bytes: &[u8],
+        state: &State,
+    ) {
+        let source_dir = tempfile::TempDir::new().unwrap();
+        let source = source_dir.path().join("staged-download");
+        fs::write(&source, bytes).unwrap();
+        let sha1 = crate::util::fetch::sha1_async(
+            bytes::Bytes::copy_from_slice(bytes),
+        )
+        .await
+        .unwrap();
+        crate::state::instances::commands::apply_downloaded_project_version_at_path(
+            instance_id,
+            relative_path,
+            crate::state::instances::commands::DownloadedProjectVersion {
+                file_name: Path::new(relative_path)
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned(),
+                path: source,
+                sha1,
+                size: bytes.len() as u64,
+                project_type: ProjectType::Mod,
+                project_id: "discover-project".to_string(),
+                version_id: "discover-version".to_string(),
+            },
+            crate::state::instances::ContentSourceKind::Local,
+            crate::state::instances::ContentOwnershipKind::UserAdded,
+            state,
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn hmcl_generic_direct_link_install_writes_into_linked_minecraft() {
+        let state = global_state().await;
+        let minecraft = tempfile::TempDir::new().unwrap();
+        write_self_contained_version(minecraft.path(), "1.12.2-install");
+
+        let instance = crate::state::create_direct_link_instance(
+            crate::state::CreateDirectLinkInstance {
+                name: None,
+                launcher_type:
+                    crate::api::pack::import::ImportLauncherType::Generic,
+                base_path: minecraft.path().to_path_buf(),
+                instance_folder: "versions/1.12.2-install".to_string(),
+                instance_path: None,
+            },
+            &state,
+        )
+        .await
+        .unwrap();
+
+        let bytes = b"discover-installed mod bytes";
+        apply_local_project_download(
+            &instance.id,
+            "mods/discover-installed-mod.jar",
+            bytes,
+            &state,
+        )
+        .await;
+
+        let installed =
+            minecraft.path().join("mods/discover-installed-mod.jar");
+        assert!(
+            installed.is_file(),
+            "Discover install must write into the linked `.minecraft`, got \
+             missing file at {}",
+            installed.display()
+        );
+        assert_eq!(fs::read(&installed).unwrap(), bytes);
+        assert!(
+            !state
+                .directories
+                .instances_dir()
+                .join(&instance.path)
+                .exists(),
+            "installing through Discover must never create the managed \
+             profile folder for a direct-link instance"
+        );
+    }
+
+    #[tokio::test]
+    async fn pcl_direct_link_install_writes_into_version_isolated_directory() {
+        let state = global_state().await;
+        let minecraft = tempfile::TempDir::new().unwrap();
+        let version_id = "1.12.2-pcl-install";
+        write_self_contained_version(minecraft.path(), version_id);
+        // Version isolation on: PCL resolves this version's gameDir to
+        // versions/<id>, so Discover installs must land beside the version
+        // JSON, never in the shared `.minecraft` root.
+        let version_dir = minecraft.path().join("versions").join(version_id);
+        fs::create_dir_all(version_dir.join("PCL")).unwrap();
+        fs::write(
+            version_dir.join("PCL/Setup.ini"),
+            "VersionArgumentIndieV2: true\n",
+        )
+        .unwrap();
+
+        let instance = crate::state::create_direct_link_instance(
+            crate::state::CreateDirectLinkInstance {
+                name: None,
+                launcher_type:
+                    crate::api::pack::import::ImportLauncherType::PCL2,
+                base_path: minecraft.path().to_path_buf(),
+                instance_folder: format!("versions/{version_id}"),
+                instance_path: None,
+            },
+            &state,
+        )
+        .await
+        .unwrap();
+
+        let bytes = b"pcl isolated discover mod bytes";
+        apply_local_project_download(
+            &instance.id,
+            "mods/discover-isolated-mod.jar",
+            bytes,
+            &state,
+        )
+        .await;
+
+        let installed = version_dir.join("mods/discover-isolated-mod.jar");
+        assert!(
+            installed.is_file(),
+            "Discover install must write into the PCL-isolated version \
+             directory, got missing file at {}",
+            installed.display()
+        );
+        assert_eq!(fs::read(&installed).unwrap(), bytes);
+        assert!(
+            !minecraft
+                .path()
+                .join("mods/discover-isolated-mod.jar")
+                .exists(),
+            "a PCL-isolated direct link must not write into the shared \
+             `.minecraft` root"
+        );
+    }
+
+    #[tokio::test]
+    async fn direct_link_second_refresh_hashes_linked_content_not_managed_profile()
+     {
+        let state = global_state().await;
+        let minecraft = tempfile::TempDir::new().unwrap();
+        write_self_contained_version(minecraft.path(), "1.12.2-sync-twice");
+        fs::create_dir_all(minecraft.path().join("mods")).unwrap();
+        fs::write(
+            minecraft.path().join("mods/linked-mod.jar"),
+            b"linked mod bytes",
+        )
+        .unwrap();
+
+        let instance = crate::state::create_direct_link_instance(
+            crate::state::CreateDirectLinkInstance {
+                name: None,
+                launcher_type:
+                    crate::api::pack::import::ImportLauncherType::Generic,
+                base_path: minecraft.path().to_path_buf(),
+                instance_folder: "versions/1.12.2-sync-twice".to_string(),
+                instance_path: None,
+            },
+            &state,
+        )
+        .await
+        .unwrap();
+
+        // First refresh indexes the linked file; the second refresh re-hashes
+        // the already-tracked file from disk. That physical re-hash must read
+        // from the linked `.minecraft`, not from the (nonexistent) managed
+        // profile folder, or the refresh fails with a missing-file error.
+        let first = sync_instance_content_files(&instance, &state)
+            .await
+            .unwrap();
+        assert!(
+            first
+                .iter()
+                .any(|file| file.relative_path == "mods/linked-mod.jar")
+        );
+
+        let second = sync_instance_content_files(&instance, &state)
+            .await
+            .unwrap();
+        let row = second
+            .iter()
+            .find(|file| file.relative_path == "mods/linked-mod.jar")
+            .expect("second refresh must still report the linked mod");
+        assert!(
+            !row.missing,
+            "second refresh must not mark the linked mod missing"
+        );
+        let (_, physical_sha1) = crate::util::fetch::sha1_file_async(
+            &minecraft.path().join("mods/linked-mod.jar"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            row.sha1, physical_sha1,
+            "second refresh must hash the file inside the linked `.minecraft`"
         );
     }
 

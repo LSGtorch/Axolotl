@@ -1837,7 +1837,10 @@ async fn add_project_bytes_with_provider(
 
     cache_file_hash(
         bytes.clone(),
-        &scope.instance.path,
+        &crate::state::instances::commands::content_scan_cache_key_path(
+            &state.directories,
+            &scope.instance,
+        )?,
         &relative_path,
         Some(&sha1),
         Some(project_type),
@@ -2293,7 +2296,10 @@ async fn record_project_file_atomic_with_pending_completion(
         .await?;
     }
     cache_file_hash_metadata(
-        &scope.instance.path,
+        &crate::state::instances::commands::content_scan_cache_key_path(
+            &state.directories,
+            &scope.instance,
+        )?,
         relative_path,
         size,
         sha1.to_string(),
@@ -3093,7 +3099,13 @@ pub(crate) fn instance_full_path(
     state: &State,
     instance: &Instance,
 ) -> PathBuf {
-    state.directories.instance_game_dir(instance)
+    // Game content (mods, resourcepacks, saves, ...) lives in the game
+    // directory the instance actually runs from. For directly associated
+    // instances that is the linked installation (PCL version isolation
+    // resolves to `versions/<id>`), never Axolotl's managed profile folder.
+    // Uses the shared decision helper, without canonicalizing, so install
+    // writes may create the target directory.
+    crate::state::instances::content_game_dir(&state.directories, instance)
 }
 
 async fn index_existing_file(
@@ -3110,7 +3122,14 @@ async fn index_existing_file(
         .await
         .map_err(|e| io::IOError::with_path(e, &full_path))?
         .len();
-    let cache_key = format!("{size}-{}/{}", scope.instance.path, relative_path);
+    let cache_key = format!(
+        "{size}-{}/{}",
+        crate::state::instances::commands::content_scan_cache_key_path(
+            &state.directories,
+            &scope.instance,
+        )?,
+        relative_path
+    );
     let (size, sha1) = match CachedEntry::get_file_hash_many(
         &[&cache_key],
         None,

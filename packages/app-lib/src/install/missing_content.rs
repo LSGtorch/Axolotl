@@ -1080,7 +1080,13 @@ async fn instance_base(
                 "Unknown target instance {instance_id}"
             ))
         })?;
-    Ok(state.directories.instance_game_dir(&instance.instance))
+    // Content files are materialized into the game directory the instance
+    // actually runs from (linked installation for directly associated
+    // instances, override/profile dir otherwise).
+    Ok(crate::state::instances::content_game_dir(
+        &state.directories,
+        &instance.instance,
+    ))
 }
 
 async fn materialize_verified_file<F, Fut>(

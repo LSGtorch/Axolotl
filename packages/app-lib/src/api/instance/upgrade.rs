@@ -431,6 +431,11 @@ pub async fn execute_instance_upgrade(
         )
         .into());
     }
+    // Directly associated (HMCL/PCL) instances play from an installation the
+    // external launcher owns; in-place upgrade would replace the launcher's
+    // Minecraft/loader files. "Copy and Upgrade" stays available — it copies
+    // the linked content into a fresh managed instance and upgrades that.
+    ensure_direct_link_upgrade_mode(&metadata.instance, shared_upgrade_mode)?;
     if state
         .process_manager
         .get_all()
@@ -465,13 +470,19 @@ pub async fn execute_instance_upgrade(
         shared_upgrade_mode,
         &state,
     )?;
-    ensure_upgrade_target_writable(
-        &state
-            .directories
-            .instances_dir()
-            .join(&metadata.instance.path),
-    )
-    .await?;
+    // In-place upgrades write to the instance's actual game directory. A
+    // copy upgrade creates its target below Axolotl's instances directory
+    // after this preflight, so probing the source would touch an external
+    // HMCL/PCL installation unnecessarily.
+    let writable_root = if shared_upgrade_mode == SharedUpgradeMode::Direct {
+        crate::state::instances::content_game_dir(
+            &state.directories,
+            &metadata.instance,
+        )
+    } else {
+        state.directories.instances_dir()
+    };
+    ensure_upgrade_target_writable(&writable_root).await?;
     crate::state::instances::commands::validate_instance_upgrade_plan_source(
         &stored.plan,
         &state,
@@ -566,11 +577,18 @@ fn ensure_upgrade_disk_space(
     shared_upgrade_mode: SharedUpgradeMode,
     state: &State,
 ) -> crate::Result<()> {
-    let instance_path = state
-        .directories
-        .instances_dir()
-        .join(&metadata.instance.path);
-    let canonical = crate::util::io::canonicalize(&instance_path)?;
+    // Direct upgrades write into the source instance's game content root.
+    // Copy upgrades create a new managed instance below `instances_dir`, so
+    // measure that target root instead of the linked source installation.
+    let target_root = if shared_upgrade_mode == SharedUpgradeMode::Direct {
+        crate::state::instances::content_game_dir(
+            &state.directories,
+            &metadata.instance,
+        )
+    } else {
+        state.directories.instances_dir()
+    };
+    let canonical = crate::util::io::canonicalize(&target_root)?;
     let disks = sysinfo::Disks::new_with_refreshed_list();
     let available = disks
         .iter()
@@ -603,6 +621,9 @@ fn ensure_upgrade_disk_space(
 async fn ensure_upgrade_target_writable(
     path: &std::path::Path,
 ) -> crate::Result<()> {
+    // The probe needs the target directory to exist; the upgrade will create
+    // it anyway when materializing content.
+    crate::util::io::create_dir_all(path).await?;
     let probe = path.join(format!(
         ".instance-upgrade-write-test-{}",
         uuid::Uuid::new_v4()
@@ -624,6 +645,25 @@ async fn ensure_upgrade_target_writable(
         ))
         .into()
     })
+}
+
+fn ensure_direct_link_upgrade_mode(
+    instance: &crate::state::instances::Instance,
+    shared_upgrade_mode: SharedUpgradeMode,
+) -> crate::Result<()> {
+    if instance.is_direct_linked()
+        && shared_upgrade_mode == SharedUpgradeMode::Direct
+    {
+        return Err(crate::ErrorKind::InputError(format!(
+            "\"{}\" is directly associated with an external launcher \
+             (HMCL/PCL); the launcher owns its Minecraft/loader installation, \
+             so Axolotl cannot upgrade it in place. Use \"Copy and Upgrade\" \
+             instead of modifying the external installation",
+            instance.name
+        ))
+        .into());
+    }
+    Ok(())
 }
 
 fn stored_plan_handle(plan_id: &str) -> crate::Result<StoredUpgradePlan> {
@@ -962,5 +1002,79 @@ mod tests {
             selected_solution: None,
             custom_constraints: Vec::new(),
         }
+    }
+
+    fn linked_or_managed_instance(
+        name: &str,
+        direct_linked: bool,
+    ) -> crate::state::instances::Instance {
+        crate::state::instances::Instance {
+            id: format!("inst-{name}"),
+            path: format!("path-{name}"),
+            applied_content_set_id: Some("content-set".to_string()),
+            install_stage: crate::state::InstanceInstallStage::Installed,
+            launcher_feature_version:
+                crate::state::LauncherFeatureVersion::MOST_RECENT,
+            update_channel: crate::state::ReleaseChannel::Release,
+            name: name.to_string(),
+            icon_path: None,
+            symlink_target: None,
+            linked_launcher: direct_linked.then(|| "hmcl".to_string()),
+            linked_launcher_root: direct_linked
+                .then(|| "/launcher".to_string()),
+            linked_dot_minecraft: direct_linked
+                .then(|| "/launcher/.minecraft".to_string()),
+            linked_version_id: direct_linked.then(|| "1.20.1".to_string()),
+            linked_version_json_path: direct_linked
+                .then(|| "/launcher/.minecraft/versions/v/v.json".to_string()),
+            game_dir_override: None,
+            created: chrono::Utc::now(),
+            modified: chrono::Utc::now(),
+            last_played: None,
+            pinned_at: None,
+            submitted_time_played: 0,
+            recent_time_played: 0,
+        }
+    }
+
+    #[test]
+    fn direct_link_blocks_in_place_upgrade_but_allows_copy_and_upgrade() {
+        let direct = linked_or_managed_instance("hmcl-instance", true);
+        let error =
+            ensure_direct_link_upgrade_mode(&direct, SharedUpgradeMode::Direct)
+                .unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("directly associated"), "{message}");
+        assert!(message.contains("Copy and Upgrade"), "{message}");
+        assert!(
+            !message.contains("No such file") && !message.contains("os error"),
+            "the downgrade/upgrade prohibition must not surface as a \
+             filesystem error: {message}"
+        );
+
+        // Copy & Upgrade creates a fresh managed copy and is safe for
+        // direct-link sources; ordinary instances keep both modes.
+        assert!(
+            ensure_direct_link_upgrade_mode(
+                &direct,
+                SharedUpgradeMode::CopyAndUpgrade,
+            )
+            .is_ok()
+        );
+        let managed = linked_or_managed_instance("managed-instance", false);
+        assert!(
+            ensure_direct_link_upgrade_mode(
+                &managed,
+                SharedUpgradeMode::Direct
+            )
+            .is_ok()
+        );
+        assert!(
+            ensure_direct_link_upgrade_mode(
+                &managed,
+                SharedUpgradeMode::CopyAndUpgrade,
+            )
+            .is_ok()
+        );
     }
 }

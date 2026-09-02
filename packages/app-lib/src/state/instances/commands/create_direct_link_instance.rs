@@ -153,8 +153,27 @@ pub(crate) async fn create_direct_link_instance(
         .await?;
     tx.commit().await?;
 
-    // Deliberately no config sync and no folder watcher: both would write
-    // into or monitor folders outside of Axolotl's own directories.
+    // Deliberately no config sync: it would write into folders outside of
+    // Axolotl's own directories. The folder watcher below monitors the
+    // external linked game directory read-only, so a running Axolotl reacts
+    // to content changes under the real HMCL/PCL directory exactly like it
+    // does for instances registered at startup (see
+    // `watcher::watch_instances_init`).
+    let content_root = crate::state::instances::content_game_dir(
+        &state.directories,
+        &instance,
+    );
+    crate::state::instances::watcher::watch_instance_folder(
+        &instance.id,
+        &instance.path,
+        &content_root,
+        &state.file_watcher,
+        // Directly associated instances never let the watcher create content
+        // folders (mods, saves, ...) inside their external launcher
+        // directory: only existing paths are watched.
+        false,
+    )
+    .await;
 
     Ok(instance)
 }

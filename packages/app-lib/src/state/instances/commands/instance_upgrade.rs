@@ -165,7 +165,6 @@ struct SearchState {
 pub(crate) struct ReadOnlyUpgradeSource {
     snapshot: InstanceContentSnapshot,
     source_files: Vec<InstanceUpgradeSourceFile>,
-    instance_path: String,
     file_states: Vec<UpgradeSourceFileState>,
 }
 
@@ -384,10 +383,19 @@ async fn read_only_upgrade_source(
     )
     .await?
     .ok_or_else(|| crate::ErrorKind::InputError("Unknown instance".to_string()))?;
+    let content_root = crate::state::instances::content_game_dir(
+        &state.directories,
+        &instance,
+    );
+    let cache_key_path =
+        crate::state::instances::commands::content_scan_cache_key_path(
+            &state.directories,
+            &instance,
+        )?;
     let scanned =
         crate::state::instances::adapters::filesystem::scan_content_files_from(
-            &state.directories.instance_game_dir(&instance),
-            &instance.path,
+            &content_root,
+            &cache_key_path,
         )?;
     let file_states = scanned
         .iter()
@@ -398,7 +406,7 @@ async fn read_only_upgrade_source(
             modified: file.modified,
         })
         .collect();
-    let instance_dir = state.directories.instance_game_dir(&instance);
+    let instance_dir = content_root;
     let mut scanned_by_path = HashMap::new();
     let mut source_files = Vec::new();
     for file in scanned {
@@ -485,7 +493,6 @@ async fn read_only_upgrade_source(
     Ok(ReadOnlyUpgradeSource {
         snapshot,
         source_files,
-        instance_path: instance.path,
         file_states,
     })
 }
@@ -597,19 +604,30 @@ impl UpgradePlanRuntimeValidation {
         watch: &crate::state::instances::watcher::InstanceContentWatchSnapshot,
         state: &State,
     ) -> crate::Result<()> {
-        let source_override =
-            crate::state::instances::adapters::sqlite::instance_rows::get_game_dir_override_by_path(
-                &self.source.instance_path,
-                &state.pool,
-            )
-            .await?;
-        let source_game_dir = state.directories.resolve_game_dir(
-            &self.source.instance_path,
-            source_override.as_deref(),
+        // Re-resolve the source root from the live instance: directly
+        // associated instances (HMCL/PCL) play from their linked installation
+        // / PCL-isolated version directory, which `resolve_game_dir` by path
+        // alone would miss. Loading the full `Instance` keeps ordinary
+        // override instances and PCL isolation working through the shared
+        // decision helper.
+        let instance = crate::state::instances::adapters::sqlite::instance_rows::get_instance_by_id(
+            &plan.instance_id,
+            &state.pool,
+        )
+        .await?
+        .ok_or_else(|| crate::ErrorKind::InputError("Unknown instance".to_string()))?;
+        let source_game_dir = crate::state::instances::content_game_dir(
+            &state.directories,
+            &instance,
         );
+        let cache_key_path =
+            crate::state::instances::commands::content_scan_cache_key_path(
+                &state.directories,
+                &instance,
+            )?;
         let scanned = crate::state::instances::adapters::filesystem::scan_content_files_from(
             &source_game_dir,
-            &self.source.instance_path,
+            &cache_key_path,
         )?;
         let planned = self
             .source

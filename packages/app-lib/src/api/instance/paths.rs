@@ -1,5 +1,4 @@
 use crate::state::State;
-use crate::util::io;
 use std::path::PathBuf;
 
 #[tracing::instrument]
@@ -11,24 +10,16 @@ pub async fn get_full_path(instance_id: &str) -> crate::Result<PathBuf> {
             crate::ErrorKind::InputError("Unknown instance".to_string())
         })?;
 
-    // Directly associated instances never have a profile directory under
-    // `profiles`; interactive APIs (open folder, worlds, servers, ...) must
-    // operate on the linked `.minecraft` instead.
-    if let Some(linked) = instance
-        .instance
-        .linked_dot_minecraft
-        .as_deref()
-        .map(str::trim)
-        .filter(|linked| !linked.is_empty())
-    {
-        return Ok(io::canonicalize(linked)?);
-    }
-
-    // `instance_game_dir` honours a per-instance `game_dir_override` before
-    // falling back to the profile directory.
-    Ok(io::canonicalize(
-        state.directories.instance_game_dir(&instance.instance),
-    )?)
+    // Resolves the real game content root: directly associated instances
+    // point at the linked installation (honouring PCL version isolation),
+    // ordinary instances honour a per-instance `game_dir_override` before
+    // falling back to the profile directory. Interactive APIs (open folder,
+    // worlds, file features, CurseForge single-file installs/upgrades, ...)
+    // must operate on the same root the content scanner and the launch use.
+    crate::state::instances::instance_content_root(
+        &state.directories,
+        &instance.instance,
+    )
 }
 
 #[tracing::instrument]
@@ -43,6 +34,7 @@ pub async fn get_mod_full_path(
 mod tests {
     use super::*;
     use crate::state::CreateDirectLinkInstance;
+    use crate::util::io;
     use std::sync::Arc;
     use tempfile::TempDir;
 

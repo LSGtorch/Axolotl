@@ -15,7 +15,7 @@ use tokio::fs;
 
 use crate::state::{DirectoryInfo, InstanceMetadata};
 
-pub const STORAGE_CACHE_VERSION: u32 = 1;
+pub const STORAGE_CACHE_VERSION: u32 = 2;
 const STORAGE_CACHE_FILE: &str = "launcher-storage.cbor";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -623,7 +623,15 @@ async fn scan_instance(
     instance: &InstanceMetadata,
 ) -> crate::Result<Option<StorageNode>> {
     let directories = dirs()?;
-    let instance_path = directories.instance_game_dir(&instance.instance);
+    // Measure the game content root the instance actually runs from (linked
+    // installation for directly associated HMCL/PCL instances, override /
+    // profile dir otherwise), so storage statistics match what content
+    // browsing and the launcher see instead of reporting zero on a
+    // nonexistent managed profile folder.
+    let instance_path = crate::state::instances::content_game_dir(
+        &directories,
+        &instance.instance,
+    );
 
     let mut visited = HashSet::new();
     let total = match fs::symlink_metadata(&instance_path).await {
@@ -1005,4 +1013,105 @@ pub async fn save_storage_cache(tree: &StorageTree) -> crate::Result<()> {
     fs::write(&temp_path, &bytes).await?;
     fs::rename(&temp_path, &path).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::State;
+    use std::sync::Arc;
+    use tempfile::TempDir;
+
+    /// The launcher state is a process-wide singleton; initialize it once and
+    /// reuse it so `State::get()` / the global directory handle resolve
+    /// inside these APIs. The state root is intentionally leaked (`.keep()`)
+    /// because the shared state outlives this function.
+    async fn global_state() -> Arc<State> {
+        if !State::initialized() {
+            let root = TempDir::new().unwrap().keep();
+            let _ =
+                State::init_for_test(root.to_string_lossy().to_string()).await;
+        }
+        State::get().await.unwrap()
+    }
+
+    fn write_self_contained_version(minecraft: &Path, version_id: &str) {
+        let version_dir = minecraft.join("versions").join(version_id);
+        std::fs::create_dir_all(&version_dir).unwrap();
+        std::fs::write(
+            version_dir.join(format!("{version_id}.json")),
+            serde_json::to_vec(&serde_json::json!({
+                "id": version_id,
+                "mainClass": "net.minecraft.client.main.Main"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn direct_link_instance_storage_scans_the_linked_root() {
+        let state = global_state().await;
+        let minecraft = TempDir::new().unwrap();
+        write_self_contained_version(minecraft.path(), "1.12.2-storage");
+        std::fs::create_dir_all(minecraft.path().join("mods")).unwrap();
+        std::fs::write(
+            minecraft.path().join("mods/storage-mod.jar"),
+            b"storage bytes",
+        )
+        .unwrap();
+
+        let instance = crate::state::create_direct_link_instance(
+            crate::state::CreateDirectLinkInstance {
+                name: None,
+                launcher_type:
+                    crate::api::pack::import::ImportLauncherType::Generic,
+                base_path: minecraft.path().to_path_buf(),
+                instance_folder: "versions/1.12.2-storage".to_string(),
+                instance_path: None,
+            },
+            &state,
+        )
+        .await
+        .unwrap();
+        let metadata = crate::state::get_instance(&instance.id, &state.pool)
+            .await
+            .unwrap()
+            .expect("metadata for direct-link instance");
+
+        let node = scan_instance(&metadata).await.unwrap().expect(
+            "a direct-link instance with linked content must produce a \
+             storage node instead of reporting zero usage",
+        );
+        assert!(
+            node.size.total() > 0,
+            "linked content must be counted towards storage"
+        );
+        let reported = Path::new(&node.paths[0].path);
+        // Compare canonical forms: on macOS the temp dir is reachable through
+        // a `/tmp` symlink, so the raw spelling may differ between the
+        // reported path and the temp handle; canonicalizing both sides keeps
+        // the assertions stable across platforms.
+        let reported = reported
+            .canonicalize()
+            .unwrap_or_else(|_| reported.to_path_buf());
+        let linked_root = minecraft
+            .path()
+            .canonicalize()
+            .unwrap_or_else(|_| minecraft.path().to_path_buf());
+        let instances_dir = state
+            .directories
+            .instances_dir()
+            .canonicalize()
+            .unwrap_or_else(|_| state.directories.instances_dir());
+        assert!(
+            reported.starts_with(&linked_root),
+            "storage must report the linked game root, got {reported:?}"
+        );
+        assert!(
+            !reported.starts_with(&instances_dir),
+            "storage must not report the nonexistent managed profile folder, \
+             got {reported:?}"
+        );
+    }
 }

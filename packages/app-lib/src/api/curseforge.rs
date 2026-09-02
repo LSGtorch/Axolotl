@@ -4753,7 +4753,10 @@ async fn create_curseforge_update_backup(
     let directory = tempfile::Builder::new()
         .prefix("curseforge-pack-update-")
         .tempdir_in(state.directories.caches_dir())?;
-    let instance_path = state.directories.instance_game_dir(&metadata.instance);
+    let instance_path = crate::state::instances::content_game_dir(
+        &state.directories,
+        &metadata.instance,
+    );
     let mut backups = Vec::new();
     for member in members {
         let Some(entry_id) = member.content_entry_id.as_ref() else {
@@ -4793,7 +4796,10 @@ async fn rollback_curseforge_update(
     installed: &[CurseForgeInstalledFile],
     state: &State,
 ) -> crate::Result<()> {
-    let instance_path = state.directories.instance_game_dir(&metadata.instance);
+    let instance_path = crate::state::instances::content_game_dir(
+        &state.directories,
+        &metadata.instance,
+    );
     let old_paths = backup
         .files
         .iter()

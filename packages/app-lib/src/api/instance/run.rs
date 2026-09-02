@@ -168,10 +168,13 @@ async fn run_credentials(
             .into_iter();
 
         if let Some(command) = cmd.next() {
+            // The hook runs in the game's working directory — for directly
+            // associated instances that is the linked installation /
+            // PCL-isolated version directory, not a managed profile folder.
             let full_path = crate::util::io::canonicalize(
-                state.directories.resolve_game_dir(
-                    &context.instance.path,
-                    context.instance.game_dir_override.as_deref(),
+                crate::state::instances::content_game_dir(
+                    &state.directories,
+                    &context.instance,
                 ),
             )?;
             let mut command = Command::new(command);
@@ -304,9 +307,9 @@ async fn run_credentials(
     }
 
     if memory.automatic {
-        let instance_path = state.directories.resolve_game_dir(
-            &context.instance.path,
-            context.instance.game_dir_override.as_deref(),
+        let instance_path = crate::state::instances::content_game_dir(
+            &state.directories,
+            &context.instance,
         );
         memory.maximum = crate::api::jre::automatic_memory_max_mb_for_instance(
             &instance_path,

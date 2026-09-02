@@ -2009,7 +2009,10 @@ pub async fn get_memory_status(
                 | crate::state::ModLoader::LiteLoader
                 | crate::state::ModLoader::LegacyFabric
         );
-        let path = state.directories.instance_game_dir(&context.instance);
+        let path = crate::state::instances::content_game_dir(
+            &state.directories,
+            &context.instance,
+        );
         (modded, count_mods(&path))
     } else {
         (false, 0)

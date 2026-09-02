@@ -347,7 +347,9 @@ impl ProcessManager {
         let crash_reports_before = match crate::State::get().await {
             Ok(state) => Some(
                 snapshot_crash_reports(
-                    &state.directories.crash_reports_dir(instance_path),
+                    &state
+                        .directories
+                        .game_crash_reports_dir(Path::new(instance_path)),
                 )
                 .await,
             ),
@@ -1041,7 +1043,9 @@ impl Process {
         update_playtime(&mut last_updated_playtime, &instance_id, true).await;
 
         let crash_reports_after = snapshot_crash_reports(
-            &state.directories.crash_reports_dir(&instance_path),
+            &state
+                .directories
+                .game_crash_reports_dir(Path::new(&instance_path)),
         )
         .await;
         let clean_launch = mc_exit_status.success()
@@ -1121,16 +1125,19 @@ impl Process {
 
                 if let Some(command) = cmd.next() {
                     // The post-exit hook runs in the instance's game working
-                    // directory, which honours a per-instance override.
-                    let game_dir = crate::state::instances::adapters::sqlite::instance_rows::get_instance_path_and_game_dir_override_by_id(
+                    // directory — for directly associated instances that is
+                    // the linked installation / PCL-isolated version
+                    // directory, resolved through the shared decision helper.
+                    let game_dir = crate::state::instances::adapters::sqlite::instance_rows::get_instance_by_id(
                         &instance_id,
                         &state.pool,
                     )
                     .await?
-                    .map(|(path, override_dir)| {
-                        state
-                            .directories
-                            .resolve_game_dir(&path, override_dir.as_deref())
+                    .map(|instance| {
+                        crate::state::instances::content_game_dir(
+                            &state.directories,
+                            &instance,
+                        )
                     })
                     .unwrap_or_else(|| {
                         state.directories.instances_dir().join(&instance_path)
@@ -1149,6 +1156,7 @@ impl Process {
 #[cfg(test)]
 mod post_upgrade_tests {
     use super::*;
+    use crate::state::DirectoryInfo;
 
     #[test]
     fn new_or_modified_crash_report_marks_session_changed() {
@@ -1165,5 +1173,28 @@ mod post_upgrade_tests {
         assert!(!crash_reports_changed(&before, &unchanged));
         assert!(crash_reports_changed(&before, &added));
         assert!(crash_reports_changed(&before, &modified));
+    }
+
+    #[test]
+    fn absolute_game_dir_crash_reports_never_land_under_profiles() {
+        // The launcher hands the process manager the resolved absolute game
+        // directory (linked `.minecraft` / PCL version dir for direct-link
+        // instances, canonical profile dir otherwise). The snapshot helper
+        // must resolve `<game>/crash-reports` from that absolute path and
+        // never re-join it onto the managed instances root.
+        let temp = tempfile::tempdir().unwrap();
+        let dirs = DirectoryInfo {
+            settings_dir: temp.path().to_path_buf(),
+            config_dir: temp.path().to_path_buf(),
+            app_identifier: "test".to_string(),
+        };
+        let game_dir = temp.path().join("external").join("game");
+        let reports = dirs.game_crash_reports_dir(Path::new(&game_dir));
+        assert_eq!(reports, game_dir.join("crash-reports"));
+        assert!(
+            !reports.starts_with(dirs.instances_dir()),
+            "an absolute game dir must not be re-joined under the managed \
+             instances (profiles) folder: {reports:?}"
+        );
     }
 }

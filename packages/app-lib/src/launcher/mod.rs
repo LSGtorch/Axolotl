@@ -708,6 +708,22 @@ pub async fn install_minecraft_with_reporter(
     .await
 }
 
+/// Guards the managed Minecraft install path: directly associated instances
+/// run from an externally managed launcher installation, so installing or
+/// repairing Minecraft/loader inside it is refused up front — before any
+/// install stage is recorded, loading bar created, or directory write
+/// happens. Content-file installs keep flowing through their own paths.
+fn ensure_managed_minecraft_install(instance: &Instance) -> crate::Result<()> {
+    if instance.is_direct_linked() {
+        return Err(crate::ErrorKind::InputError(format!(
+            "Instance '{}' is directly associated with an external launcher and cannot be re-installed or repaired by Axolotl",
+            instance.name
+        ))
+        .into());
+    }
+    Ok(())
+}
+
 async fn install_minecraft_with_local_source(
     context: &InstanceLaunchContext,
     repairing: bool,
@@ -716,6 +732,7 @@ async fn install_minecraft_with_local_source(
     completion_policy: InstanceCompletionPolicy,
 ) -> crate::Result<()> {
     let instance = &context.instance;
+    ensure_managed_minecraft_install(instance)?;
     let content_set = &context.applied_content_set;
     let phase_details = InstallPhaseDetails::Minecraft {
         game_version: content_set.game_version.clone(),
@@ -2284,7 +2301,9 @@ pub async fn launch_minecraft(
     // associated instances run from the linked game directory and have no
     // profile folder, so the relative profile path would point at a ghost
     // `profiles/<path>/logs`; the absolute game dir joins onto the real
-    // `<game>/logs` instead.
+    // `<game>/logs` instead. The process manager receives the same resolved
+    // absolute game directory so crash-report snapshots and metadata read
+    // the real `<game>/crash-reports`, not the ghost profile path.
     let logs_folder = state
         .directories
         .instance_logs_dir(&instance_path.to_string_lossy());
@@ -2294,7 +2313,7 @@ pub async fn launch_minecraft(
         .process_manager
         .insert_new_process(
             &instance.id,
-            &instance.path,
+            &instance_path.to_string_lossy(),
             &instance.name,
             command,
             post_exit_hook,
@@ -2872,5 +2891,77 @@ mod linked_rule_tests {
             &QuickPlayType::None,
             true
         ));
+    }
+}
+
+#[cfg(test)]
+mod managed_install_guard_tests {
+    use super::*;
+    use crate::state::{LauncherFeatureVersion, ReleaseChannel};
+
+    fn test_instance(linked_dot_minecraft: Option<&str>) -> Instance {
+        let now = Utc::now();
+        Instance {
+            id: "local:test".to_string(),
+            path: "test-instance".to_string(),
+            applied_content_set_id: None,
+            install_stage: InstanceInstallStage::Installed,
+            launcher_feature_version: LauncherFeatureVersion::MOST_RECENT,
+            update_channel: ReleaseChannel::Release,
+            name: "Test Instance".to_string(),
+            icon_path: None,
+            symlink_target: None,
+            linked_launcher: None,
+            linked_launcher_root: None,
+            linked_dot_minecraft: linked_dot_minecraft.map(str::to_string),
+            linked_version_id: None,
+            linked_version_json_path: None,
+            game_dir_override: None,
+            created: now,
+            modified: now,
+            last_played: None,
+            pinned_at: None,
+            submitted_time_played: 0,
+            recent_time_played: 0,
+        }
+    }
+
+    #[test]
+    fn direct_linked_instances_are_refused_before_any_install_work() {
+        let instance = test_instance(Some("/home/user/.minecraft"));
+        let error = ensure_managed_minecraft_install(&instance)
+            .expect_err("directly associated instances must be refused");
+        match error.raw.as_ref() {
+            crate::ErrorKind::InputError(message) => {
+                assert!(
+                    message.contains("directly associated"),
+                    "unexpected error message: {message}"
+                );
+            }
+            other => panic!("expected InputError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn blank_linked_root_is_not_treated_as_directly_linked() {
+        // `is_direct_linked` ignores an empty/whitespace `.minecraft` value;
+        // the guard must agree so such instances stay installable.
+        for blank in [Some(""), Some("   ")] {
+            let instance = test_instance(blank);
+            assert!(
+                !instance.is_direct_linked(),
+                "a blank linked root must not count as directly linked"
+            );
+            assert!(
+                ensure_managed_minecraft_install(&instance).is_ok(),
+                "a blank linked root must not block managed installs"
+            );
+        }
+    }
+
+    #[test]
+    fn managed_instances_stay_installable() {
+        let instance = test_instance(None);
+        assert!(ensure_managed_minecraft_install(&instance).is_ok());
     }
 }

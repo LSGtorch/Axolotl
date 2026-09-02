@@ -214,8 +214,10 @@ pub async fn get_recent_worlds(
             break;
         }
         let instance_id = &instance.instance.id;
-        let instance_dir =
-            state.directories.instance_game_dir(&instance.instance);
+        let instance_dir = crate::state::instances::content_game_dir(
+            &state.directories,
+            &instance.instance,
+        );
         let instance_worlds =
             get_all_worlds_in_instance(instance_id, &instance_dir).await;
         if let Err(e) = instance_worlds {

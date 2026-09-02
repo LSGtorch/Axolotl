@@ -109,7 +109,9 @@ async fn sync_instance_with_dirs(
 
     // Directly associated instances have no profile folder of their own and
     // must never write into the linked `.minecraft`; skip them entirely.
-    if metadata.instance.linked_dot_minecraft.is_some() {
+    // `is_direct_linked` (not a mere `is_some`) so an empty linked root value
+    // does not misclassify a managed instance.
+    if metadata.instance.is_direct_linked() {
         return Ok(());
     }
 

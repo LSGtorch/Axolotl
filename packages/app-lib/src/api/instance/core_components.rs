@@ -640,6 +640,16 @@ async fn instance_context(
         .ok_or_else(|| {
             crate::ErrorKind::InputError("Unknown instance".to_string())
         })?;
+    if instance.instance.is_direct_linked() {
+        return Err(crate::ErrorKind::InputError(format!(
+            "\"{}\" is directly associated with an external launcher \
+             (HMCL/PCL); core components (replacement/`minecraft.jar`, jar \
+             mods) are managed by that launcher and are not available in \
+             Axolotl",
+            instance.instance.name
+        ))
+        .into());
+    }
     let path = io::canonicalize(
         state
             .directories
@@ -1124,5 +1134,58 @@ mod tests {
         assert!(legacy_modloader_game_version("b1.7.3"));
         assert!(!legacy_modloader_game_version("1.6.3"));
         assert!(!legacy_modloader_game_version("1.7.10"));
+    }
+
+    #[tokio::test]
+    async fn direct_link_instance_rejects_core_components_with_clear_error() {
+        if !State::initialized() {
+            let root = tempfile::TempDir::new().unwrap().keep();
+            let _ =
+                State::init_for_test(root.to_string_lossy().to_string()).await;
+        }
+        let state = State::get().await.unwrap();
+        let minecraft = tempfile::TempDir::new().unwrap();
+        let version_dir = minecraft
+            .path()
+            .join("versions")
+            .join("1.12.2-core-components");
+        std::fs::create_dir_all(&version_dir).unwrap();
+        std::fs::write(
+            version_dir.join("1.12.2-core-components.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "id": "1.12.2-core-components",
+                "mainClass": "net.minecraft.client.main.Main"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let instance = crate::state::create_direct_link_instance(
+            crate::state::CreateDirectLinkInstance {
+                name: Some("Core Direct".to_string()),
+                launcher_type:
+                    crate::api::pack::import::ImportLauncherType::Generic,
+                base_path: minecraft.path().to_path_buf(),
+                instance_folder: "versions/1.12.2-core-components".to_string(),
+                instance_path: None,
+            },
+            &state,
+        )
+        .await
+        .unwrap();
+
+        let error = list_core_components(&instance.id).await.unwrap_err();
+        let message = error.to_string();
+        assert!(
+            message.contains("directly associated")
+                && message.contains("external launcher"),
+            "direct-link core components must surface a clear prohibition, \
+             got: {message}"
+        );
+        assert!(
+            !message.contains("No such file") && !message.contains("os error"),
+            "the prohibition must not surface as a misleading filesystem \
+             error on the nonexistent managed profile path: {message}"
+        );
     }
 }

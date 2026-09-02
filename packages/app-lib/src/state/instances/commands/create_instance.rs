@@ -146,6 +146,7 @@ pub(crate) async fn create_instance(
             &instance.path,
             &state.directories.instance_game_dir(&instance),
             &state.file_watcher,
+            true, // managed instance: create missing content subfolders
         )
         .await;
 

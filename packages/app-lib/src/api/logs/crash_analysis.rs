@@ -6,9 +6,10 @@ use std::time::{Duration, SystemTime};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+#[cfg(windows)]
 use tokio::process::Command;
 
-use super::{CensoredString, resolve_instance_path};
+use super::CensoredString;
 use crate::{State, prelude::Credentials, util::io::IOError};
 
 const MAX_AI_CONTEXT_CHARS: usize = 120_000;
@@ -614,13 +615,47 @@ const RULES: &[Rule] = &[
     },
 ];
 
+/// Resolves the game content root a crash analysis reads (logs, crash
+/// reports, `mods`) using the shared content-root decision: directly
+/// associated (HMCL/PCL) instances resolve through the launcher dialect /
+/// recorded linked `.minecraft` instead of a nonexistent managed profile
+/// folder. Accepts the same id-or-path identity as the log APIs.
+async fn resolve_instance_content_root(
+    instance_id_or_path: &str,
+    state: &State,
+) -> crate::Result<PathBuf> {
+    let instance = match crate::state::instances::adapters::sqlite::instance_rows::get_instance_by_id(
+        instance_id_or_path,
+        &state.pool,
+    )
+    .await?
+    {
+        Some(instance) => instance,
+        None => {
+            // Preserve the historical id-or-path lookup, with id winning.
+            crate::state::instances::adapters::sqlite::instance_rows::get_instance_by_path(
+                instance_id_or_path,
+                &state.pool,
+            )
+            .await?
+            .ok_or_else(|| {
+                crate::ErrorKind::InputError(format!(
+                    "Unknown instance id or path: {instance_id_or_path}"
+                ))
+                .as_error()
+            })?
+        }
+    };
+    Ok(crate::state::instances::content_game_dir(
+        &state.directories,
+        &instance,
+    ))
+}
+
 pub async fn analyze_crash(instance_id: &str) -> crate::Result<CrashAnalysis> {
     let state = State::get().await?;
-    let (instance_path, game_dir_override) =
-        resolve_instance_path(instance_id, &state).await?;
-    let instance_root = state
-        .directories
-        .resolve_game_dir(&instance_path, game_dir_override.as_deref());
+    let instance_root =
+        resolve_instance_content_root(instance_id, &state).await?;
     let candidates =
         collect_candidates(&instance_root, &state.directories).await?;
     let selected = select_run_candidates(candidates);
@@ -710,12 +745,9 @@ pub async fn save_successful_mod_snapshot(
     instance_id: &str,
 ) -> crate::Result<()> {
     let state = State::get().await?;
-    let (instance_path, game_dir_override) =
-        resolve_instance_path(instance_id, &state).await?;
-    let mods_path = state
-        .directories
-        .resolve_game_dir(&instance_path, game_dir_override.as_deref())
-        .join("mods");
+    let instance_root =
+        resolve_instance_content_root(instance_id, &state).await?;
+    let mods_path = instance_root.join("mods");
     crate::state::sync_content_files(instance_id, &state).await?;
     let content =
         crate::state::list_content(instance_id, None, None, &state).await?;
@@ -756,13 +788,9 @@ pub async fn undo_added_mod(
     expected_hash: &str,
 ) -> crate::Result<()> {
     let state = State::get().await?;
-    let (instance_path, game_dir_override) =
-        resolve_instance_path(instance_id, &state).await?;
-    let path = state
-        .directories
-        .resolve_game_dir(&instance_path, game_dir_override.as_deref())
-        .join("mods")
-        .join(filename);
+    let instance_root =
+        resolve_instance_content_root(instance_id, &state).await?;
+    let path = instance_root.join("mods").join(filename);
     if path.file_name().and_then(|name| name.to_str()) != Some(filename)
         || path.extension().is_none_or(|extension| {
             !extension.to_string_lossy().eq_ignore_ascii_case("jar")

@@ -1389,6 +1389,7 @@ pub(crate) async fn finish_import(
                     &relative_path,
                     &instance_path,
                     &state.file_watcher,
+                    true, // managed instance: create missing content subfolders
                 )
                 .await;
                 return Err(error.into());
@@ -1402,6 +1403,7 @@ pub(crate) async fn finish_import(
                     &relative_path,
                     &instance_path,
                     &state.file_watcher,
+                    true, // managed instance: create missing content subfolders
                 )
                 .await;
                 return Err(error.into());
@@ -1412,6 +1414,7 @@ pub(crate) async fn finish_import(
                 &relative_path,
                 &instance_path,
                 &state.file_watcher,
+                true, // managed instance: create missing content subfolders
             )
             .await;
         } else {

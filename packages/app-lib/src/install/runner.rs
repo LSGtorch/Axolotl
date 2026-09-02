@@ -190,6 +190,25 @@ pub async fn install_existing_instance(
     instance_id: String,
     force: bool,
 ) -> crate::Result<InstallJobSnapshot> {
+    // Reinstalling Minecraft/loader into a directly associated instance would
+    // write into the external launcher's installation, which owns the
+    // version/loader and is only ever read in place. Fail with a clear
+    // message instead of a misleading "profile directory missing" error.
+    let state = State::get().await?;
+    if let Some(metadata) =
+        crate::state::get_instance(&instance_id, &state.pool).await?
+        && metadata.instance.is_direct_linked()
+    {
+        return Err(crate::ErrorKind::InputError(format!(
+            "\"{}\" is directly associated with an external launcher \
+             (HMCL/PCL); its Minecraft/loader installation is managed by that \
+             launcher and cannot be repaired or reinstalled from Axolotl",
+            metadata.instance.name
+        ))
+        .into());
+    }
+    drop(state);
+
     start(InstallRequest::InstallExistingInstance { instance_id, force }).await
 }
 
@@ -4784,7 +4803,10 @@ async fn install_adjunct_components(
     let metadata = crate::api::instance::get(instance_id)
         .await?
         .ok_or_else(|| ErrorKind::InputError("Unknown instance".to_string()))?;
-    let instance_path = state.directories.instance_game_dir(&metadata.instance);
+    let instance_path = crate::state::instances::content_game_dir(
+        &state.directories,
+        &metadata.instance,
+    );
     let mut components = metadata.loader_components.clone();
 
     for adjunct in adjuncts {

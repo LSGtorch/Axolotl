@@ -15,6 +15,23 @@ pub(crate) async fn remove_instance(
             crate::ErrorKind::InputError("Unknown instance".to_string())
         })?;
 
+    // Release the folder watch on the instance's content root before
+    // deleting anything, so the external linked game directory of directly
+    // associated instances is unwatched here (keeping it registered while
+    // other instances still share it) and ordinary/override roots are
+    // cleaned up. This never touches the external root itself: only
+    // Axolotl's own `instances_dir/<path>` is deleted below.
+    let content_root = crate::state::instances::content_game_dir(
+        &state.directories,
+        &instance,
+    );
+    crate::state::instances::watcher::unwatch_instance_folder(
+        &instance.path,
+        &content_root,
+        &state.file_watcher,
+    )
+    .await;
+
     let path = state.directories.instances_dir().join(&instance.path);
     if path.exists() {
         io::remove_dir_all(&path).await?;
