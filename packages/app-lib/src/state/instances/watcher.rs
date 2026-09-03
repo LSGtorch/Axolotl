@@ -557,13 +557,18 @@ async fn watch_pending_external_root(
 }
 
 /// The closest existing ancestor directory of `path`, walking up from its
-/// parent. `None` when only the filesystem root exists above it (recursively
-/// watching the filesystem root is never attempted).
+/// parent. `None` when only a filesystem root (POSIX `/`, Windows drive root
+/// like `C:\`) exists above it (recursively watching a filesystem root is
+/// never attempted).
 async fn nearest_existing_ancestor(path: &Path) -> Option<PathBuf> {
     let mut candidate = path.parent()?;
     loop {
-        // Never watch the filesystem root itself.
-        if candidate.parent().is_none() {
+        // Never watch a filesystem root. A path with no file name is a root:
+        // POSIX `/` and Windows drive roots like `C:\` both end in a root
+        // component without a file name, while `Path::parent()` alone cannot
+        // reliably identify the Windows drive root (it may yield `Some("")`
+        // or the bare drive prefix above it).
+        if candidate.file_name().is_none() {
             return None;
         }
         if tokio::fs::metadata(candidate)
@@ -635,11 +640,14 @@ pub(crate) async fn unwatch_instance_folder(
         );
     }
 
-    // Drop the pending-ancestor registration of this root and remember which
-    // ancestor watches became free of pending roots; they are released below
-    // once no other watch covers the path.
+    // Drop the pending-ancestor registration of this root — but only once no
+    // other instance still backs the root. Instances sharing a missing root
+    // share its ancestor watch too, so the registration is released with the
+    // root's last instance, not with its first (`release_watch` is false
+    // exactly when the root stays registered for another instance). Freed
+    // ancestor watches are released below once no other watch covers them.
     let mut released_pending_ancestors = Vec::new();
-    {
+    if release_watch {
         let mut pending = watcher.pending_root_ancestors.write().await;
         for (ancestor, roots) in pending.iter_mut() {
             if roots.remove(&root_key) && roots.is_empty() {
@@ -928,6 +936,28 @@ fn is_config_sync_file_name(name: &std::ffi::OsStr) -> bool {
 #[cfg(all(test, windows))]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn windows_drive_root_is_never_a_recursive_watch_ancestor() {
+        // A path under a drive root where no directory exists: the walk must
+        // stop when it reaches `C:\` and refuse to return it. Watching the
+        // drive root recursively would deliver events from the entire disk.
+        let missing = Path::new(r"C:\axolotl-pending-root-test\minecraft");
+        assert!(
+            nearest_existing_ancestor(missing).await.is_none(),
+            "the Windows drive root C:\\ must never be chosen as a recursive \
+             watch ancestor"
+        );
+
+        // The drive root is not watchable even as the direct parent of the
+        // missing root (`Path::parent()` alone does not reliably identify the
+        // Windows drive root, so the check must not rely on it).
+        assert!(
+            nearest_existing_ancestor(Path::new(r"C:\minecraft"))
+                .await
+                .is_none()
+        );
+    }
 
     #[tokio::test]
     async fn watched_instance_folder_cannot_be_renamed_on_windows() {
@@ -1460,6 +1490,117 @@ mod config_file_name_tests {
         unwatch_instance_folder("virtual-b", &root_b, &watcher).await;
         assert!(watcher.pending_root_ancestors.read().await.is_empty());
         assert!(watcher.external_root_instances.read().await.is_empty());
+        assert!(watcher.instance_ids.read().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn removing_one_of_two_instances_sharing_a_missing_root_keeps_the_ancestor_watch()
+     {
+        let temp = tempfile::tempdir().unwrap();
+        let watcher = init_watcher().await.unwrap();
+        let root = temp.path().join("minecraft");
+
+        // Two directly associated instances link the same game directory,
+        // which does not exist yet: both share one pending ancestor watch.
+        watch_instance_folder(
+            "instance-1",
+            "virtual-a",
+            &root,
+            &watcher,
+            false,
+        )
+        .await;
+        watch_instance_folder(
+            "instance-2",
+            "virtual-b",
+            &root,
+            &watcher,
+            false,
+        )
+        .await;
+
+        let root_key = root.to_string_lossy().into_owned();
+        let ancestor_key = temp.path().to_string_lossy().into_owned();
+        assert_eq!(
+            watcher
+                .external_root_instances
+                .read()
+                .await
+                .get(&root_key)
+                .cloned(),
+            Some(HashSet::from([
+                "instance-1".to_string(),
+                "instance-2".to_string()
+            ]))
+        );
+        assert_eq!(
+            watcher
+                .pending_root_ancestors
+                .read()
+                .await
+                .get(&ancestor_key)
+                .cloned(),
+            Some(HashSet::from([root_key.clone()]))
+        );
+
+        // Removing one instance must not release the shared ancestor watch:
+        // the other instance still depends on it to receive events once the
+        // root appears. Both the pending registration and the remaining
+        // instance's external-root entry stay in place.
+        unwatch_instance_folder("virtual-a", &root, &watcher).await;
+        assert_eq!(
+            watcher
+                .external_root_instances
+                .read()
+                .await
+                .get(&root_key)
+                .cloned(),
+            Some(HashSet::from(["instance-2".to_string()]))
+        );
+        assert_eq!(
+            watcher
+                .pending_root_ancestors
+                .read()
+                .await
+                .get(&ancestor_key)
+                .cloned(),
+            Some(HashSet::from([root_key.clone()])),
+            "the pending ancestor registration must survive while another \
+             instance still backs the missing root"
+        );
+
+        // The ancestor watch itself is still alive: content created once the
+        // external launcher materializes the root is attributed and recorded
+        // for the remaining instance.
+        std::fs::create_dir_all(&root).unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        std::fs::create_dir_all(root.join("mods")).unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        std::fs::write(root.join("mods/new.jar"), b"bytes").unwrap();
+        let mut snapshot = None;
+        for _ in 0..80 {
+            if let Some(snapshot_value) =
+                watcher.content_watch_snapshot("instance-2").await
+                && snapshot_value.dirty_paths.contains("mods/new.jar")
+            {
+                snapshot = Some(snapshot_value);
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert!(
+            snapshot.is_some(),
+            "the ancestor watch of a missing root shared by two instances must \
+             keep delivering events to the remaining instance after the other \
+             one is removed"
+        );
+
+        // Unwatching the last instance releases the pending ancestor and all
+        // bookkeeping.
+        unwatch_instance_folder("virtual-b", &root, &watcher).await;
+        assert!(watcher.pending_root_ancestors.read().await.is_empty());
+        assert!(watcher.external_root_instances.read().await.is_empty());
+        assert!(watcher.content_changes.read().await.is_empty());
         assert!(watcher.instance_ids.read().await.is_empty());
     }
 
