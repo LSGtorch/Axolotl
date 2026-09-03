@@ -268,6 +268,14 @@ jobs:
     name: Verify and publish
     needs: build
     runs-on: ubuntu-24.04
+    env:
+      # Job-level so step conditions can reference them: GitHub Actions
+      # forbids `secrets` in `if:` expressions directly. Optional publishing
+      # targets (upstream update server, CNB mirror) are skipped when the
+      # matching secret is not configured on this repository.
+      UPDATE_SERVER_URL: ${{ secrets.UPDATE_SERVER_URL }}
+      UPDATE_SERVER_WEBHOOK_SECRET: ${{ secrets.UPDATE_SERVER_WEBHOOK_SECRET }}
+      CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
     steps:
       - name: Check out source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -340,6 +348,7 @@ jobs:
           node scripts/axolotl/create-update-server-catalog.test.mjs
 
       - name: Notify Update Server to publish release assets
+        if: ${{ env.UPDATE_SERVER_URL != '' && env.UPDATE_SERVER_WEBHOOK_SECRET != '' }}
         env:
           UPDATE_SERVER_URL: ${{ secrets.UPDATE_SERVER_URL }}
           UPDATE_SERVER_WEBHOOK_SECRET: ${{ secrets.UPDATE_SERVER_WEBHOOK_SECRET }}
@@ -372,6 +381,7 @@ jobs:
           fi
 
       - name: Mirror published release to CNB
+        if: ${{ env.CNB_TOKEN != '' }}
         env:
           CNB_REPO_URL_HTTPS: ${{ secrets.CNB_REPO_URL_HTTPS }}
           CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
