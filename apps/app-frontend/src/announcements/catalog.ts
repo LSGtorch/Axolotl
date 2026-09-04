@@ -51,8 +51,7 @@ export const launcherAnnouncements: readonly LauncherAnnouncement[] = [
 				{
 					'en-US':
 						'Fixed drag-and-drop import failures showing "[object Object]" instead of the real error message.',
-					'zh-CN':
-						'修复拖拽导入失败时只显示“[object Object]”而不显示真实错误原因的问题。',
+					'zh-CN': '修复拖拽导入失败时只显示“[object Object]”而不显示真实错误原因的问题。',
 				},
 			],
 		},
@@ -204,8 +203,7 @@ export const launcherAnnouncements: readonly LauncherAnnouncement[] = [
 				{
 					'en-US':
 						'Directly associated instances created before Cleanroom loader detection are now normalized correctly at launch.',
-					'zh-CN':
-						'修复在 Cleanroom 检测完善前创建的直接关联实例，启动时现在会正确归一化。',
+					'zh-CN': '修复在 Cleanroom 检测完善前创建的直接关联实例，启动时现在会正确归一化。',
 				},
 			],
 		},
