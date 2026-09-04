@@ -132,7 +132,10 @@ pub(crate) fn io_error_with_lock_info_for_paths(
             .join("\n");
         let enhanced = std::io::Error::new(
             source.kind(),
-            format!("{source}\n\nFile locked by:\n{detail}"),
+            format!(
+                "{source}\n\nClose the running game (or the launcher using \
+                 this file) and try again.\nFile locked by:\n{detail}"
+            ),
         );
         return IOError::IOPathError {
             source: enhanced,

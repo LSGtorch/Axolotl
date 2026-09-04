@@ -2331,6 +2331,7 @@ pub(crate) async fn toggle_disable_project(
 ) -> crate::Result<String> {
     let _instance_lock = state.lock_instance_content(instance_id).await;
     let scope = resolve_content_scope(instance_id, None, state).await?;
+    ensure_game_not_running(&scope.instance.id, state)?;
     let base = instance_full_path(state, &scope.instance);
     let (current_path, enabled, new_path) =
         resolve_toggle_paths(&base, project_path, desired_enabled)?;
@@ -2697,6 +2698,36 @@ async fn rename_indexed_file(
     Ok(file)
 }
 
+/// Content mutations rename files on disk; Windows refuses that while a game
+/// process still holds the file open (os error 32). Match HMCL/PCL, which lock
+/// content editing while the game runs: reject the operation here with a clear
+/// message instead of surfacing a raw sharing violation. Only game processes
+/// started by this launcher are tracked in the process manager — a game
+/// started by an external launcher on a directly linked install still surfaces
+/// the enhanced lock diagnostic from `io::io_error_with_lock_info`.
+fn game_process_running(
+    processes: &[crate::state::ProcessMetadata],
+    instance_id: &str,
+) -> bool {
+    processes
+        .iter()
+        .any(|process| process.instance_id == instance_id)
+}
+
+fn ensure_game_not_running(
+    instance_id: &str,
+    state: &State,
+) -> crate::Result<()> {
+    if game_process_running(&state.process_manager.get_all(), instance_id) {
+        return Err(crate::ErrorKind::InputError(format!(
+            "Minecraft is still running for this instance. Quit the game \
+             before changing its content."
+        ))
+        .into());
+    }
+    Ok(())
+}
+
 pub(crate) async fn remove_project(
     instance_id: &str,
     project_path: &str,
@@ -2705,6 +2736,7 @@ pub(crate) async fn remove_project(
     let _instance_lock = state.lock_instance_content(instance_id).await;
 
     let scope = resolve_content_scope(instance_id, None, state).await?;
+    ensure_game_not_running(&scope.instance.id, state)?;
     let base = instance_full_path(state, &scope.instance);
     let file = content_rows::get_instance_file_by_relative_path(
         &scope.instance.id,
@@ -3362,6 +3394,29 @@ mod tests {
         assert_eq!(
             backup_relative_path_for_update("mods/Mod.jar", "mods/Mod.jar"),
             None
+        );
+    }
+
+    #[test]
+    fn game_process_running_matches_only_the_instance_itself() {
+        use crate::state::ProcessMetadata;
+        let metadata = |instance_id: &str| ProcessMetadata {
+            uuid: uuid::Uuid::new_v4(),
+            instance_id: instance_id.to_string(),
+            instance_path: instance_id.to_string(),
+            instance_name: instance_id.to_string(),
+            start_time: chrono::Utc::now(),
+        };
+
+        let processes = vec![metadata("running-instance")];
+        assert!(game_process_running(&processes, "running-instance"));
+        assert!(
+            !game_process_running(&processes, "another-instance"),
+            "a game running for another instance must not block content edits"
+        );
+        assert!(
+            !game_process_running(&[], "running-instance"),
+            "no tracked processes means no guard"
         );
     }
 
