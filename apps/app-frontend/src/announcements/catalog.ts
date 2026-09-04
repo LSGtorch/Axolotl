@@ -33,6 +33,31 @@ export const ANNOUNCEMENT_CHANGE_TYPES: readonly AnnouncementChangeType[] = [
 
 export const launcherAnnouncements: readonly LauncherAnnouncement[] = [
 	{
+		id: 'launcher-99.99.10',
+		version: '99.99.10',
+		publishedAt: '2026-09-05',
+		title: {
+			'en-US': 'Axolotl Launcher 99.99.10 (test)',
+			'zh-CN': 'Axolotl Launcher 99.99.10（测试版）',
+		},
+		changes: {
+			fixed: [
+				{
+					'en-US':
+						'Removing or disabling content is now refused with a clear message while the game is running, instead of failing with a file-lock error; the lock diagnostic also tells you to close the running game or launcher.',
+					'zh-CN':
+						'游戏运行中删除或禁用模组时现在会给出明确提示而不是文件锁定错误；文件锁定诊断也会提示先关闭正在运行的游戏或启动器。',
+				},
+				{
+					'en-US':
+						'Fixed drag-and-drop import failures showing "[object Object]" instead of the real error message.',
+					'zh-CN':
+						'修复拖拽导入失败时只显示“[object Object]”而不显示真实错误原因的问题。',
+				},
+			],
+		},
+	},
+	{
 		id: 'launcher-99.99.9',
 		version: '99.99.9',
 		publishedAt: '2026-09-03',
