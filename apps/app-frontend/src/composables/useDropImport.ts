@@ -30,6 +30,25 @@ import {
 } from '@/helpers/drop'
 import { import_instance } from '@/helpers/import.js'
 import { install_create_direct_link_instance, wait_for_install_job } from '@/helpers/install'
+
+/**
+ * Extracts a readable message from anything Tauri commands reject with. The
+ * backend serializes errors as `{ field_name, message }` objects, so plain
+ * `String(error)` degrades to "[object Object]" and hides the real cause.
+ */
+function dropErrorMessage(error: unknown): string {
+	if (error instanceof Error) return error.message
+	if (typeof error === 'string') return error
+	if (
+		typeof error === 'object' &&
+		error !== null &&
+		'message' in error &&
+		typeof (error as { message?: unknown }).message === 'string'
+	) {
+		return (error as { message: string }).message
+	}
+	return String(error)
+}
 import {
 	add_project_from_path,
 	check_symlink_capability,
@@ -806,7 +825,7 @@ export function useDropImport(options: DropImportOptions) {
 					})
 				} catch (error) {
 					launcherZipTempDir.value = null
-					const errorDetail = error instanceof Error ? error.message : String(error)
+					const errorDetail = dropErrorMessage(error)
 					console.error('[DropFlow] launcher zip extraction failed:', errorDetail, basePath)
 					dropDebug('handleDropConfirm: launcher zip extraction failed', error)
 					addNotification({
@@ -1160,7 +1179,7 @@ export function useDropImport(options: DropImportOptions) {
 							notificationManager.removeNotification(analyzingNotification.id)
 							addNotification({
 								title: formatMessage(messages.dropUnknownForceAnalysisFailedTitle),
-								text: e instanceof Error ? e.message : String(e),
+								text: dropErrorMessage(e),
 								type: 'error',
 							})
 						}
@@ -1243,7 +1262,7 @@ export function useDropImport(options: DropImportOptions) {
 						} catch (e) {
 							addNotification({
 								title: formatMessage(messages.dropProcessFailedTitle),
-								text: e instanceof Error ? e.message : String(e),
+								text: dropErrorMessage(e),
 								type: 'error',
 							})
 						}
@@ -1510,7 +1529,7 @@ export function useDropImport(options: DropImportOptions) {
 					title: formatMessage(messages.dropImportFailedTitle),
 					text: formatMessage(messages.dropImportFailedText, {
 						name: inst.name,
-						error: String(e),
+						error: dropErrorMessage(e),
 					}),
 					type: 'error',
 				})
@@ -1582,7 +1601,7 @@ export function useDropImport(options: DropImportOptions) {
 					title: formatMessage(messages.dropImportFailedTitle),
 					text: formatMessage(messages.dropImportFailedText, {
 						name: inst.name,
-						error: String(e),
+						error: dropErrorMessage(e),
 					}),
 					type: 'error',
 				})
@@ -1667,7 +1686,7 @@ export function useDropImport(options: DropImportOptions) {
 					)
 				} catch (error) {
 					item.scanState = 'error'
-					item.reason = error instanceof Error ? error.message : String(error)
+					item.reason = dropErrorMessage(error)
 					console.log(`[BatchDrop] scan ERROR idx=${index}`, error)
 				} finally {
 					batchScanDone.value++
@@ -1766,7 +1785,7 @@ export function useDropImport(options: DropImportOptions) {
 				scanBasePath = innerBase ? `${tempDir}/${innerBase}` : tempDir
 			} catch (error) {
 				item.scanState = 'error'
-				item.reason = error instanceof Error ? error.message : String(error)
+				item.reason = dropErrorMessage(error)
 				return
 			}
 		}
@@ -1803,7 +1822,7 @@ export function useDropImport(options: DropImportOptions) {
 			}
 		} catch (error) {
 			item.scanState = 'error'
-			item.reason = error instanceof Error ? error.message : String(error)
+			item.reason = dropErrorMessage(error)
 		}
 	}
 
@@ -2072,7 +2091,7 @@ export function useDropImport(options: DropImportOptions) {
 		console.error('[BatchDrop] batch failed', error)
 		addNotification({
 			title: formatMessage(messages.dropImportFailedTitle),
-			text: error instanceof Error ? error.message : String(error),
+			text: dropErrorMessage(error),
 			type: 'error',
 		})
 		batchPhase.value = 'idle'
