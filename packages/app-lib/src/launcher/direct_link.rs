@@ -158,9 +158,14 @@ impl DirectLinkedLaunch {
                 &self.version_dir(),
             )?,
             // A generic direct link is the `.minecraft/versions/<id>` format;
-            // its content is always isolated beside the version metadata,
-            // including when the directory is currently empty.
-            LinkedLauncherDialect::Generic => self.version_dir(),
+            // use the version directory only when it actually holds content —
+            // a shared-root install (content in `.minecraft/mods` etc. with
+            // only empty stub folders beside the version JSON) must resolve
+            // to the shared root, like HMCL's default behavior.
+            LinkedLauncherDialect::Generic => resolve_content_game_dir(
+                &self.dot_minecraft,
+                &self.version_dir(),
+            )?,
         };
         Ok(ResolvedLinkedLaunch { merged, game_dir })
     }
@@ -262,7 +267,15 @@ impl DirectLinkedLaunch {
 /// HMCL commonly keeps an isolated instance's content beside its version JSON
 /// without a launcher-specific config file. Prefer that directory when it
 /// contains instance-owned content; otherwise use the shared `.minecraft`
-/// root. Generic direct links use the isolated directory unconditionally.
+/// root.
+///
+/// The check must look at actual content, not just the folder's existence:
+/// HMCL pre-creates empty `mods`/`saves`/... folders inside the version
+/// directory even for instances that share the root, so an empty `mods`
+/// folder must not be treated as version isolation. A real shared-root
+/// instance (e.g. the actual mods live in `.minecraft/mods` while
+/// `versions/<id>/mods` is an empty stub) would otherwise resolve to an
+/// empty isolated directory and show up as an instance without content.
 fn resolve_content_game_dir(
     dot_minecraft: &Path,
     version_dir: &Path,
@@ -277,7 +290,7 @@ fn resolve_content_game_dir(
         "schematics",
     ] {
         let path = version_dir.join(name);
-        if path.is_dir() {
+        if directory_has_files(&path)? || directory_has_directories(&path)? {
             return Ok(version_dir.to_path_buf());
         }
     }
@@ -1838,10 +1851,11 @@ mod tests {
     }
 
     #[test]
-    fn generic_version_with_content_folders_uses_its_isolated_game_dir() {
+    fn version_with_actual_content_uses_its_isolated_game_dir() {
         let root = tempfile::tempdir().unwrap();
         let version = root.path().join("versions/demo");
         std::fs::create_dir_all(version.join("mods")).unwrap();
+        std::fs::write(version.join("mods/demo.jar"), b"mod").unwrap();
 
         assert_eq!(
             resolve_content_game_dir(root.path(), &version).unwrap(),
@@ -1850,16 +1864,48 @@ mod tests {
     }
 
     #[test]
-    fn generic_version_isolated_even_without_content_folders() {
+    fn empty_version_content_folders_mean_shared_root() {
         let root = tempfile::tempdir().unwrap();
         let version = root.path().join("versions/demo");
         std::fs::create_dir_all(&version).unwrap();
 
+        // No content folders at all: shared root.
         assert_eq!(
             resolve_content_game_dir(root.path(), &version).unwrap(),
             root.path()
         );
 
+        // HMCL pre-creates empty content folders beside the version JSON even
+        // for shared-root instances; an empty `mods` folder must not flip the
+        // instance to the (empty) isolated directory. Regression test for
+        // real installs whose actual mods live in the shared `.minecraft/mods`.
+        std::fs::create_dir_all(version.join("mods")).unwrap();
+        std::fs::create_dir_all(version.join("saves")).unwrap();
+        assert_eq!(
+            resolve_content_game_dir(root.path(), &version).unwrap(),
+            root.path()
+        );
+
+        // Content in the shared root keeps the shared root regardless of the
+        // empty stub folders beside the version JSON.
+        std::fs::create_dir_all(root.path().join("mods")).unwrap();
+        std::fs::write(root.path().join("mods/real.jar"), b"mod").unwrap();
+        assert_eq!(
+            resolve_content_game_dir(root.path(), &version).unwrap(),
+            root.path()
+        );
+
+        // A generic direct link on a shared-root install resolves to the
+        // shared root as well (previously it always used the version dir).
+        std::fs::write(
+            version.join("demo.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "id": "demo",
+                "mainClass": "net.minecraft.client.main.Main"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
         let direct = DirectLinkedLaunch {
             dot_minecraft: root.path().to_path_buf(),
             launcher_root: None,
@@ -1867,7 +1913,7 @@ mod tests {
             version_json: Some(version.join("demo.json")),
             dialect: LinkedLauncherDialect::Generic,
         };
-        assert_eq!(direct.resolve().unwrap().game_dir, version);
+        assert_eq!(direct.resolve().unwrap().game_dir, root.path());
     }
 
     #[test]
