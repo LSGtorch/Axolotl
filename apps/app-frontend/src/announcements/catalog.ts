@@ -33,6 +33,25 @@ export const ANNOUNCEMENT_CHANGE_TYPES: readonly AnnouncementChangeType[] = [
 
 export const launcherAnnouncements: readonly LauncherAnnouncement[] = [
 	{
+		id: 'launcher-99.99.11-beta.1',
+		version: '99.99.11-beta.1',
+		publishedAt: '2026-09-07',
+		title: {
+			'en-US': 'Axolotl Launcher 99.99.11-beta.1 (test build)',
+			'zh-CN': 'Axolotl Launcher 99.99.11-beta.1（测试构建）',
+		},
+		changes: {
+			fixed: [
+				{
+					'en-US':
+						'Test build: directly associated instances now resolve the shared .minecraft root by actual content instead of folder existence, fixing empty instances on shared-root HMCL/generic clients.',
+					'zh-CN':
+						'测试构建：直接关联实例改为按实际内容判定共享 .minecraft 根目录，修复共享根布局客户端被识别为空实例的问题。',
+				},
+			],
+		},
+	},
+	{
 		id: 'launcher-1.9.5',
 		version: '1.9.5',
 		publishedAt: '2026-09-04',
