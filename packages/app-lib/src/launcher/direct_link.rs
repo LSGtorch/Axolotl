@@ -388,13 +388,21 @@ impl DirectLinkedLaunch {
 /// instance (e.g. the actual mods live in `.minecraft/mods` while
 /// `versions/<id>/mods` is an empty stub) would otherwise resolve to an
 /// empty isolated directory and show up as an instance without content.
+///
+/// `config` is deliberately excluded from the probe: it is a runtime
+/// artifact, not user content. Any directory that ever served as a game
+/// directory accumulates `config/forge.cfg` and friends — including a
+/// version directory a shared-root install merely ran through once (e.g. a
+/// former `game_dir_override` experiment). HMCL always reads the shared
+/// root's `config/` for shared-root instances, so a stray per-version
+/// `config` must never flip the resolution. `logs` and `crash-reports`
+/// are runtime artifacts too and are likewise excluded.
 fn resolve_content_game_dir(
     dot_minecraft: &Path,
     version_dir: &Path,
 ) -> crate::Result<PathBuf> {
     for name in [
         "mods",
-        "config",
         "saves",
         "resourcepacks",
         "shaderpacks",
@@ -2044,6 +2052,16 @@ mod tests {
         // real installs whose actual mods live in the shared `.minecraft/mods`.
         std::fs::create_dir_all(version.join("mods")).unwrap();
         std::fs::create_dir_all(version.join("saves")).unwrap();
+        assert_eq!(
+            resolve_content_game_dir(root.path(), &version).unwrap(),
+            root.path()
+        );
+
+        // A stray per-version `config` (left over from running the version
+        // directory once, e.g. via a former game_dir_override) is a runtime
+        // artifact and must not flip the resolution either.
+        std::fs::create_dir_all(version.join("config")).unwrap();
+        std::fs::write(version.join("config/forge.cfg"), b"# runtime").unwrap();
         assert_eq!(
             resolve_content_game_dir(root.path(), &version).unwrap(),
             root.path()
