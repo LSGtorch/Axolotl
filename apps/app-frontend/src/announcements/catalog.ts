@@ -33,6 +33,25 @@ export const ANNOUNCEMENT_CHANGE_TYPES: readonly AnnouncementChangeType[] = [
 
 export const launcherAnnouncements: readonly LauncherAnnouncement[] = [
 	{
+		id: 'launcher-99.99.11-beta.3',
+		version: '99.99.11-beta.3',
+		publishedAt: '2026-09-12',
+		title: {
+			'en-US': 'Axolotl Launcher 99.99.11-beta.3 (test build)',
+			'zh-CN': 'Axolotl Launcher 99.99.11-beta.3（测试构建）',
+		},
+		changes: {
+			fixed: [
+				{
+					'en-US':
+						'Test build: directly associated instances resolve the shared .minecraft root by actual content (runtime artifacts like config/logs excluded), and the instance Java settings page no longer stalls on network lookups for linked instances.',
+					'zh-CN':
+						'测试构建：直接关联实例按实际内容判定共享 .minecraft 根目录（排除 config/logs 等运行时残留），实例 Java 设置页不再因联网查询卡住。',
+				},
+			],
+		},
+	},
+	{
 		id: 'launcher-1.9.6-beta.5',
 		version: '1.9.6-beta.5',
 		publishedAt: '2026-09-12',
