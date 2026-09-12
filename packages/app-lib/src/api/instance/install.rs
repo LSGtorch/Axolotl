@@ -15,6 +15,29 @@ pub async fn get_optimal_jre_key(
                 "Tried to resolve a nonexistent instance {instance_id}!"
             ))
         })?;
+
+    // Directly associated instances already carry the full local version
+    // JSON chain (HMCL/PCL patches included). Resolve the Java requirement
+    // from that local metadata instead of downloading a version manifest —
+    // the manifest fetch goes through launcher-specific loader channels
+    // (e.g. Cleanroom) and can stall for a long time, which used to freeze
+    // the instance Java settings page while it waited.
+    if context.instance.is_direct_linked()
+        && let Ok(Some(direct)) =
+            crate::launcher::DirectLinkedLaunch::from_instance(
+                &context.instance,
+            )
+        && let Ok(resolved) = direct.resolve()
+        && let Ok(version_info) =
+            crate::launcher::merged_to_version_info(resolved.merged)
+    {
+        let major_version = version_info
+            .java_version
+            .as_ref()
+            .map_or(8, |java| java.major_version);
+        return crate::api::jre::find_java_for_version(major_version).await;
+    }
+
     let (minecraft, version_index) =
         crate::launcher::resolve_minecraft_manifest(
             &context.applied_content_set.game_version,

@@ -279,6 +279,7 @@ impl DirectLinkedLaunch {
                     &self.version_dir(),
                 )?,
             },
+        };
         Ok(ResolvedLinkedLaunch { merged, game_dir })
     }
 

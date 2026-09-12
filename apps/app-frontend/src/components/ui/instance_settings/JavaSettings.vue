@@ -8,7 +8,7 @@ import {
 	useVIntl,
 } from '@modrinth/ui'
 import { platform } from '@tauri-apps/plugin-os'
-import { computed, readonly, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import JavaArgumentsInput from '@/components/ui/JavaArgumentsInput.vue'
 import JavaSelector from '@/components/ui/JavaSelector.vue'
@@ -87,24 +87,40 @@ const { instance } = injectInstanceSettings()
 const supportsMemoryOptimization = (await platform()) === 'windows'
 
 const globalSettings = (await get().catch(handleError)) as unknown as AppSettings
-const optimalJava = readonly(await get_optimal_jre_key(instance.value.id).catch(handleError))
-const requiredJavaVersion = optimalJava?.parsed_version ?? null
+// Load the recommended Java asynchronously. For directly associated
+// instances the backend resolves it from the linked local version JSON,
+// but for managed instances the lookup can involve network requests that
+// may stall — the settings page must render immediately either way, with
+// the recommendation filling in once it arrives.
+const optimalJava = ref<Awaited<ReturnType<typeof get_optimal_jre_key>>>(null)
+get_optimal_jre_key(instance.value.id)
+	.then((jre) => {
+		optimalJava.value = jre ?? null
+	})
+	.catch(handleError)
+const requiredJavaVersion = computed(() => optimalJava.value?.parsed_version ?? null)
 
 const overrideJavaInstall = ref(!!instance.value.java_path)
 const overrideJava = ref({
-	...(optimalJava ?? {}),
-	path: instance.value.java_path ?? optimalJava?.path ?? '',
+	path: instance.value.java_path ?? '',
 })
 const displayedJava = computed({
-	get: () => (overrideJavaInstall.value ? overrideJava.value : (optimalJava ?? overrideJava.value)),
+	get: () =>
+		overrideJavaInstall.value ? overrideJava.value : (optimalJava.value ?? overrideJava.value),
 	set: (value) => {
 		overrideJava.value = value
 	},
 })
 
+watch(optimalJava, (jre) => {
+	if (jre && !overrideJava.value.path) {
+		overrideJava.value = { ...jre, path: jre.path ?? '' }
+	}
+})
+
 watch(overrideJavaInstall, (enabled) => {
 	if (enabled && !overrideJava.value.path) {
-		overrideJava.value = { ...(optimalJava ?? {}), path: optimalJava?.path ?? '' }
+		overrideJava.value = { ...(optimalJava.value ?? {}), path: optimalJava.value?.path ?? '' }
 	}
 })
 
